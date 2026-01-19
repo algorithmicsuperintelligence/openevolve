@@ -1,9 +1,12 @@
+import math
 import os
 import json
 import glob
 import shutil
 import logging
 import re as _re
+from numbers import Number
+from typing import Optional, Any
 
 from flask import Flask, render_template, jsonify
 
@@ -63,6 +66,7 @@ def load_evolution_data(checkpoint_folder):
             if os.path.exists(prog_path):
                 with open(prog_path) as pf:
                     prog = json.load(pf)
+                    sanitize_program_for_visualization(prog)
                 prog["id"] = pid
                 prog["island"] = island_idx
                 nodes.append(prog)
@@ -83,6 +87,18 @@ def load_evolution_data(checkpoint_folder):
         "edges": edges,
         "checkpoint_dir": checkpoint_folder,
     }
+
+def sanitize_program_for_visualization(program: dict[str, Any]) -> None:
+    for k, v in program["metrics"].items():
+        if not check_json_float(v):
+            program["metrics"][k] = None
+        if "parent_metrics" in program["metadata"]:
+            for k, v in program["metadata"]["parent_metrics"].items():
+                if not check_json_float(v):
+                    program["metadata"]["parent_metrics"][k] = None
+
+def check_json_float(v: Optional[float]) -> bool:
+    return isinstance(v, Number) and not (math.isinf(v) or math.isnan(v))
 
 
 @app.route("/")
