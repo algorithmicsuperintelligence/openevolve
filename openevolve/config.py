@@ -64,8 +64,8 @@ class LLMModelConfig:
 
     # Generation parameters
     system_message: Optional[str] = None
-    temperature: float = None
-    top_p: float = None
+    temperature: float | None = None
+    top_p: float | None = None
     max_tokens: int = None
 
     # Request parameters
@@ -97,8 +97,8 @@ class LLMConfig(LLMModelConfig):
 
     # Generation parameters
     system_message: Optional[str] = "system_message"
-    temperature: float = 0.7
-    top_p: float = 0.95
+    temperature: float | None = 0.7
+    top_p: float | None = None
     max_tokens: int = 4096
 
     # Request parameters
@@ -438,10 +438,21 @@ class Config:
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern in diff_pattern: {e}")
 
+        # Remove None values for temperature and top_p to avoid dacite type errors;
+        # alternatively, pass check_types=False to dacite.from_dict, but that can hide other issues
+        if "llm" in config_dict:
+            if "temperature" in config_dict["llm"] and config_dict["llm"]["temperature"] is None:
+                del config_dict["llm"]["temperature"]
+            if "top_p" in config_dict["llm"] and config_dict["llm"]["top_p"] is None:
+                del config_dict["llm"]["top_p"]
+
         config: Config = dacite.from_dict(
             data_class=cls,
             data=config_dict,
-            config=dacite.Config(cast=[List, Union], forward_references={"LLMInterface": Any}),
+            config=dacite.Config(
+                cast=[List, Union],
+                forward_references={"LLMInterface": Any},
+            ),
         )
 
         if config.database.random_seed is None and config.random_seed is not None:
