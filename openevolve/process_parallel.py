@@ -431,13 +431,18 @@ class ProcessParallelController:
         }
 
         # Include artifacts for programs that might be selected
-        # IMPORTANT: This limits artifacts (execution outputs/errors) to first 100 programs only.
+        # This limits artifacts (execution outputs/errors) to avoid large snapshot sizes.
         # This does NOT affect program code - all programs are fully serialized above.
         # With max_artifact_bytes=20KB and population_size=1000, artifacts could be 20MB total,
-        # which would significantly slow worker process initialization. The limit of 100 keeps
-        # artifact data under 2MB while still providing execution context for recent programs.
+        # which would significantly slow worker process initialization. The default limit of 100
+        # keeps artifact data under 2MB while still providing execution context for recent programs.
         # Workers can still evolve properly as they have access to ALL program code.
-        for pid in list(self.database.programs.keys())[:100]:
+        # Configure via database.max_snapshot_artifacts (None for unlimited).
+        max_artifacts = self.database.config.max_snapshot_artifacts
+        program_ids = list(self.database.programs.keys())
+        if max_artifacts is not None:
+            program_ids = program_ids[:max_artifacts]
+        for pid in program_ids:
             artifacts = self.database.get_artifacts(pid)
             if artifacts:
                 snapshot["artifacts"][pid] = artifacts

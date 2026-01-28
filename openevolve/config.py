@@ -340,6 +340,7 @@ class DatabaseConfig:
     artifact_size_threshold: int = 32 * 1024  # 32KB threshold
     cleanup_old_artifacts: bool = True
     artifact_retention_days: int = 30
+    max_snapshot_artifacts: Optional[int] = 100  # Max artifacts in worker snapshots (None=unlimited)
 
     novelty_llm: Optional["LLMInterface"] = None
     embedding_model: Optional[str] = None
