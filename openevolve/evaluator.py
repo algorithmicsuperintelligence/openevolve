@@ -262,7 +262,7 @@ class Evaluator:
                         "error_type": "timeout",
                     }
 
-                return {"error": 0.0, "timeout": True}
+                return {"combined_score": float('-inf'), "error": 0.0, "timeout": True}
 
             except Exception as e:
                 last_exception = e
@@ -293,7 +293,7 @@ class Evaluator:
         logger.error(
             f"All evaluation attempts failed for program{program_id_str}. Last error: {str(last_exception)}"
         )
-        return {"error": 0.0}
+        return {"combined_score": float('-inf'), "error": 0.0}
 
     def _process_evaluation_result(self, result: Any) -> EvaluationResult:
         """
