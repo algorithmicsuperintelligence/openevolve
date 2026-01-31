@@ -26,7 +26,12 @@ from evaluator import (
     evaluate,
     evaluate_stage1,
     evaluate_stage2,
-    evaluate_stage3
+    evaluate_stage3,
+    get_time_budget,
+    calculate_time_score,
+    BASE_TIME_BUDGET,
+    COEFF_TIME,
+    TIME_PENALTY_WEIGHT
 )
 
 
@@ -768,6 +773,112 @@ def count_colors(coloring):
 
         full = evaluate(fake_path)
         self.assertEqual(full['combined_score'], 0.0)
+
+
+class TestTimeBudget(unittest.TestCase):
+    """Test cases for time budget calculation and scoring."""
+
+    def test_get_time_budget_formula(self):
+        """Test that get_time_budget follows the formula: BASE + COEFF × (n² + m)."""
+        n, m = 100, 500
+        expected = BASE_TIME_BUDGET + COEFF_TIME * (n * n + m)
+        actual = get_time_budget(n, m)
+        self.assertAlmostEqual(actual, expected, places=10)
+
+    def test_get_time_budget_increases_with_vertices(self):
+        """Test that budget increases with more vertices."""
+        m = 100  # fixed edges
+        budget_small = get_time_budget(10, m)
+        budget_large = get_time_budget(100, m)
+        self.assertGreater(budget_large, budget_small)
+
+    def test_get_time_budget_increases_with_edges(self):
+        """Test that budget increases with more edges."""
+        n = 50  # fixed vertices
+        budget_sparse = get_time_budget(n, 100)
+        budget_dense = get_time_budget(n, 1000)
+        self.assertGreater(budget_dense, budget_sparse)
+
+    def test_get_time_budget_quadratic_scaling(self):
+        """Test that budget scales quadratically with vertices."""
+        m = 0  # no edges to isolate vertex effect
+        budget_n = get_time_budget(100, m)
+        budget_2n = get_time_budget(200, m)
+        # For quadratic: budget(2n) ≈ 4 × budget(n) (ignoring BASE)
+        ratio = (budget_2n - BASE_TIME_BUDGET) / (budget_n - BASE_TIME_BUDGET)
+        self.assertAlmostEqual(ratio, 4.0, places=1)
+
+    def test_calculate_time_score_within_budget(self):
+        """Test that score is 1.0 when within budget."""
+        budget = 0.01  # 10ms
+        elapsed = 0.005  # 5ms (under budget)
+        score = calculate_time_score(elapsed, budget)
+        self.assertEqual(score, 1.0)
+
+    def test_calculate_time_score_at_budget(self):
+        """Test that score is 1.0 when exactly at budget."""
+        budget = 0.01
+        elapsed = 0.01
+        score = calculate_time_score(elapsed, budget)
+        self.assertEqual(score, 1.0)
+
+    def test_calculate_time_score_over_budget(self):
+        """Test that score decreases when over budget."""
+        budget = 0.01
+        elapsed = 0.02  # 2x over budget
+        score = calculate_time_score(elapsed, budget)
+        self.assertLess(score, 1.0)
+        # Score should be approximately 0.5 (budget/elapsed)
+        self.assertAlmostEqual(score, 0.5, places=2)
+
+    def test_calculate_time_score_floor(self):
+        """Test that score has a floor of 0.1."""
+        budget = 0.001
+        elapsed = 1.0  # 1000x over budget
+        score = calculate_time_score(elapsed, budget)
+        self.assertEqual(score, 0.1)
+
+    def test_calculate_time_score_decay(self):
+        """Test that score decays proportionally to overage."""
+        budget = 0.01
+        # 4x over budget should give score of 0.25
+        score = calculate_time_score(0.04, budget)
+        self.assertAlmostEqual(score, 0.25, places=2)
+
+    def test_time_penalty_weight_in_range(self):
+        """Test that TIME_PENALTY_WEIGHT is reasonable (0 to 1)."""
+        self.assertGreater(TIME_PENALTY_WEIGHT, 0.0)
+        self.assertLess(TIME_PENALTY_WEIGHT, 1.0)
+
+    def test_evaluate_returns_time_metrics(self):
+        """Test that evaluate() returns time-related metrics."""
+        program_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'initial_program.py'
+        )
+        result = evaluate(program_path)
+
+        self.assertIn('avg_time_score', result)
+        self.assertIn('total_time', result)
+        self.assertIn('time_penalty_weight', result)
+
+        # Check details have time info
+        for detail in result['details']:
+            self.assertIn('time', detail)
+            self.assertIn('time_budget', detail)
+            self.assertIn('time_score', detail)
+            self.assertIn('over_budget', detail)
+
+    def test_fast_algorithm_gets_good_time_score(self):
+        """Test that the simple greedy algorithm gets good time scores."""
+        program_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'initial_program.py'
+        )
+        result = evaluate(program_path)
+
+        # Simple greedy should be fast enough for good time scores
+        self.assertGreaterEqual(result['avg_time_score'], 0.9)
 
 
 if __name__ == "__main__":

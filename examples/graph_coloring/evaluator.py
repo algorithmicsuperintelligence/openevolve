@@ -6,6 +6,7 @@ and returns metrics including:
 - Number of colors used
 - Validity of coloring (no conflicts)
 - Performance across different graph types
+- Execution time (with penalties for slow algorithms)
 """
 
 import importlib.util
@@ -13,6 +14,29 @@ import sys
 import os
 import random
 import time
+
+# ============================================================
+# Time Budget Configuration
+# ============================================================
+# Time budgets scale with graph complexity: budget = BASE + COEFF × (n² + m)
+# where n = vertices, m = edges.
+#
+# The coefficient was determined empirically:
+#   - Measured simple greedy: ~21-30 nanoseconds per n²
+#   - With 30x margin (3x base × 10x exploration room): COEFF = 8.8e-7
+#
+# This allows O(n²) and O(n×m) algorithms to complete comfortably,
+# while penalizing multi-start approaches that run many trials.
+#
+# Example budgets (dense graphs, m ≈ n²/2):
+#   n=30:   ~2.2ms
+#   n=100:  ~14ms
+#   n=500:  ~331ms
+#   n=1000: ~1.32s
+#
+BASE_TIME_BUDGET = 0.001  # 1ms base budget
+COEFF_TIME = 8.8e-7  # ~880 nanoseconds per (n² + m) unit
+TIME_PENALTY_WEIGHT = 0.3  # 30% of score comes from time efficiency
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +48,50 @@ def load_program(program_path: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def get_time_budget(num_vertices: int, num_edges: int) -> float:
+    """
+    Calculate time budget for a graph based on vertices and edges.
+
+    Budget scales with graph complexity: budget = BASE + COEFF × (n² + m)
+    This matches the O(n²) or O(n×m) complexity of typical coloring algorithms.
+
+    Args:
+        num_vertices: Number of vertices in the graph (n)
+        num_edges: Number of edges in the graph (m)
+
+    Returns:
+        Time budget in seconds
+    """
+    complexity = num_vertices * num_vertices + num_edges
+    return BASE_TIME_BUDGET + COEFF_TIME * complexity
+
+
+def calculate_time_score(elapsed_time: float, time_budget: float) -> float:
+    """
+    Calculate time efficiency score.
+
+    - If elapsed <= budget: score = 1.0
+    - If elapsed > budget: score decays exponentially
+    - Score never goes below 0.1 (to avoid completely zeroing out good colorings)
+
+    Args:
+        elapsed_time: Actual execution time in seconds
+        time_budget: Allowed time budget in seconds
+
+    Returns:
+        Time score between 0.1 and 1.0
+    """
+    if elapsed_time <= time_budget:
+        return 1.0
+
+    # Exponential decay: each doubling of time over budget halves the score
+    overage_ratio = elapsed_time / time_budget
+    time_score = 1.0 / overage_ratio
+
+    # Floor at 0.1 to not completely kill good colorings
+    return max(0.1, time_score)
 
 
 def create_random_graph(num_vertices: int, edge_probability: float, seed: int = None):
@@ -394,19 +462,32 @@ def evaluate(program_path: str) -> dict:
 
         results_detail = []
 
+        total_time = 0
+        total_time_score = 0
+
         for name, graph, known_chromatic in test_graphs:
+            # Calculate time budget for this graph based on vertices and edges
+            num_edges = len(graph.get_edges())
+            time_budget = get_time_budget(graph.num_vertices, num_edges)
+
             # Time the coloring
             start_time = time.time()
             coloring = graph_coloring(graph)
             elapsed_time = time.time() - start_time
+            total_time += elapsed_time
 
             # Check validity
             is_valid, conflicts = is_valid_coloring(graph, coloring)
             num_colors = count_colors(coloring)
 
+            # Calculate time efficiency score
+            time_score = calculate_time_score(elapsed_time, time_budget)
+            total_time_score += time_score
+
             if not is_valid:
                 all_valid = False
                 # Invalid coloring gets score of 0 for this graph
+                color_score = 0
                 graph_score = 0
             else:
                 total_colors += num_colors
@@ -415,16 +496,20 @@ def evaluate(program_path: str) -> dict:
                 # If we know optimal, score = optimal / used (max 1.0)
                 # Otherwise, use heuristic based on graph size
                 if known_chromatic is not None:
-                    graph_score = known_chromatic / num_colors
+                    color_score = known_chromatic / num_colors
                     if num_colors == known_chromatic:
                         optimal_count += 1
                 else:
                     # For unknown optimal, estimate lower bound as max_degree + 1
                     max_degree = max(graph.get_degree(v) for v in range(graph.num_vertices))
                     estimated_lower = max(2, max_degree // 2)
-                    graph_score = estimated_lower / num_colors
+                    color_score = estimated_lower / num_colors
 
-                graph_score = min(1.0, graph_score)  # Cap at 1.0
+                color_score = min(1.0, color_score)  # Cap at 1.0
+
+                # Combined score: color quality weighted with time efficiency
+                # (1 - TIME_PENALTY_WEIGHT) for colors + TIME_PENALTY_WEIGHT for time
+                graph_score = (1 - TIME_PENALTY_WEIGHT) * color_score + TIME_PENALTY_WEIGHT * time_score
 
             total_score += graph_score
             results_detail.append({
@@ -432,14 +517,19 @@ def evaluate(program_path: str) -> dict:
                 'colors': num_colors,
                 'valid': is_valid,
                 'conflicts': conflicts,
+                'color_score': color_score if is_valid else 0,
+                'time_score': time_score,
                 'score': graph_score,
-                'time': elapsed_time
+                'time': elapsed_time,
+                'time_budget': time_budget,
+                'over_budget': elapsed_time > time_budget
             })
 
         # Calculate final metrics
         avg_score = total_score / num_tests
+        avg_time_score = total_time_score / num_tests
 
-        # Combined score: 0 if any invalid, otherwise based on color efficiency
+        # Combined score: 0 if any invalid, otherwise based on color efficiency + time
         if not all_valid:
             combined_score = 0.0
         else:
@@ -448,10 +538,13 @@ def evaluate(program_path: str) -> dict:
         return {
             'combined_score': combined_score,
             'avg_color_score': avg_score,
+            'avg_time_score': avg_time_score,
             'all_valid': all_valid,
             'optimal_count': optimal_count,
             'total_colors': total_colors,
+            'total_time': total_time,
             'num_tests': num_tests,
+            'time_penalty_weight': TIME_PENALTY_WEIGHT,
             'details': results_detail
         }
 
@@ -677,11 +770,17 @@ if __name__ == "__main__":
     stage3_result = evaluate_stage3("initial_program.py")
     print(f"  Combined Score: {stage3_result.get('combined_score', 0):.4f}")
     print(f"  Avg Color Score: {stage3_result.get('avg_color_score', 0):.4f}")
+    print(f"  Avg Time Score: {stage3_result.get('avg_time_score', 0):.4f}")
     print(f"  All Valid: {stage3_result.get('all_valid', False)}")
     print(f"  Optimal Count: {stage3_result.get('optimal_count', 0)}/{stage3_result.get('num_tests', 0)}")
+    print(f"  Total Time: {stage3_result.get('total_time', 0):.3f}s")
+    print(f"  Time Penalty Weight: {stage3_result.get('time_penalty_weight', 0):.0%}")
 
     if 'details' in stage3_result:
         print("\nPer-graph results:")
         for detail in stage3_result['details']:
+            over_budget_flag = " [SLOW]" if detail.get('over_budget', False) else ""
             print(f"  {detail['name']}: {detail['colors']} colors, "
-                  f"valid={detail['valid']}, score={detail['score']:.3f}")
+                  f"score={detail['score']:.3f} (color={detail.get('color_score', 0):.2f}, "
+                  f"time={detail.get('time_score', 0):.2f}), "
+                  f"{detail['time']*1000:.1f}ms{over_budget_flag}")
