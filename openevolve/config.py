@@ -427,9 +427,18 @@ class Config:
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "Config":
         """Load configuration from a YAML file"""
-        with open(path, "r") as f:
+        config_path = Path(path).resolve()
+        with open(config_path, "r") as f:
             config_dict = yaml.safe_load(f)
-        return cls.from_dict(config_dict)
+        config = cls.from_dict(config_dict)
+
+        # Resolve template_dir relative to config file location
+        if config.prompt.template_dir:
+            template_path = Path(config.prompt.template_dir)
+            if not template_path.is_absolute():
+                config.prompt.template_dir = str((config_path.parent / template_path).resolve())
+
+        return config
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "Config":
