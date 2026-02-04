@@ -10,6 +10,7 @@ import signal
 import time
 import uuid
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
 
 from openevolve.config import Config, load_config
@@ -616,29 +617,22 @@ class OpenEvolve:
             f"(score={template.score:.3f}, uses={template.uses})"
         )
 
-        # Create a sync wrapper for LLM generation that works in async context
-        # We use a thread pool to avoid event loop conflicts
-        import concurrent.futures
-
+        # Create a sync wrapper for LLM generation that works within an async context.
+        # We run the async LLM call in a separate thread with its own event loop
+        # to avoid conflicts with the main event loop.
         def llm_generate_sync(system: str, user: str) -> str:
-            import asyncio
-
-            # Create a new event loop in a thread to avoid conflicts
-            def run_in_new_loop():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    return loop.run_until_complete(
-                        self.llm_ensemble.generate_with_context(
-                            system_message=system,
-                            messages=[{"role": "user", "content": user}],
-                        )
+            def _run_async_in_thread():
+                # asyncio.run() creates a new event loop, runs the coroutine,
+                # and cleans up the loop automatically
+                return asyncio.run(
+                    self.llm_ensemble.generate_with_context(
+                        system_message=system,
+                        messages=[{"role": "user", "content": user}],
                     )
-                finally:
-                    loop.close()
+                )
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(run_in_new_loop)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_run_async_in_thread)
                 return future.result()
 
         # Evolve the template
