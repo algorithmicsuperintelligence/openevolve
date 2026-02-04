@@ -398,6 +398,56 @@ class EvolutionTraceConfig:
 
 
 @dataclass
+class PromptMetaEvolutionConfig:
+    """Configuration for meta-evolution of prompt templates.
+
+    When enabled, OpenEvolve maintains an archive of prompt templates,
+    tracks their success rates, and evolves them over time to improve
+    mutation quality.
+    """
+
+    # Master switch
+    enabled: bool = False
+
+    # Archive settings
+    archive_size: int = 20  # Max templates to keep in archive
+
+    # Evolution triggers
+    min_uses_for_evolution: int = 10  # Min uses before template can be evolved
+    evolution_interval: int = 20  # Trigger evolution every N iterations
+
+    # Sampling behavior
+    exploration_rate: float = 0.2  # Probability of sampling random template
+    elite_fraction: float = 0.3  # Fraction of top templates protected from pruning
+
+    # Scoring weights (must sum to 1.0)
+    # score = w_success * success_rate + w_improvement * improvement_rate + w_fitness * normalized_fitness_delta
+    score_weight_success: float = 0.3  # Weight for success rate (mutations accepted)
+    score_weight_improvement: float = 0.4  # Weight for improvement rate (fitness increased)
+    score_weight_fitness_delta: float = 0.3  # Weight for avg fitness delta magnitude
+
+    # Scoring parameters
+    score_min_uses: int = 5  # Min uses before score is calculated (else neutral prior)
+    score_neutral_prior: float = 0.5  # Score returned when uses < min_uses
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        weight_sum = (
+            self.score_weight_success
+            + self.score_weight_improvement
+            + self.score_weight_fitness_delta
+        )
+        tolerance = 1e-6
+        if abs(weight_sum - 1.0) > tolerance:
+            raise ValueError(
+                f"Scoring weights must sum to 1.0, got {weight_sum:.6f} "
+                f"(success={self.score_weight_success}, "
+                f"improvement={self.score_weight_improvement}, "
+                f"fitness_delta={self.score_weight_fitness_delta})"
+            )
+
+
+@dataclass
 class Config:
     """Master configuration for OpenEvolve"""
 
@@ -416,6 +466,9 @@ class Config:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     evolution_trace: EvolutionTraceConfig = field(default_factory=EvolutionTraceConfig)
+    prompt_meta_evolution: PromptMetaEvolutionConfig = field(
+        default_factory=PromptMetaEvolutionConfig
+    )
 
     # Evolution settings
     diff_based_evolution: bool = True
