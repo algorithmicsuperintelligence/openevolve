@@ -39,6 +39,7 @@ class SerializableResult:
     iteration: int = 0
     error: Optional[str] = None
     template_id: Optional[str] = None  # For prompt meta-evolution tracking
+    target_island: Optional[int] = None  # Island where child should be placed
 
 
 def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = None) -> None:
@@ -335,6 +336,8 @@ def _run_iteration_worker(
 
         # Extract template_id for meta-evolution tracking (if present)
         template_id = prompt.get("template_id") if prompt else None
+        # Get target island from snapshot (where child should be placed)
+        target_island = db_snapshot.get("sampling_island")
 
         return SerializableResult(
             child_program_dict=child_program.to_dict(),
@@ -345,6 +348,7 @@ def _run_iteration_worker(
             artifacts=artifacts,
             iteration=iteration,
             template_id=template_id,
+            target_island=target_island,
         )
 
     except Exception as e:
@@ -588,9 +592,14 @@ class ProcessParallelController:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
 
-                    # Add to database (will auto-inherit parent's island)
-                    # No need to specify target_island - database will handle parent island inheritance
-                    self.database.add(child_program, iteration=completed_iteration)
+                    # Add to database with explicit target_island to ensure proper island placement
+                    # This fixes issue #391: children should go to the target island, not inherit
+                    # from the parent (which may be from a different island due to fallback sampling)
+                    self.database.add(
+                        child_program,
+                        iteration=completed_iteration,
+                        target_island=result.target_island,
+                    )
 
                     # Store artifacts
                     if result.artifacts:

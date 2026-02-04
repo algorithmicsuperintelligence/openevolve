@@ -248,6 +248,30 @@ class TestPromptArchive(unittest.TestCase):
         self.assertEqual(restored.templates[t1.id].uses, 5)
         self.assertEqual(restored.templates[t2.id].parent_id, t1.id)
 
+    def test_serialization_with_scoring_config(self):
+        """Test that scoring config is preserved during serialization"""
+        # Create archive with custom scoring config
+        archive = PromptArchive(
+            max_size=10,
+            score_weight_success=0.2,
+            score_weight_improvement=0.5,
+            score_weight_fitness_delta=0.3,
+            score_min_uses=10,
+            score_neutral_prior=0.6,
+        )
+        archive.add_template(system_template="Test", user_template="Test")
+
+        # Serialize and restore
+        data = archive.to_dict()
+        restored = PromptArchive.from_dict(data)
+
+        # Verify scoring config is preserved
+        self.assertEqual(restored.score_weight_success, 0.2)
+        self.assertEqual(restored.score_weight_improvement, 0.5)
+        self.assertEqual(restored.score_weight_fitness_delta, 0.3)
+        self.assertEqual(restored.score_min_uses, 10)
+        self.assertEqual(restored.score_neutral_prior, 0.6)
+
     def test_get_statistics(self):
         """Test archive statistics"""
         t1 = self.archive.add_template(

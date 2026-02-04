@@ -256,7 +256,9 @@ class PromptArchive:
         templates = list(self.templates.values())
         weights = []
         for t in templates:
-            # Score-based weight with exploration bonus for under-used templates
+            # Exploration bonus for under-used templates: linearly decreases from 0.3 to 0
+            # as uses increase from 0 to 20. This ensures new templates get enough trials
+            # before being judged solely on their score.
             exploration_bonus = max(0, 1.0 - t.uses / 20) * 0.3
             weights.append(self.get_template_score(t) + exploration_bonus)
 
@@ -361,6 +363,12 @@ class PromptArchive:
             "min_uses_for_evolution": self.min_uses_for_evolution,
             "elite_fraction": self.elite_fraction,
             "exploration_rate": self.exploration_rate,
+            # Scoring configuration
+            "score_weight_success": self.score_weight_success,
+            "score_weight_improvement": self.score_weight_improvement,
+            "score_weight_fitness_delta": self.score_weight_fitness_delta,
+            "score_min_uses": self.score_min_uses,
+            "score_neutral_prior": self.score_neutral_prior,
             "default_template_id": self.default_template_id,
             "templates": {tid: t.to_dict() for tid, t in self.templates.items()},
         }
@@ -373,6 +381,12 @@ class PromptArchive:
             min_uses_for_evolution=data.get("min_uses_for_evolution", 10),
             elite_fraction=data.get("elite_fraction", 0.3),
             exploration_rate=data.get("exploration_rate", 0.2),
+            # Scoring configuration
+            score_weight_success=data.get("score_weight_success", 0.3),
+            score_weight_improvement=data.get("score_weight_improvement", 0.4),
+            score_weight_fitness_delta=data.get("score_weight_fitness_delta", 0.3),
+            score_min_uses=data.get("score_min_uses", 5),
+            score_neutral_prior=data.get("score_neutral_prior", 0.5),
         )
         archive.default_template_id = data.get("default_template_id")
 
