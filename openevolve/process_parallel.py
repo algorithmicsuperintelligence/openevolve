@@ -14,9 +14,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from typing import TYPE_CHECKING
+
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
-from openevolve.utils.metrics_utils import safe_numeric_average
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
+
+if TYPE_CHECKING:
+    from openevolve.prompt.meta_evolution import PromptArchive
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,7 @@ class SerializableResult:
     artifacts: Optional[Dict[str, Any]] = None
     iteration: int = 0
     error: Optional[str] = None
+    template_id: Optional[str] = None  # For prompt meta-evolution tracking
 
 
 def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = None) -> None:
@@ -131,9 +137,23 @@ def _lazy_init_worker_components():
 
 
 def _run_iteration_worker(
-    iteration: int, db_snapshot: Dict[str, Any], parent_id: str, inspiration_ids: List[str]
+    iteration: int,
+    db_snapshot: Dict[str, Any],
+    parent_id: str,
+    inspiration_ids: List[str],
+    template_info: Optional[Dict[str, str]] = None,
 ) -> SerializableResult:
-    """Run a single iteration in a worker process"""
+    """Run a single iteration in a worker process
+
+    Args:
+        iteration: The iteration number
+        db_snapshot: Snapshot of the database state
+        parent_id: ID of the parent program to evolve
+        inspiration_ids: IDs of programs to use as inspiration
+        template_info: Optional dict with 'template_id', 'system_template', 'user_template'
+                      for prompt meta-evolution. If provided, uses these instead of
+                      sampling from the worker's prompt sampler.
+    """
     try:
         # Lazy initialization
         _lazy_init_worker_components()
@@ -190,6 +210,7 @@ def _run_iteration_worker(
             program_artifacts=parent_artifacts,
             feature_dimensions=db_snapshot.get("feature_dimensions", []),
             current_changes_description=parent_changes_desc,
+            meta_template_info=template_info,  # Pass pre-sampled template for meta-evolution
         )
 
         iteration_start = time.time()
@@ -312,6 +333,9 @@ def _run_iteration_worker(
 
         iteration_time = time.time() - iteration_start
 
+        # Extract template_id for meta-evolution tracking (if present)
+        template_id = prompt.get("template_id") if prompt else None
+
         return SerializableResult(
             child_program_dict=child_program.to_dict(),
             parent_id=parent.id,
@@ -320,6 +344,7 @@ def _run_iteration_worker(
             llm_response=llm_response,
             artifacts=artifacts,
             iteration=iteration,
+            template_id=template_id,
         )
 
     except Exception as e:
@@ -337,12 +362,14 @@ class ProcessParallelController:
         database: ProgramDatabase,
         evolution_tracer=None,
         file_suffix: str = ".py",
+        prompt_archive: Optional["PromptArchive"] = None,
     ):
         self.config = config
         self.evaluation_file = evaluation_file
         self.database = database
         self.evolution_tracer = evolution_tracer
         self.file_suffix = file_suffix
+        self.prompt_archive = prompt_archive
 
         self.executor: Optional[ProcessPoolExecutor] = None
         self.shutdown_event = mp.Event()
@@ -550,6 +577,13 @@ class ProcessParallelController:
 
                 if result.error:
                     logger.warning(f"Iteration {completed_iteration} error: {result.error}")
+                    # Record failed outcome for prompt meta-evolution
+                    if self.prompt_archive is not None and result.template_id:
+                        self.prompt_archive.record_outcome(
+                            result.template_id,
+                            accepted=False,
+                            fitness_delta=0.0,
+                        )
                 elif result.child_program_dict:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
@@ -561,6 +595,22 @@ class ProcessParallelController:
                     # Store artifacts
                     if result.artifacts:
                         self.database.store_artifacts(child_program.id, result.artifacts)
+
+                    # Record outcome for prompt meta-evolution
+                    if self.prompt_archive is not None and result.template_id:
+                        parent_program = (
+                            self.database.get(result.parent_id) if result.parent_id else None
+                        )
+                        if parent_program:
+                            feature_dims = self.config.database.feature_dimensions
+                            child_fitness = get_fitness_score(child_program.metrics, feature_dims)
+                            parent_fitness = get_fitness_score(parent_program.metrics, feature_dims)
+                            fitness_delta = child_fitness - parent_fitness
+                            self.prompt_archive.record_outcome(
+                                result.template_id,
+                                accepted=True,
+                                fitness_delta=fitness_delta,
+                            )
 
                     # Log evolution trace
                     if self.evolution_tracer:
@@ -801,6 +851,21 @@ class ProcessParallelController:
             db_snapshot = self._create_database_snapshot()
             db_snapshot["sampling_island"] = target_island  # Mark which island this is for
 
+            # Sample template from archive if meta-evolution is enabled
+            # This must happen in the main process since workers don't have the archive
+            template_info = None
+            if self.prompt_archive is not None:
+                sampled_template = self.prompt_archive.sample_template()
+                template_info = {
+                    "template_id": sampled_template.id,
+                    "system_template": sampled_template.system_template,
+                    "user_template": sampled_template.user_template,
+                }
+                logger.debug(
+                    f"Iteration {iteration}: sampled template {sampled_template.id} "
+                    f"(score={sampled_template.score:.3f})"
+                )
+
             # Submit to process pool
             future = self.executor.submit(
                 _run_iteration_worker,
@@ -808,6 +873,7 @@ class ProcessParallelController:
                 db_snapshot,
                 parent.id,
                 [insp.id for insp in inspirations],
+                template_info,
             )
 
             return future

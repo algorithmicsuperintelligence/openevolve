@@ -18,6 +18,7 @@ from openevolve.evaluator import Evaluator
 from openevolve.evolution_trace import EvolutionTracer
 from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.process_parallel import ProcessParallelController
+from openevolve.prompt.meta_evolution import PromptArchive, evolve_prompt
 from openevolve.prompt.sampler import PromptSampler
 from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
@@ -188,6 +189,25 @@ class OpenEvolve:
         # Initialize improved parallel processing components
         self.parallel_controller = None
 
+        # Initialize prompt meta-evolution if enabled
+        self.prompt_archive = None
+        if self.config.prompt_meta_evolution.enabled:
+            self.prompt_archive = PromptArchive(
+                max_size=self.config.prompt_meta_evolution.archive_size,
+                min_uses_for_evolution=self.config.prompt_meta_evolution.min_uses_for_evolution,
+                elite_fraction=self.config.prompt_meta_evolution.elite_fraction,
+                exploration_rate=self.config.prompt_meta_evolution.exploration_rate,
+                # Scoring configuration
+                score_weight_success=self.config.prompt_meta_evolution.score_weight_success,
+                score_weight_improvement=self.config.prompt_meta_evolution.score_weight_improvement,
+                score_weight_fitness_delta=self.config.prompt_meta_evolution.score_weight_fitness_delta,
+                score_min_uses=self.config.prompt_meta_evolution.score_min_uses,
+                score_neutral_prior=self.config.prompt_meta_evolution.score_neutral_prior,
+            )
+            self._initialize_default_prompt_templates()
+            self.prompt_sampler.set_prompt_archive(self.prompt_archive)
+            logger.info("Prompt meta-evolution enabled")
+
     def _setup_logging(self) -> None:
         """Set up logging"""
         log_dir = self.config.log_dir or os.path.join(self.output_dir, "logs")
@@ -225,7 +245,7 @@ class OpenEvolve:
         if not bool(getattr(self.config.llm, "manual_mode", False)):
             return
 
-        qdir = (Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue")
+        qdir = Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue"
 
         # Clear stale tasks from previous runs
         if qdir.exists():
@@ -245,6 +265,34 @@ class OpenEvolve:
         """Load the initial program from file"""
         with open(self.initial_program_path, "r") as f:
             return f.read()
+
+    def _initialize_default_prompt_templates(self) -> None:
+        """Initialize the prompt archive with default templates from TemplateManager."""
+        if self.prompt_archive is None:
+            return
+
+        # Get default templates from the sampler's template manager
+        tm = self.prompt_sampler.template_manager
+
+        # Get system template
+        system_template = self.config.prompt.system_message
+        if system_template in tm.templates:
+            system_template = tm.get_template(system_template)
+
+        # Get user template (diff-based or full rewrite)
+        if self.config.diff_based_evolution:
+            user_template = tm.get_template("diff_user")
+        else:
+            user_template = tm.get_template("full_rewrite_user")
+
+        # Add as the default template
+        self.prompt_archive.add_template(
+            system_template=system_template,
+            user_template=user_template,
+            is_default=True,
+            metadata={"source": "default"},
+        )
+        logger.info("Added default prompt template to archive")
 
     async def run(
         self,
@@ -333,6 +381,7 @@ class OpenEvolve:
                 self.database,
                 self.evolution_tracer,
                 file_suffix=self.config.file_suffix,
+                prompt_archive=self.prompt_archive,
             )
 
             # Set up signal handlers for graceful shutdown
@@ -493,6 +542,20 @@ class OpenEvolve:
                 f"{format_metrics_safe(best_program.metrics)}"
             )
 
+        # Save prompt archive if meta-evolution is enabled
+        if self.prompt_archive is not None:
+            import json
+
+            prompt_archive_path = os.path.join(checkpoint_path, "prompt_archive.json")
+            with open(prompt_archive_path, "w") as f:
+                json.dump(self.prompt_archive.to_dict(), f, indent=2)
+            stats = self.prompt_archive.get_statistics()
+            logger.info(
+                f"Saved prompt archive (size={stats['size']}, "
+                f"total_uses={stats['total_uses']}, "
+                f"success_rate={stats['overall_success_rate']:.1%})"
+            )
+
         logger.info(f"Saved checkpoint at iteration {iteration} to {checkpoint_path}")
 
     def _load_checkpoint(self, checkpoint_path: str) -> None:
@@ -504,6 +567,102 @@ class OpenEvolve:
         self.database.load(checkpoint_path)
         logger.info(f"Checkpoint loaded successfully (iteration {self.database.last_iteration})")
 
+        # Load prompt archive if meta-evolution is enabled
+        if self.prompt_archive is not None:
+            import json
+
+            prompt_archive_path = os.path.join(checkpoint_path, "prompt_archive.json")
+            if os.path.exists(prompt_archive_path):
+                with open(prompt_archive_path, "r") as f:
+                    self.prompt_archive = PromptArchive.from_dict(json.load(f))
+                # Re-inject into sampler and parallel controller
+                self.prompt_sampler.set_prompt_archive(self.prompt_archive)
+                stats = self.prompt_archive.get_statistics()
+                logger.info(
+                    f"Loaded prompt archive (size={stats['size']}, "
+                    f"total_uses={stats['total_uses']})"
+                )
+
+    def _maybe_evolve_prompts(self, iteration: int) -> None:
+        """
+        Periodically evolve prompt templates if meta-evolution is enabled.
+
+        Args:
+            iteration: Current iteration number
+        """
+        if self.prompt_archive is None:
+            return
+
+        # Only evolve at configured intervals
+        interval = self.config.prompt_meta_evolution.evolution_interval
+        if iteration == 0 or iteration % interval != 0:
+            return
+
+        # Get templates ready for evolution
+        templates_to_evolve = self.prompt_archive.get_templates_for_evolution()
+        if not templates_to_evolve:
+            logger.debug("No templates ready for evolution yet")
+            return
+
+        top_templates = self.prompt_archive.get_top_templates(5)
+
+        # Evolve the top template that's ready for evolution
+        # Sort by score descending
+        templates_to_evolve.sort(key=lambda t: t.score, reverse=True)
+        template = templates_to_evolve[0]
+
+        logger.info(
+            f"Evolving prompt template {template.id} "
+            f"(score={template.score:.3f}, uses={template.uses})"
+        )
+
+        # Create a sync wrapper for LLM generation that works in async context
+        # We use a thread pool to avoid event loop conflicts
+        import concurrent.futures
+
+        def llm_generate_sync(system: str, user: str) -> str:
+            import asyncio
+
+            # Create a new event loop in a thread to avoid conflicts
+            def run_in_new_loop():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(
+                        self.llm_ensemble.generate_with_context(
+                            system_message=system,
+                            messages=[{"role": "user", "content": user}],
+                        )
+                    )
+                finally:
+                    loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_new_loop)
+                return future.result()
+
+        # Evolve the template
+        result = evolve_prompt(
+            template,
+            top_templates,
+            llm_generate_sync,
+            score_fn=self.prompt_archive.get_template_score,
+        )
+        if result:
+            new_system, new_user = result
+            new_template = self.prompt_archive.add_template(
+                system_template=new_system,
+                user_template=new_user,
+                parent_id=template.id,
+                metadata={"evolved_at_iteration": iteration},
+            )
+            logger.info(
+                f"Created evolved template {new_template.id} "
+                f"(generation {new_template.generation})"
+            )
+        else:
+            logger.warning(f"Failed to evolve template {template.id}")
+
     async def _run_evolution_with_checkpoints(
         self, start_iteration: int, max_iterations: int, target_score: Optional[float]
     ) -> None:
@@ -511,9 +670,28 @@ class OpenEvolve:
         logger.info(f"Using island-based evolution with {self.config.database.num_islands} islands")
         self.database.log_island_status()
 
-        # Run the evolution process with checkpoint callback
+        # Track last prompt evolution for catching up between checkpoints
+        last_prompt_evolution = [start_iteration]  # Use list for closure mutability
+
+        # Create a combined callback that handles checkpoints and prompt evolution
+        def combined_callback(iteration: int) -> None:
+            self._save_checkpoint(iteration)
+
+            # Trigger prompt evolution - catch up on any missed intervals
+            if self.prompt_archive is not None:
+                evolution_interval = self.config.prompt_meta_evolution.evolution_interval
+                # Find all evolution points between last_prompt_evolution and current iteration
+                next_evolution = (
+                    last_prompt_evolution[0] // evolution_interval + 1
+                ) * evolution_interval
+                while next_evolution <= iteration:
+                    self._maybe_evolve_prompts(next_evolution)
+                    next_evolution += evolution_interval
+                last_prompt_evolution[0] = iteration
+
+        # Run the evolution process with combined callback
         await self.parallel_controller.run_evolution(
-            start_iteration, max_iterations, target_score, checkpoint_callback=self._save_checkpoint
+            start_iteration, max_iterations, target_score, checkpoint_callback=combined_callback
         )
 
         # Check if shutdown or early stopping was triggered
