@@ -120,12 +120,32 @@ def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[
     return llm_response
 
 
-def format_diff_summary(diff_blocks: List[Tuple[str, str]]) -> str:
+def _format_block_lines(lines: List[str], max_line_len: int = 100, max_lines: int = 30) -> str:
+    """Format a block of lines for diff summary: show all lines (truncated per line, optional cap)."""
+    truncated = []
+    for line in lines[:max_lines]:
+        s = line.rstrip()
+        if len(s) > max_line_len:
+            s = s[: max_line_len - 3] + "..."
+        truncated.append("  " + s)
+    if len(lines) > max_lines:
+        truncated.append(f"  ... ({len(lines) - max_lines} more lines)")
+    return "\n".join(truncated) if truncated else "  (empty)"
+
+
+def format_diff_summary(
+    diff_blocks: List[Tuple[str, str]],
+    max_line_len: int = 100,
+    max_lines: int = 30,
+) -> str:
     """
-    Create a human-readable summary of the diff
+    Create a human-readable summary of the diff.
+    For multi-line blocks, shows the full search and replace content (all lines).
 
     Args:
         diff_blocks: List of (search_text, replace_text) tuples
+        max_line_len: Maximum characters per line before truncation (default: 100)
+        max_lines: Maximum lines per SEARCH/REPLACE block (default: 30)
 
     Returns:
         Summary string
@@ -136,17 +156,12 @@ def format_diff_summary(diff_blocks: List[Tuple[str, str]]) -> str:
         search_lines = search_text.strip().split("\n")
         replace_lines = replace_text.strip().split("\n")
 
-        # Create a short summary
         if len(search_lines) == 1 and len(replace_lines) == 1:
             summary.append(f"Change {i+1}: '{search_lines[0]}' to '{replace_lines[0]}'")
         else:
-            search_summary = (
-                f"{len(search_lines)} lines" if len(search_lines) > 1 else search_lines[0]
-            )
-            replace_summary = (
-                f"{len(replace_lines)} lines" if len(replace_lines) > 1 else replace_lines[0]
-            )
-            summary.append(f"Change {i+1}: Replace {search_summary} with {replace_summary}")
+            search_block = _format_block_lines(search_lines, max_line_len, max_lines)
+            replace_block = _format_block_lines(replace_lines, max_line_len, max_lines)
+            summary.append(f"Change {i+1}: Replace:\n{search_block}\nwith:\n{replace_block}")
 
     return "\n".join(summary)
 
