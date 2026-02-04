@@ -113,14 +113,18 @@ class TestEmptyIslandChildPlacement(unittest.TestCase):
 
     def test_child_should_go_to_target_island_not_parent_island(self):
         """
-        CRITICAL TEST: This tests the bug reported in issue #391.
+        CRITICAL TEST: This tests the fix for issue #391.
 
         When we want to add a child to island 1 (empty), but the parent came
         from island 0 (via fallback sampling), the child should still be
         placed in island 1 (the TARGET), not island 0 (the parent's island).
+
+        The fix: process_parallel.py now passes target_island to database.add()
         """
+        target_island = 1  # We want to add child to island 1
+
         # Sample from empty island 1 - will fall back to island 0
-        parent, inspirations = self.db.sample_from_island(island_id=1)
+        parent, inspirations = self.db.sample_from_island(island_id=target_island)
 
         # Parent is from island 0 (the only island with programs)
         self.assertEqual(parent.metadata.get("island"), 0)
@@ -134,17 +138,15 @@ class TestEmptyIslandChildPlacement(unittest.TestCase):
             metrics={"combined_score": 0.8},
         )
 
-        # THIS IS THE BUG: If we don't pass target_island, child goes to parent's island
-        # Simulating current behavior (without fix):
-        self.db.add(child)  # No target_island - inherits parent's island
+        # FIX: Pass target_island explicitly (this is what process_parallel.py now does)
+        self.db.add(child, target_island=target_island)
 
-        # BUG: Child ends up in island 0 (parent's island) instead of island 1 (target)
-        # This assertion will FAIL with current code, demonstrating the bug
+        # Child should be in island 1 (target), not island 0 (parent's island)
         self.assertEqual(
             child.metadata.get("island"), 1,
-            "Child should be in target island 1, not parent's island 0. "
-            "This is the bug from issue #391!"
+            "Child should be in target island 1, not parent's island 0."
         )
+        self.assertIn("child_for_island_1", self.db.islands[1])
 
     def test_explicit_target_island_overrides_parent_inheritance(self):
         """Test that explicit target_island works even with fallback parent"""
@@ -188,9 +190,8 @@ class TestIslandPopulationGrowth(unittest.TestCase):
         """
         Simulate evolution and verify all islands get programs.
 
-        This test demonstrates the feedback loop bug: if children always
-        inherit parent's island, and we start with only island 0 populated,
-        all new programs will go to island 0.
+        With the fix for issue #391, children are placed in the target island
+        even when the parent came from a different island (via fallback sampling).
         """
         # Start with initial program in island 0 only
         initial = Program(
@@ -217,24 +218,110 @@ class TestIslandPopulationGrowth(unittest.TestCase):
                 metrics={"combined_score": 0.5 + i * 0.05},
             )
 
-            # BUG: Current code doesn't pass target_island, so child inherits parent's island
-            # This simulates the current buggy behavior:
-            self.db.add(child)  # No target_island
+            # FIX: Pass target_island explicitly (this is what process_parallel.py now does)
+            self.db.add(child, target_island=target_island)
 
         # Check island populations
         island_sizes = [len(self.db.islands[i]) for i in range(3)]
 
-        # With the bug, ALL programs end up in island 0
-        # This assertion will FAIL, demonstrating the bug
+        # With the fix, programs should be distributed across all islands
         self.assertGreater(
             island_sizes[1], 0,
             f"Island 1 should have programs but has {island_sizes[1]}. "
-            f"All islands: {island_sizes}. Bug: all programs went to island 0!"
+            f"All islands: {island_sizes}."
         )
         self.assertGreater(
             island_sizes[2], 0,
             f"Island 2 should have programs but has {island_sizes[2]}. "
-            f"All islands: {island_sizes}. Bug: all programs went to island 0!"
+            f"All islands: {island_sizes}."
+        )
+
+        # With the fix, all islands should have at least 1 program
+        # (some programs may be deduplicated, but distribution should happen)
+        for i, size in enumerate(island_sizes):
+            self.assertGreaterEqual(size, 1, f"Island {i} should have at least 1 program")
+
+
+class TestRegressionOldBehavior(unittest.TestCase):
+    """
+    Regression tests to ensure we don't revert to the old buggy behavior.
+    These tests verify that NOT passing target_island causes the bug.
+    """
+
+    def setUp(self):
+        """Set up test database"""
+        config = Config()
+        config.database.num_islands = 3
+        config.database.population_size = 100
+        self.db = ProgramDatabase(config.database)
+
+    def test_without_target_island_child_inherits_parent(self):
+        """
+        Verify that without explicit target_island, child inherits parent's island.
+        This is the OLD buggy behavior that we need to avoid in process_parallel.py.
+        """
+        # Add parent to island 0
+        parent = Program(
+            id="parent",
+            code="def parent(): pass",
+            generation=0,
+            metrics={"combined_score": 0.5},
+        )
+        self.db.add(parent, target_island=0)
+
+        # Sample from empty island 2 (will fall back to island 0)
+        sampled_parent, _ = self.db.sample_from_island(island_id=2)
+        self.assertEqual(sampled_parent.metadata.get("island"), 0)
+
+        # Create child WITHOUT passing target_island (old buggy behavior)
+        child = Program(
+            id="child",
+            code="def child(): pass",
+            generation=1,
+            parent_id=sampled_parent.id,
+            metrics={"combined_score": 0.6},
+        )
+        self.db.add(child)  # No target_island!
+
+        # Without target_island, child inherits parent's island (0), not target (2)
+        # This is the BUG - child should be in island 2 but ends up in island 0
+        self.assertEqual(
+            child.metadata.get("island"), 0,
+            "Without target_island, child incorrectly inherits parent's island"
+        )
+
+    def test_with_target_island_child_goes_to_target(self):
+        """
+        Verify that WITH explicit target_island, child goes to target island.
+        This is the FIXED behavior implemented in process_parallel.py.
+        """
+        # Add parent to island 0
+        parent = Program(
+            id="parent2",
+            code="def parent(): pass",
+            generation=0,
+            metrics={"combined_score": 0.5},
+        )
+        self.db.add(parent, target_island=0)
+
+        # Sample from empty island 2 (will fall back to island 0)
+        sampled_parent, _ = self.db.sample_from_island(island_id=2)
+        self.assertEqual(sampled_parent.metadata.get("island"), 0)
+
+        # Create child WITH target_island (fixed behavior)
+        child = Program(
+            id="child2",
+            code="def child(): pass",
+            generation=1,
+            parent_id=sampled_parent.id,
+            metrics={"combined_score": 0.6},
+        )
+        self.db.add(child, target_island=2)  # Explicit target!
+
+        # With target_island, child goes to island 2 (correct)
+        self.assertEqual(
+            child.metadata.get("island"), 2,
+            "With target_island, child should go to target island"
         )
 
 

@@ -33,6 +33,7 @@ class SerializableResult:
     artifacts: Optional[Dict[str, Any]] = None
     iteration: int = 0
     error: Optional[str] = None
+    target_island: Optional[int] = None  # Island where child should be placed
 
 
 def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = None) -> None:
@@ -297,6 +298,9 @@ def _run_iteration_worker(
 
         iteration_time = time.time() - iteration_start
 
+        # Get target island from snapshot (where child should be placed)
+        target_island = db_snapshot.get("sampling_island")
+
         return SerializableResult(
             child_program_dict=child_program.to_dict(),
             parent_id=parent.id,
@@ -305,6 +309,7 @@ def _run_iteration_worker(
             llm_response=llm_response,
             artifacts=artifacts,
             iteration=iteration,
+            target_island=target_island,
         )
 
     except Exception as e:
@@ -539,9 +544,14 @@ class ProcessParallelController:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
 
-                    # Add to database (will auto-inherit parent's island)
-                    # No need to specify target_island - database will handle parent island inheritance
-                    self.database.add(child_program, iteration=completed_iteration)
+                    # Add to database with explicit target_island to ensure proper island placement
+                    # This fixes issue #391: children should go to the target island, not inherit
+                    # from the parent (which may be from a different island due to fallback sampling)
+                    self.database.add(
+                        child_program,
+                        iteration=completed_iteration,
+                        target_island=result.target_island,
+                    )
 
                     # Store artifacts
                     if result.artifacts:
