@@ -33,6 +33,7 @@ class SerializableResult:
     artifacts: Optional[Dict[str, Any]] = None
     iteration: int = 0
     error: Optional[str] = None
+    target_island: Optional[int] = None  # Island where child should be placed
 
 
 def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = None) -> None:
@@ -170,8 +171,7 @@ def _run_iteration_worker(
         # Build prompt
         if _worker_config.prompt.programs_as_changes_description:
             parent_changes_desc = (
-                parent.changes_description
-                or _worker_config.prompt.initial_changes_description
+                parent.changes_description or _worker_config.prompt.initial_changes_description
             )
             child_changes_desc = parent_changes_desc
         else:
@@ -223,7 +223,9 @@ def _run_iteration_worker(
 
             diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
             if not diff_blocks:
-                return SerializableResult(error="No valid diffs found in response", iteration=iteration)
+                return SerializableResult(
+                    error="No valid diffs found in response", iteration=iteration
+                )
 
             if _worker_config.prompt.programs_as_changes_description:
                 try:
@@ -236,20 +238,34 @@ def _run_iteration_worker(
                     return SerializableResult(error=str(e), iteration=iteration)
 
                 child_code, _ = apply_diff_blocks(parent.code, code_blocks)
-                child_changes_desc, desc_applied = apply_diff_blocks(parent_changes_desc, desc_blocks)
+                child_changes_desc, desc_applied = apply_diff_blocks(
+                    parent_changes_desc, desc_blocks
+                )
 
                 # Must update the previous changes description
-                if desc_applied == 0 or not child_changes_desc.strip() or child_changes_desc.strip() == parent_changes_desc.strip():
+                if (
+                    desc_applied == 0
+                    or not child_changes_desc.strip()
+                    or child_changes_desc.strip() == parent_changes_desc.strip()
+                ):
                     return SerializableResult(
                         error="changes_description was not updated or empty, program is discarded",
                         iteration=iteration,
                     )
 
-                changes_summary = format_diff_summary(code_blocks)
+                changes_summary = format_diff_summary(
+                    code_blocks,
+                    max_line_len=_worker_config.prompt.diff_summary_max_line_len,
+                    max_lines=_worker_config.prompt.diff_summary_max_lines,
+                )
             else:
                 # All diffs applied only to code
                 child_code = apply_diff(parent.code, llm_response, _worker_config.diff_pattern)
-                changes_summary = format_diff_summary(diff_blocks)
+                changes_summary = format_diff_summary(
+                    diff_blocks,
+                    max_line_len=_worker_config.prompt.diff_summary_max_line_len,
+                    max_lines=_worker_config.prompt.diff_summary_max_lines,
+                )
         else:
             from openevolve.utils.code_utils import parse_full_rewrite
 
@@ -297,6 +313,9 @@ def _run_iteration_worker(
 
         iteration_time = time.time() - iteration_start
 
+        # Get target island from snapshot (where child should be placed)
+        target_island = db_snapshot.get("sampling_island")
+
         return SerializableResult(
             child_program_dict=child_program.to_dict(),
             parent_id=parent.id,
@@ -305,6 +324,7 @@ def _run_iteration_worker(
             llm_response=llm_response,
             artifacts=artifacts,
             iteration=iteration,
+            target_island=target_island,
         )
 
     except Exception as e:
@@ -539,9 +559,14 @@ class ProcessParallelController:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
 
-                    # Add to database (will auto-inherit parent's island)
-                    # No need to specify target_island - database will handle parent island inheritance
-                    self.database.add(child_program, iteration=completed_iteration)
+                    # Add to database with explicit target_island to ensure proper island placement
+                    # This fixes issue #391: children should go to the target island, not inherit
+                    # from the parent (which may be from a different island due to fallback sampling)
+                    self.database.add(
+                        child_program,
+                        iteration=completed_iteration,
+                        target_island=result.target_island,
+                    )
 
                     # Store artifacts
                     if result.artifacts:
@@ -588,10 +613,8 @@ class ProcessParallelController:
 
                     # Island management
                     # get current program island id
-                    island_id = child_program.metadata.get(
-                        "island", self.database.current_island
-                    )
-                    #use this to increment island generation
+                    island_id = child_program.metadata.get("island", self.database.current_island)
+                    # use this to increment island generation
                     self.database.increment_island_generation(island_idx=island_id)
 
                     # Check migration
@@ -709,7 +732,7 @@ class ProcessParallelController:
                                         f"(best score: {best_score:.4f})"
                                     )
                                     break
-                                
+
                             else:
                                 # Event-based early stopping
                                 if current_score == self.config.convergence_threshold:

@@ -281,6 +281,10 @@ class PromptConfig:
         50  # Label as "comprehensive" if program has this many lines or more
     )
 
+    # Diff summary formatting for "Previous Attempts" section
+    diff_summary_max_line_len: int = 100  # Truncate lines longer than this
+    diff_summary_max_lines: int = 30  # Max lines per SEARCH/REPLACE block
+
     # Backward compatibility - deprecated
     code_length_threshold: Optional[int] = (
         None  # Deprecated: use suggest_simplification_after_chars
@@ -340,7 +344,9 @@ class DatabaseConfig:
     artifact_size_threshold: int = 32 * 1024  # 32KB threshold
     cleanup_old_artifacts: bool = True
     artifact_retention_days: int = 30
-    max_snapshot_artifacts: Optional[int] = 100  # Max artifacts in worker snapshots (None=unlimited)
+    max_snapshot_artifacts: Optional[int] = (
+        100  # Max artifacts in worker snapshots (None=unlimited)
+    )
 
     novelty_llm: Optional["LLMInterface"] = None
     embedding_model: Optional[str] = None
@@ -427,9 +433,18 @@ class Config:
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "Config":
         """Load configuration from a YAML file"""
-        with open(path, "r") as f:
+        config_path = Path(path).resolve()
+        with open(config_path, "r") as f:
             config_dict = yaml.safe_load(f)
-        return cls.from_dict(config_dict)
+        config = cls.from_dict(config_dict)
+
+        # Resolve template_dir relative to config file location
+        if config.prompt.template_dir:
+            template_path = Path(config.prompt.template_dir)
+            if not template_path.is_absolute():
+                config.prompt.template_dir = str((config_path.parent / template_path).resolve())
+
+        return config
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "Config":

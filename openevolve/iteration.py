@@ -1,12 +1,12 @@
 import asyncio
-import os
-import uuid
 import logging
+import os
 import time
+import uuid
 from dataclasses import dataclass
 
-from openevolve.database import Program, ProgramDatabase
 from openevolve.config import Config
+from openevolve.database import Program, ProgramDatabase
 from openevolve.evaluator import Evaluator
 from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.prompt.sampler import PromptSampler
@@ -63,8 +63,7 @@ async def run_iteration_with_shared_db(
         # Build prompt
         if config.prompt.programs_as_changes_description:
             parent_changes_desc = (
-                parent.changes_description
-                or config.prompt.initial_changes_description
+                parent.changes_description or config.prompt.initial_changes_description
             )
             child_changes_desc = parent_changes_desc
         else:
@@ -115,20 +114,34 @@ async def run_iteration_with_shared_db(
                     return None
 
                 child_code, _ = apply_diff_blocks(parent.code, code_blocks)
-                child_changes_desc, desc_applied = apply_diff_blocks(parent_changes_desc, desc_blocks)
+                child_changes_desc, desc_applied = apply_diff_blocks(
+                    parent_changes_desc, desc_blocks
+                )
 
                 # Must update the previous changes description
-                if desc_applied == 0 or not child_changes_desc.strip() or child_changes_desc.strip() == parent_changes_desc.strip():
+                if (
+                    desc_applied == 0
+                    or not child_changes_desc.strip()
+                    or child_changes_desc.strip() == parent_changes_desc.strip()
+                ):
                     logger.warning(
                         f"Iteration {iteration+1}: changes_description was not updated or empty, program is discarded"
                     )
                     return None
 
-                changes_summary = format_diff_summary(code_blocks)
+                changes_summary = format_diff_summary(
+                    code_blocks,
+                    max_line_len=config.prompt.diff_summary_max_line_len,
+                    max_lines=config.prompt.diff_summary_max_lines,
+                )
             else:
                 # All diffs applied only to code
                 child_code = apply_diff(parent.code, llm_response, config.diff_pattern)
-                changes_summary = format_diff_summary(diff_blocks)
+                changes_summary = format_diff_summary(
+                    diff_blocks,
+                    max_line_len=config.prompt.diff_summary_max_line_len,
+                    max_lines=config.prompt.diff_summary_max_lines,
+                )
         else:
             # Parse full rewrite
             new_code = parse_full_rewrite(llm_response, config.language)
