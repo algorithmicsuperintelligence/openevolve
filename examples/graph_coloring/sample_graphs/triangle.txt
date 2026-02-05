@@ -1,0 +1,6 @@
+# Simple triangle graph (K3)
+# Chromatic number = 3
+3
+0 1
+1 2
+0 2
