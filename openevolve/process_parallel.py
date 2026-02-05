@@ -5,14 +5,11 @@ Process-based parallel controller for true parallelism
 import asyncio
 import logging
 import multiprocessing as mp
-import pickle
-import signal
 import time
-from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures import BrokenExecutor, Future, ProcessPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
@@ -357,6 +354,10 @@ class ProcessParallelController:
         self.num_workers = config.evaluator.parallel_evaluations
         self.num_islands = config.database.num_islands
 
+        # Recovery tracking for process pool crashes
+        self.recovery_attempts = 0
+        self.max_recovery_attempts = 3  
+
         logger.info(f"Initialized process parallel controller with {self.num_workers} workers")
 
     def _serialize_config(self, config: Config) -> dict:
@@ -433,6 +434,38 @@ class ProcessParallelController:
             self.executor = None
 
         logger.info("Stopped process pool")
+
+    def _recover_process_pool(self, failed_iterations: list[int] | None = None) -> None:
+        """Recover from a crashed process pool by recreating it.
+
+        Args:
+            failed_iterations: List of iteration numbers that failed and need re-queuing
+        """
+        import gc
+
+        logger.warning("Process pool crashed, attempting recovery...")
+
+        # Shutdown broken executor without waiting (it's already broken)
+        if self.executor:
+            try:
+                self.executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass  # Executor may already be in bad state
+            self.executor = None
+
+        # Force garbage collection to free memory before restarting
+        gc.collect()
+
+        # Brief delay to let system stabilize (memory freed, processes cleaned up)
+        time.sleep(2.0)
+
+        # Recreate the pool
+        self.start()
+
+        if failed_iterations:
+            logger.info(f"Pool recovered. {len(failed_iterations)} iterations will be re-queued.")
+        else:
+            logger.info("Pool recovered successfully.")
 
     def request_shutdown(self) -> None:
         """Request graceful shutdown"""
@@ -558,6 +591,14 @@ class ProcessParallelController:
                 elif result.child_program_dict:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
+
+                    # Reset recovery counter on successful iteration
+                    if self.recovery_attempts > 0:
+                        logger.info(
+                            f"Pool stable after recovery, resetting recovery counter "
+                            f"(was {self.recovery_attempts})"
+                        )
+                        self.recovery_attempts = 0
 
                     # Add to database with explicit target_island to ensure proper island placement
                     # This fixes issue #391: children should go to the target island, not inherit
@@ -752,6 +793,38 @@ class ProcessParallelController:
                 )
                 # Cancel the future to clean up the process
                 future.cancel()
+            except BrokenExecutor as e:
+                logger.error(f"Process pool crashed during iteration {completed_iteration}: {e}")
+
+                # Collect all failed iterations from pending futures
+                failed_iterations = [completed_iteration] + list(pending_futures.keys())
+
+                # Clear pending futures (they're all invalid now)
+                pending_futures.clear()
+                for island_id in island_pending:
+                    island_pending[island_id].clear()
+
+                # Attempt recovery
+                self.recovery_attempts += 1
+                if self.recovery_attempts > self.max_recovery_attempts:
+                    logger.error(
+                        f"Max recovery attempts ({self.max_recovery_attempts}) exceeded. "
+                        f"Stopping evolution."
+                    )
+                    break
+
+                self._recover_process_pool(failed_iterations)
+
+                # Re-queue failed iterations (distribute across islands)
+                for i, failed_iter in enumerate(failed_iterations):
+                    if failed_iter < total_iterations:
+                        island_id = i % self.num_islands
+                        future = self._submit_iteration(failed_iter, island_id)
+                        if future:
+                            pending_futures[failed_iter] = future
+                            island_pending[island_id].append(failed_iter)
+
+                continue 
             except Exception as e:
                 logger.error(f"Error processing result from iteration {completed_iteration}: {e}")
 
@@ -822,6 +895,9 @@ class ProcessParallelController:
 
             return future
 
+        except BrokenExecutor:
+            # Let this propagate up to run_evolution for recovery
+            raise
         except Exception as e:
             logger.error(f"Error submitting iteration {iteration}: {e}")
             return None
