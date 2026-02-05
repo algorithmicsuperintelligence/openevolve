@@ -9,11 +9,11 @@ llm:
     # - name: "claude-sonnet-4-5-20250929"
     #   weight: 0.5
     #   api_base: "https://api.anthropic.com/v1"
-    #   api_key: "${ANTHROPIC_API_KEY}"
+    #   api_key: "<your-anthropic-api-key>"
     - name: "gemini-2.0-flash"
       weight: 1.0
       api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
-      api_key: "${GEMINI_API_KEY}"
+      api_key: "<your-gemini-api-key>"
   temperature: 0.9
   max_tokens: 8192
   timeout: 300

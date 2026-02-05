@@ -17,6 +17,17 @@ This problem has many real-world applications:
 
 ## Getting Started
 
+### Prerequisites
+
+1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (free tier available)
+2. Edit `config.yaml` and replace `<your-gemini-api-key>` with your actual API key
+
+Alternatively, to use Claude instead of Gemini:
+1. Get an Anthropic API key from [Anthropic Console](https://console.anthropic.com/)
+2. In `config.yaml`, uncomment the Claude model section and comment out Gemini
+
+### Running Evolution
+
 To run this example:
 
 ```bash
