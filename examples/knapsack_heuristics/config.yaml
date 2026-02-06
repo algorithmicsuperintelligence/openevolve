@@ -1,0 +1,102 @@
+# General settings
+max_iterations: 20
+checkpoint_interval: 5
+log_level: "INFO"
+language: "python"
+
+# LLM settings
+llm:
+  primary_model: "gemini-2.5-flash"
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  api_key: "${OPENAI_API_KEY}"
+  temperature: 0.7
+  max_tokens: 2048
+
+# Evolution settings
+diff_based_evolution: true
+
+# Database settings
+database:
+  population_size: 20
+  num_islands: 2
+  feature_dimensions: ["complexity", "combined_score"]
+
+# Evaluator configuration
+evaluator:
+  cascade_evaluation: false
+  parallel_evaluations: 1
+
+# Prompt settings
+prompt:
+  num_top_programs: 3
+  system_message: |
+    You are an expert algorithm designer. Your task is to evolve a heuristic for the 0/1 Knapsack problem.
+    The goal is to select a subset of items that maximizes the total value without exceeding the weight capacity.
+    
+    CRITICAL: You MUST use the Search & Replace format for all code modifications:
+    <<<<<<< SEARCH
+    [exact code to find]
+    =======
+    [replacement code]
+    >>>>>>> REPLACE
+    
+    Focus on implementation strategies that can outperform simple greedy approaches:
+    1. Consider multi-objective sorting criteria (value, weight, ratio, squared terms).
+    2. Implement look-ahead or local search steps.
+    3. Use probabilistic selection or adaptive weights.
+    4. Explore dynamic programming approximations suitable for heuristics.
+    
+    Ensure your `solve_knapsack` function:
+    - Takes `items` (list of dicts with 'value' and 'weight') and `capacity` (float).
+    - Returns a list of integer indices of the selected items.
+    - Is robust and handles edge cases.
+
+    For your reference, here is the evaluator code used to test your programs:
+    ```python
+    import importlib.util
+    import os
+    import sys
+    import random
+
+    def solve_knapsack_dp(items, capacity):
+        """Solves the 0/1 knapsack problem using dynamic programming to find the optimal value."""
+        n = len(items)
+        dp = [[0 for _ in range(capacity + 1)] for _ in range(n + 1)]
+
+        for i in range(1, n + 1):
+            for w in range(1, capacity + 1):
+                if items[i - 1]["weight"] <= w:
+                    dp[i][w] = max(
+                        items[i - 1]["value"] + dp[i - 1][w - items[i - 1]["weight"]],
+                        dp[i - 1][w],
+                    )
+                else:
+                    dp[i][w] = dp[i - 1][w]
+        return dp[n][capacity]
+
+    def generate_difficult_instance(n, weight_range=(10, 100), correlation="strong"):
+        items = []
+        total_weight = 0
+        for _ in range(n):
+            w = random.randint(*weight_range)
+            if correlation == "strong":
+                v = w + 10
+            elif correlation == "weak":
+                v = max(1, w + random.randint(-5, 5))
+            elif correlation == "uncorrelated":
+                v = random.randint(10, 100)
+            elif correlation == "inverse":
+                v = int(w * (0.8 + random.random() * 0.4))
+            else:
+                v = random.randint(10, 100)
+            items.append({"value": v, "weight": w})
+            total_weight += w
+
+        capacity = int(total_weight * 0.3)
+        optimal_value = solve_knapsack_dp(items, capacity)
+        return {"capacity": capacity, "items": items, "optimal_value": optimal_value}
+
+    def evaluate(module_path):
+        # ... (implementation details for testing solve_knapsack)
+        pass
+    ```
