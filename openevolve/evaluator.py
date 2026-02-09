@@ -210,7 +210,7 @@ class Evaluator:
                             accuracy = eval_result.metrics["combined_score"]
                             # Combine with LLM average (70% accuracy, 30% LLM quality)
                             eval_result.metrics["combined_score"] = (
-                                accuracy * 0.7 + llm_average * 0.3
+                                accuracy * (1-self.config.llm_feedback_weight) + llm_average * self.config.llm_feedback_weight
                             )
 
                 # Store artifacts if enabled and present
