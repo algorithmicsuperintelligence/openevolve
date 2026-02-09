@@ -55,6 +55,7 @@ class Program:
     generation: int = 0
     timestamp: float = field(default_factory=time.time)
     iteration_found: int = 0  # Track which iteration this program was found
+    model_id: Optional[int] = None # Track the id of the model that generated this program
 
     # Performance metrics
     metrics: Dict[str, float] = field(default_factory=dict)
@@ -1016,10 +1017,10 @@ class ProgramDatabase:
                             messages=[{"role": "user", "content": user_msg}],
                         ),
                     )
-                    content: str = future.result()
+                    content, _model_id = future.result()
             except RuntimeError:
                 # No event loop running, safe to use asyncio.run()
-                content: str = asyncio.run(
+                content, _model_id = asyncio.run(
                     self.novelty_llm.generate_with_context(
                         system_message=NOVELTY_SYSTEM_MSG,
                         messages=[{"role": "user", "content": user_msg}],

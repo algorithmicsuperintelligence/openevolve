@@ -17,7 +17,9 @@ class TestLLMEnsemble(unittest.TestCase):
         ensemble = LLMEnsemble(models)
         # Should always sample model 'b'
         for _ in range(10):
-            self.assertEqual(ensemble._sample_model().model, "b")
+            model, model_id = ensemble._sample_model()
+            self.assertEqual(model.model, "b")
+            self.assertEqual(model_id, 1)
 
         models = [
             LLMModelConfig(name="a", weight=0.3, api_key="test", api_base="http://test"),
@@ -25,11 +27,12 @@ class TestLLMEnsemble(unittest.TestCase):
             LLMModelConfig(name="c", weight=0.3, api_key="test", api_base="http://test"),
         ]
         ensemble = LLMEnsemble(models)
-        # Should sample both models. Track sampled models in a set
+        # Should sample all models. Track sampled models in a set
         sampled_models = set()
         for _ in range(1000):
-            sampled_models.add(ensemble._sample_model().model)
-            # Cancel once we have both models
+            model, model_id = ensemble._sample_model()
+            sampled_models.add(model.model)
+            # Cancel once we have all models
             if len(sampled_models) == len(models):
                 break
         self.assertEqual(len(sampled_models), len(models))

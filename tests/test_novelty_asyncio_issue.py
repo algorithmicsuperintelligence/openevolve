@@ -15,11 +15,11 @@ from openevolve.database import Program, ProgramDatabase
 
 
 class MockLLM:
-    """Mock LLM that implements the async interface"""
+    """Mock LLM that implements the LLMEnsemble async interface"""
 
     async def generate_with_context(self, system_message: str, messages: list):
-        """Mock async generate method that returns NOVEL"""
-        return "NOVEL"
+        """Mock async generate method that returns NOVEL with model_id"""
+        return "NOVEL", 0
 
 
 class TestNoveltyAsyncioIssue(unittest.TestCase):

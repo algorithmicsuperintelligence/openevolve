@@ -197,7 +197,7 @@ def _run_iteration_worker(
 
         # Generate code modification (sync wrapper for async)
         try:
-            llm_response = asyncio.run(
+            llm_response, model_id = asyncio.run(
                 _worker_llm_ensemble.generate_with_context(
                     system_message=prompt["system"],
                     messages=[{"role": "user", "content": prompt["user"]}],
@@ -304,6 +304,7 @@ def _run_iteration_worker(
             generation=parent.generation + 1,
             metrics=child_metrics,
             iteration_found=iteration,
+            model_id=model_id,
             metadata={
                 "changes": changes_summary,
                 "parent_metrics": parent.metrics,

@@ -55,39 +55,71 @@ class LLMEnsemble:
             )
             logger._ensemble_logged = True
 
-    async def generate(self, prompt: str, **kwargs) -> str:
-        """Generate text using a randomly selected model based on weights"""
-        model = self._sample_model()
-        return await model.generate(prompt, **kwargs)
+    async def generate(self, prompt: str, **kwargs) -> Tuple[str, int]:
+        """Generate text using a randomly selected model based on weights
+
+        Returns:
+            Tuple of (generated_text, model_id) where model_id is the index
+            of the selected model in the ensemble
+        """
+        model, model_id = self._sample_model()
+        response = await model.generate(prompt, **kwargs)
+        return response, model_id
 
     async def generate_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
-    ) -> str:
-        """Generate text using a system message and conversational context"""
-        model = self._sample_model()
-        return await model.generate_with_context(system_message, messages, **kwargs)
+    ) -> Tuple[str, int]:
+        """Generate text using a system message and conversational context
 
-    def _sample_model(self) -> LLMInterface:
-        """Sample a model from the ensemble based on weights"""
+        Returns:
+            Tuple of (generated_text, model_id) where model_id is the index
+            of the selected model in the ensemble
+        """
+        model, model_id = self._sample_model()
+        response = await model.generate_with_context(system_message, messages, **kwargs)
+        return response, model_id
+
+    def _sample_model(self) -> Tuple[LLMInterface, int]:
+        """Sample a model from the ensemble based on weights
+
+        Returns:
+            Tuple of (model, model_id) where model_id is the index of the
+            selected model in the ensemble
+        """
         index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
         sampled_model = self.models[index]
         logger.info(f"Sampled model: {vars(sampled_model)['model']}")
-        return sampled_model
+        return sampled_model, index
 
-    async def generate_multiple(self, prompt: str, n: int, **kwargs) -> List[str]:
-        """Generate multiple texts in parallel"""
+    async def generate_multiple(self, prompt: str, n: int, **kwargs) -> List[Tuple[str, int]]:
+        """Generate multiple texts in parallel
+
+        Returns:
+            List of (generated_text, model_id) tuples where model_id is the
+            index of the selected model in the ensemble
+        """
         tasks = [self.generate(prompt, **kwargs) for _ in range(n)]
         return await asyncio.gather(*tasks)
 
-    async def parallel_generate(self, prompts: List[str], **kwargs) -> List[str]:
-        """Generate responses for multiple prompts in parallel"""
+    async def parallel_generate(self, prompts: List[str], **kwargs) -> List[Tuple[str, int]]:
+        """Generate responses for multiple prompts in parallel
+
+        Returns:
+            List of (generated_text, model_id) tuples where model_id is the
+            index of the selected model in the ensemble
+        """
         tasks = [self.generate(prompt, **kwargs) for prompt in prompts]
         return await asyncio.gather(*tasks)
 
     async def generate_all_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
-    ) -> str:
-        """Generate text using a all available models and average their returned metrics"""
+    ) -> List[str]:
+        """Generate text using all available models and average their returned metrics
+
+        Returns:
+            List of generated texts, one per model in the ensemble (order matches
+            self.models). The model_id for each response is its index in the list.
+        """
         responses = []
         for model in self.models:
             responses.append(await model.generate_with_context(system_message, messages, **kwargs))
