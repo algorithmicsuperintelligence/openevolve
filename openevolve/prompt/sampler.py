@@ -62,6 +62,7 @@ class PromptSampler:
         template_key: Optional[str] = None,
         program_artifacts: Optional[Dict[str, Union[str, bytes]]] = None,
         feature_dimensions: Optional[List[str]] = None,
+        current_changes_description: Optional[str] = None,
         **kwargs: Any,
     ) -> Dict[str, str]:
         """
@@ -107,6 +108,17 @@ class PromptSampler:
             if system_message in self.template_manager.templates:
                 system_message = self.template_manager.get_template(system_message)
 
+        if self.config.programs_as_changes_description:
+            if self.config.system_message_changes_description:
+                system_message_changes_description = self.config.system_message_changes_description.strip()
+            else:
+                system_message_changes_description = self.template_manager.get_template("system_message_changes_description")
+
+            system_message = self.template_manager.get_template("system_message_with_changes_description").format(
+                system_message=system_message,
+                system_message_changes_description=system_message_changes_description,
+            )
+
         # Format metrics
         metrics_str = self._format_metrics(program_metrics)
 
@@ -147,6 +159,12 @@ class PromptSampler:
             artifacts=artifacts_section,
             **kwargs,
         )
+
+        if self.config.programs_as_changes_description:
+            user_message = self.template_manager.get_template("user_message_with_changes_description").format(
+                user_message=user_message,
+                changes_description=current_changes_description.rstrip(),
+            )
 
         return {
             "system": system_message,
@@ -247,7 +265,12 @@ class PromptSampler:
 
         for i, program in enumerate(reversed(selected_previous)):
             attempt_number = len(previous_programs) - i
-            changes = program.get("metadata", {}).get("changes", self.template_manager.get_fragment("attempt_unknown_changes"))
+            changes = (
+                program.get("changes_description")
+                or program.get("metadata", {}).get(
+                    "changes", self.template_manager.get_fragment("attempt_unknown_changes")
+                )
+            )
 
             # Format performance metrics using safe formatting
             performance_parts = []
@@ -309,8 +332,14 @@ class PromptSampler:
         selected_top = top_programs[: min(self.config.num_top_programs, len(top_programs))]
 
         for i, program in enumerate(selected_top):
-            # Use the full program code
-            program_code = program.get("code", "")
+            use_changes = self.config.programs_as_changes_description
+            program_code = (
+                program.get("changes_description", "")
+                if use_changes
+                else program.get("code", "")
+            )
+            if not program_code:
+                program_code = "<missing changes_description>" if use_changes else ""
 
             # Calculate fitness score (prefers combined_score, excludes feature dimensions)
             score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
@@ -334,7 +363,7 @@ class PromptSampler:
                 top_program_template.format(
                     program_number=i + 1,
                     score=f"{score:.4f}",
-                    language=language,
+                    language=("text" if self.config.programs_as_changes_description else language),
                     program_snippet=program_code,
                     key_features=key_features_str,
                 )
@@ -359,8 +388,14 @@ class PromptSampler:
                 diverse_programs_str += "\n\n## " + self.template_manager.get_fragment("diverse_programs_title") + "\n\n"
 
                 for i, program in enumerate(diverse_programs):
-                    # Use the full program code
-                    program_code = program.get("code", "")
+                    use_changes = self.config.programs_as_changes_description
+                    program_code = (
+                        program.get("changes_description", "")
+                        if use_changes
+                        else program.get("code", "")
+                    )
+                    if not program_code:
+                        program_code = "<missing changes_description>" if use_changes else ""
 
                     # Calculate fitness score (prefers combined_score, excludes feature dimensions)
                     score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
@@ -381,7 +416,7 @@ class PromptSampler:
                         top_program_template.format(
                             program_number=f"D{i + 1}",
                             score=f"{score:.4f}",
-                            language=language,
+                            language=("text" if self.config.programs_as_changes_description else language),
                             program_snippet=program_code,
                             key_features=key_features_str,
                         )
@@ -429,8 +464,14 @@ class PromptSampler:
         inspiration_programs_str = ""
 
         for i, program in enumerate(inspirations):
-            # Use the full program code
-            program_code = program.get("code", "")
+            use_changes = self.config.programs_as_changes_description
+            program_code = (
+                program.get("changes_description", "")
+                if use_changes
+                else program.get("code", "")
+            )
+            if not program_code:
+                program_code = "<missing changes_description>" if use_changes else ""
 
             # Calculate fitness score (prefers combined_score, excludes feature dimensions)
             score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
@@ -446,7 +487,7 @@ class PromptSampler:
                     program_number=i + 1,
                     score=f"{score:.4f}",
                     program_type=program_type,
-                    language=language,
+                    language=("text" if self.config.programs_as_changes_description else language),
                     program_snippet=program_code,
                     unique_features=unique_features,
                 )

@@ -1,72 +1,65 @@
 {
-  "id": "27d8cd88-e7b7-4191-8edf-4c60e9a778e1",
+  "id": "2e9e8c13-2259-4908-92fb-a7b58d588abf",
   "generation": 2,
-  "iteration": 10,
-  "timestamp": 1750235175.896826,
-  "parent_id": "6c1c6009-4246-4e9b-9cec-4fd45bcbc10b",
+  "iteration": 23,
+  "timestamp": 1767618428.986909,
+  "parent_id": "2eada941-048f-4828-b81c-786434f63240",
   "metrics": {
     "success": true,
-    "final_score": 83.51156342903792,
+    "final_score": 2.9589006960980697,
+    "combined_score": 2.9589006960980697,
     "performance_metrics": {
-      "avg_decode_speed": 168.68739999999997,
-      "min_decode_speed": 144.906,
-      "max_decode_speed": 186.18,
-      "avg_prefill_speed": 2682.1746,
-      "avg_memory_gb": 1.6726000000000003,
-      "max_memory_gb": 2.709,
-      "num_successful_tests": 5,
-      "decode_speed_std": 13.33772465752686
+      "avg_decode_speed": 53.41525,
+      "min_decode_speed": 46.023,
+      "max_decode_speed": 63.108,
+      "avg_prefill_speed": 244.14375,
+      "avg_memory_gb": 1.39325,
+      "max_memory_gb": 1.554,
+      "num_successful_tests": 4,
+      "decode_speed_std": 7.40971879948895
     },
     "correctness_score": 1.0,
     "benchmark_results": [
       {
         "name": "short_context_quick",
-        "decode_tokens_per_sec": 186.18,
-        "prefill_tokens_per_sec": 455.084,
-        "peak_memory_gb": 1.243,
+        "decode_tokens_per_sec": 63.108,
+        "prefill_tokens_per_sec": 135.605,
+        "peak_memory_gb": 1.35,
         "generated_tokens": 50,
-        "total_time_sec": 2.4132528747431934
+        "total_time_sec": 4.579478166997433
       },
       {
         "name": "code_generation",
-        "decode_tokens_per_sec": 171.724,
-        "prefill_tokens_per_sec": 1939.369,
-        "peak_memory_gb": 1.309,
+        "decode_tokens_per_sec": 58.112,
+        "prefill_tokens_per_sec": 355.6,
+        "peak_memory_gb": 1.291,
         "generated_tokens": 300,
-        "total_time_sec": 3.8924263338558376
+        "total_time_sec": 9.802399624997634
       },
       {
         "name": "long_context_detailed",
-        "decode_tokens_per_sec": 169.006,
-        "prefill_tokens_per_sec": 4779.844,
-        "peak_memory_gb": 1.758,
+        "decode_tokens_per_sec": 46.023,
+        "prefill_tokens_per_sec": 303.484,
+        "peak_memory_gb": 1.554,
         "generated_tokens": 500,
-        "total_time_sec": 5.188338624779135
+        "total_time_sec": 17.30625654100004
       },
       {
         "name": "long_generation",
-        "decode_tokens_per_sec": 171.621,
-        "prefill_tokens_per_sec": 539.066,
-        "peak_memory_gb": 1.344,
+        "decode_tokens_per_sec": 46.418,
+        "prefill_tokens_per_sec": 181.886,
+        "peak_memory_gb": 1.378,
         "generated_tokens": 1000,
-        "total_time_sec": 8.105362374801189
-      },
-      {
-        "name": "maximum_context_stress_test",
-        "decode_tokens_per_sec": 144.906,
-        "prefill_tokens_per_sec": 5697.51,
-        "peak_memory_gb": 2.709,
-        "generated_tokens": 1642,
-        "total_time_sec": 13.786608333233744
+        "total_time_sec": 27.308918209004332
       }
     ],
     "baseline_comparison": {
-      "avg_decode_improvement_pct": 21.823854476345975,
-      "avg_decode_improvement_absolute": 28.054599999999965,
-      "memory_change_gb": -0.0039999999999997815,
-      "target_achieved": true,
-      "num_benchmarks_improved": 4,
-      "total_benchmarks": 5,
+      "avg_decode_improvement_pct": -3.199533101300643,
+      "avg_decode_improvement_absolute": -1.6237500000000011,
+      "memory_change_gb": -0.005749999999999922,
+      "target_achieved": false,
+      "num_benchmarks_improved": 1,
+      "total_benchmarks": 4,
       "safety_score": 100.0
     },
     "individual_comparisons": [
@@ -74,134 +67,108 @@
         "benchmark_name": "short_context_quick",
         "baseline": {
           "name": "short_context_quick",
-          "decode_tokens_per_sec": 186.576,
-          "prefill_tokens_per_sec": 469.722,
-          "peak_memory_gb": 1.243,
+          "decode_tokens_per_sec": 59.061,
+          "prefill_tokens_per_sec": 48.778,
+          "peak_memory_gb": 1.416,
           "generated_tokens": 50,
-          "total_time_sec": 2.4104648330248892
+          "total_time_sec": 4.753752667005756
         },
         "custom": {
           "name": "short_context_quick",
-          "decode_tokens_per_sec": 186.18,
-          "prefill_tokens_per_sec": 455.084,
-          "peak_memory_gb": 1.243,
+          "decode_tokens_per_sec": 63.108,
+          "prefill_tokens_per_sec": 135.605,
+          "peak_memory_gb": 1.35,
           "generated_tokens": 50,
-          "total_time_sec": 2.4132528747431934
+          "total_time_sec": 4.579478166997433
         },
         "improvements": {
-          "decode_speed_pct": -0.212245948031894,
-          "prefill_speed_pct": -3.1163113501177246,
-          "total_speed_pct": -0.11553044222939006,
-          "memory_reduction_pct": 0.0,
-          "time_reduction_pct": -0.11553044222938498
+          "decode_speed_pct": 6.852237517143288,
+          "prefill_speed_pct": 178.00442822583952,
+          "total_speed_pct": 3.80555368216958,
+          "memory_reduction_pct": 4.888888888888877,
+          "time_reduction_pct": 3.80555368216959
         }
       },
       {
         "benchmark_name": "code_generation",
         "baseline": {
           "name": "code_generation",
-          "decode_tokens_per_sec": 134.074,
-          "prefill_tokens_per_sec": 1889.968,
-          "peak_memory_gb": 1.309,
+          "decode_tokens_per_sec": 58.335,
+          "prefill_tokens_per_sec": 214.398,
+          "peak_memory_gb": 1.277,
           "generated_tokens": 300,
-          "total_time_sec": 4.502297374885529
+          "total_time_sec": 9.370090207994508
         },
         "custom": {
           "name": "code_generation",
-          "decode_tokens_per_sec": 171.724,
-          "prefill_tokens_per_sec": 1939.369,
-          "peak_memory_gb": 1.309,
+          "decode_tokens_per_sec": 58.112,
+          "prefill_tokens_per_sec": 355.6,
+          "peak_memory_gb": 1.291,
           "generated_tokens": 300,
-          "total_time_sec": 3.8924263338558376
+          "total_time_sec": 9.802399624997634
         },
         "improvements": {
-          "decode_speed_pct": 28.081507227352038,
-          "prefill_speed_pct": 2.613853779534883,
-          "total_speed_pct": 15.668146002536007,
-          "memory_reduction_pct": 0.0,
-          "time_reduction_pct": 15.668146002535993
+          "decode_speed_pct": -0.382274792148794,
+          "prefill_speed_pct": 65.85975615444175,
+          "total_speed_pct": -4.41024069147997,
+          "memory_reduction_pct": -1.0844306738962055,
+          "time_reduction_pct": -4.4102406914799674
         }
       },
       {
         "benchmark_name": "long_context_detailed",
         "baseline": {
           "name": "long_context_detailed",
-          "decode_tokens_per_sec": 123.595,
-          "prefill_tokens_per_sec": 4699.778,
-          "peak_memory_gb": 1.758,
+          "decode_tokens_per_sec": 54.724,
+          "prefill_tokens_per_sec": 853.686,
+          "peak_memory_gb": 1.543,
           "generated_tokens": 500,
-          "total_time_sec": 6.304242457728833
+          "total_time_sec": 13.029723457999353
         },
         "custom": {
           "name": "long_context_detailed",
-          "decode_tokens_per_sec": 169.006,
-          "prefill_tokens_per_sec": 4779.844,
-          "peak_memory_gb": 1.758,
+          "decode_tokens_per_sec": 46.023,
+          "prefill_tokens_per_sec": 303.484,
+          "peak_memory_gb": 1.554,
           "generated_tokens": 500,
-          "total_time_sec": 5.188338624779135
+          "total_time_sec": 17.30625654100004
         },
         "improvements": {
-          "decode_speed_pct": 36.741777579999194,
-          "prefill_speed_pct": 1.7036123833934242,
-          "total_speed_pct": 21.507922162601755,
-          "memory_reduction_pct": 0.0,
-          "time_reduction_pct": 21.50792216260174
+          "decode_speed_pct": -15.899788027190983,
+          "prefill_speed_pct": -64.45016083196866,
+          "total_speed_pct": -24.710907716346416,
+          "memory_reduction_pct": -0.7078507078507156,
+          "time_reduction_pct": -24.710907716346423
         }
       },
       {
         "benchmark_name": "long_generation",
         "baseline": {
           "name": "long_generation",
-          "decode_tokens_per_sec": 129.401,
-          "prefill_tokens_per_sec": 562.184,
-          "peak_memory_gb": 1.364,
+          "decode_tokens_per_sec": 48.036,
+          "prefill_tokens_per_sec": 164.979,
+          "peak_memory_gb": 1.36,
           "generated_tokens": 1000,
-          "total_time_sec": 9.933118666987866
+          "total_time_sec": 26.132775457997923
         },
         "custom": {
           "name": "long_generation",
-          "decode_tokens_per_sec": 171.621,
-          "prefill_tokens_per_sec": 539.066,
-          "peak_memory_gb": 1.344,
+          "decode_tokens_per_sec": 46.418,
+          "prefill_tokens_per_sec": 181.886,
+          "peak_memory_gb": 1.378,
           "generated_tokens": 1000,
-          "total_time_sec": 8.105362374801189
+          "total_time_sec": 27.308918209004332
         },
         "improvements": {
-          "decode_speed_pct": 32.62725944930873,
-          "prefill_speed_pct": -4.112176796209059,
-          "total_speed_pct": 22.549963933370833,
-          "memory_reduction_pct": 1.4880952380952395,
-          "time_reduction_pct": 22.549963933370833
-        }
-      },
-      {
-        "benchmark_name": "maximum_context_stress_test",
-        "baseline": {
-          "name": "maximum_context_stress_test",
-          "decode_tokens_per_sec": 129.518,
-          "prefill_tokens_per_sec": 5305.524,
-          "peak_memory_gb": 2.709,
-          "generated_tokens": 1642,
-          "total_time_sec": 15.313574125058949
-        },
-        "custom": {
-          "name": "maximum_context_stress_test",
-          "decode_tokens_per_sec": 144.906,
-          "prefill_tokens_per_sec": 5697.51,
-          "peak_memory_gb": 2.709,
-          "generated_tokens": 1642,
-          "total_time_sec": 13.786608333233744
-        },
-        "improvements": {
-          "decode_speed_pct": 11.880974073101811,
-          "prefill_speed_pct": 7.388261743797594,
-          "total_speed_pct": 11.075717500034658,
-          "memory_reduction_pct": 0.0,
-          "time_reduction_pct": 11.07571750003465
+          "decode_speed_pct": -3.368307103006083,
+          "prefill_speed_pct": 10.247970953878967,
+          "total_speed_pct": -4.306808281474169,
+          "memory_reduction_pct": -1.3062409288824235,
+          "time_reduction_pct": -4.306808281474182
         }
       }
     ],
-    "summary": "Bulletproof Custom GQA Implementation Results:\n\u2022 Decode Speed: 168.7 tokens/sec (baseline: 140.6)\n\u2022 Improvement: +21.8%\n\u2022 Memory Usage: 1.67 GB\n\u2022 Correctness: 100.0%\n\u2022 Safety Score: 100.0/100\n\u2022 Tests Passed: 5/5\n\u2022 Benchmarks Improved: 4/5\n\u2022 Metal Errors Handled: 0\n\ud83d\udee1\ufe0f  PERFECT SAFETY: No Metal kernel errors\n\ud83c\udfaf EXCELLENT: 15%+ improvement achieved!",
+    "summary": "Bulletproof Custom GQA Implementation Results:\n\u2022 Decode Speed: 53.4 tokens/sec (baseline: 55.0)\n\u2022 Improvement: -3.2%\n\u2022 Memory Usage: 1.39 GB\n\u2022 Correctness: 100.0%\n\u2022 Safety Score: 100.0/100\n\u2022 Tests Passed: 4/4\n\u2022 Benchmarks Improved: 1/4\n\u2022 Metal Errors Handled: 0\n\ud83d\udee1\ufe0f  PERFECT SAFETY: No Metal kernel errors\n\u26a0\ufe0f  NO IMPROVEMENT: Performance regression",
     "metal_safety_statistics": {
       "metal_command_buffer_errors": 0,
       "metal_memory_violations": 0,
@@ -224,5 +191,5 @@
     }
   },
   "language": "python",
-  "saved_at": 1750241608.788107
+  "saved_at": 1767619206.585282
 }

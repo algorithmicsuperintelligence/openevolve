@@ -1,0 +1,249 @@
+:root {
+  --bg: #0b0d10;
+  --card: #151a21;
+  --muted: #8b95a7;
+  --text: #e7ecf3;
+  --accent: #4e9eff;
+  --border: #2a3340;
+  --surface: #ffffff;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+}
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02); position: sticky; top: 0; backdrop-filter: blur(6px);
+}
+.topbar h1 { margin: 0; font-size: 16px; }
+
+.container { padding: 18px; max-width: 1000px; margin: 0 auto; }
+
+.task-list { display: grid; gap: 12px; }
+.task-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.task-meta { display: flex; gap: 12px; align-items: baseline; }
+.task-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+.task-created { color: var(--muted); font-size: 12px; }
+.task-model { color: var(--text); font-weight: 600; }
+
+button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  color: #00132b;
+  border-color: transparent;
+}
+button.ghost { opacity: 0.9; }
+button:hover { filter: brightness(1.05); }
+button:active { transform: translateY(1px); }
+
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 20;
+}
+
+/* You kept absolute fullscreen modal; keeping it */
+.modal {
+  position: fixed;
+  top: 0; bottom: 0; left: 0; right: 0;
+  height: 100%; width: 100%;
+  background: var(--surface);
+  color: #0c1117;
+  z-index: 30;
+  display: flex; flex-direction: column;
+  box-shadow: 0 16px 80px rgba(0,0,0,0.45);
+  overflow: hidden; /* keep inner scrollbars inside */
+}
+
+.hidden { display: none; }
+
+.icon-btn {
+  background: transparent; border: none; color: #111827; cursor: pointer;
+}
+.close-btn {
+  position: absolute; top: 14px; right: 14px; width: 36px; height: 36px;
+  display: grid; place-items: center; border-radius: 9px; padding: 0;
+}
+.close-btn:hover { background: rgba(0,0,0,0.06); }
+
+.modal-body {
+  position: absolute;
+  top: 14px; left: 14px; right: 64px; bottom: 14px;
+  height: 100%;
+  min-height: 0; /* critical for inner scrollers */
+}
+
+/* Panes in two columns using absolute math as you prefer */
+.pane {
+  position: absolute;
+  background: #f7f8fa;
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  min-height: 0; /* allow inner scrollers to work */
+  width: calc(50% - 14px);
+  height: calc(100% - 14px);
+  display: flex; flex-direction: column;
+}
+
+.left { right: calc(50% + 5px); }
+.right { left:  calc(50% + 5px); }
+
+.pane-title {
+  font-weight: 700; font-size: 12px; color: #4b5563; padding: 10px 8px;
+}
+
+/* Monaco containers fill the available pane height */
+.editor-host {
+  position: absolute;
+  /* top: 42px;   below .pane-title (~32 + padding) */
+  /* top: 6px !important; */
+  left: 10px;
+  right: 10px;
+  bottom: 52px; /* leave room for bottom buttons */
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  overflow: hidden; /* Monaco manages inner scrollbars */
+}
+
+.right .editor-host {
+  top: 6px !important;
+}
+
+/* Right pane puts a placeholder atop the editor until there's content */
+.editor-wrapper { position: relative; height: calc(100% - 42px); }
+
+/* buttons stay where you had them */
+.copy-btn {
+  position: absolute; right: 12px; bottom: 12px;
+  background: #eef3ff; color: #0c2050; border-color: #d8e2ff;
+}
+.complete-btn {
+  position: absolute; right: 12px; bottom: 12px;
+}
+
+/* Make the text cursor appear when hovering editors (I-beam) */
+#promptEditor, #answerEditor { cursor: text; }
+
+/* Mobile adjustments still apply via your existing media queries */
+
+/* ---------- Code viewers (both sides) ---------- */
+.code-viewer {
+  position: relative;
+  flex: 1;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+  background: #0f1720;
+  color: #e6edf3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.5;
+  padding: 12px;
+  overflow: auto;
+  counter-reset: line;
+  user-select: text;        /* allow text selection */
+  cursor: text;             /* I-beam */
+  outline: none;            /* we provide our own focus style */
+}
+
+/* Focus ring for accessibility */
+.code-viewer:focus-visible {
+  box-shadow: 0 0 0 2px rgba(78,158,255,0.75) inset;
+}
+
+/* Blue theme for the editor side */
+.code-viewer.editor {
+  background: linear-gradient(180deg, #0f1720 0%, #0e1b2e 100%);
+}
+
+/* Readonly just changes caret behavior */
+.code-viewer.readonly { caret-color: transparent; }
+
+/* --- Line layout: works for read-only (.line elements) and editable (> div lines) --- */
+.code-viewer .line,
+.code-viewer.editor > div {
+  display: block;
+  white-space: pre;
+  padding-left: 52px;
+  position: relative;
+}
+
+/* line numbers */
+.code-viewer .line::before,
+.code-viewer.editor > div::before {
+  counter-increment: line;
+  content: counter(line);
+  position: absolute; left: 10px; width: 32px;
+  text-align: right; color: #7a8696;
+}
+
+/* active line highlight */
+.code-viewer .line.active,
+.code-viewer.editor > div.active {
+  background: rgba(78,158,255,0.15);
+}
+
+/* placeholder for editor when empty */
+.code-viewer.editor:empty::before {
+  content: attr(data-placeholder);
+  color: #7a8696; opacity: 0.7;
+  padding-left: 52px;
+  display: block;
+}
+
+/* Copy/Complete buttons */
+.copy-btn {
+  position: absolute; right: 12px; bottom: 12px;
+  background: #eef3ff; color: #0c2050; border-color: #d8e2ff;
+}
+.complete-btn {
+  position: absolute; right: 12px; bottom: 12px;
+}
+
+/* mobile */
+@media (max-width: 900px) {
+  .modal { inset: 0; }
+  .modal-body { left: 8px; right: 8px; }
+  .pane { width: calc(100% - 0px); left: 0; right: 0; }
+  .left { top: 0; height: calc(50% - 8px); }
+  .right { bottom: 0; height: calc(50% - 8px); }
+}
+
+
+/* Monaco containers fill the available pane height */
+.editor-host {
+  position: absolute;
+  top: 42px;     /* below .pane-title */
+  left: 10px;
+  right: 10px;
+  bottom: 52px;  /* leave room for bottom buttons */
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.editor-wrapper { position: relative; height: calc(100% - 42px); }
+
+/* buttons stay where you had them */
+.copy-btn {
+  position: absolute; right: 12px; bottom: 12px;
+  background: #eef3ff; color: #0c2050; border-color: #d8e2ff;
+}
+.complete-btn { position: absolute; right: 12px; bottom: 12px; }
+
+/* I-beam cursor when hovering editors */
+#promptEditor, #answerEditor { cursor: text; }

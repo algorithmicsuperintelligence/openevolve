@@ -1,0 +1,60 @@
+# Configuration for breaking through the circle packing plateau
+max_iterations: 100
+checkpoint_interval: 10
+log_level: "INFO"
+
+# LLM configuration
+llm:
+  primary_model: "claude-sonnet-4-5-20250929"
+  primary_model_weight: 0.8
+  secondary_model: "claude-opus-4-5-20251101"
+  secondary_model_weight: 0.2
+  api_base: "https://api.anthropic.com/v1"
+  api_key: "${ANTHROPIC_API_KEY}"
+  temperature: 0.7
+  top_p: null
+  max_tokens: 8192
+  timeout: 600
+
+# Prompt configuration
+prompt:
+  system_message: |
+    You are an expert mathematician specializing in circle packing problems and computational geometry. We're trying to reach the AlphaEvolve target of 2.635 for the sum of radii when packing 26 circles in a unit square. The current implementation has plateaued at 2.377, so we need significant improvements.
+
+    Key insights to explore:
+    1. The optimal arrangement likely involves variable-sized circles
+    2. A pure hexagonal arrangement may not be optimal due to edge effects
+    3. The densest known circle packings often use a hybrid approach
+    4. STRONGLY RECOMMENDED: Formulate this as a constrained optimization problem.
+       - Use `scipy.optimize.minimize` with the 'SLSQP' method.
+       - Define the objective function as minimizing the negative sum of radii.
+       - Define constraints to ensure no circle overlaps and all circles stay within bounds.
+       - This approach is mathematically superior to custom physics simulations for this specific problem.
+    5. Consider strategic placement of circles at square corners and edges
+    6. Adjusting the pattern to place larger circles at the center and smaller at the edges
+    7. The math literature suggests special arrangements for specific values of n
+
+    Focus on breaking through the plateau by using numerical optimization libraries like scipy rather than writing custom solvers.
+  num_top_programs: 4
+  use_template_stochasticity: true
+
+# Database configuration
+database:
+  population_size: 70 # Larger population for more diversity
+  archive_size: 30
+  num_islands: 5
+  elite_selection_ratio: 0.3
+  exploitation_ratio: 0.6 # Slightly lower to encourage exploration
+
+# Evaluator configuration
+evaluator:
+  timeout: 90 # Extended timeout to allow for more complex optimization
+  cascade_evaluation: true
+  cascade_thresholds: [0.5, 0.8]
+  parallel_evaluations: 4
+  use_llm_feedback: false
+
+# Evolution settings
+diff_based_evolution: false
+allow_full_rewrites: true # Definitely allow full rewrites
+max_code_length: 100000

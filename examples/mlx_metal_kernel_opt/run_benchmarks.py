@@ -147,38 +147,19 @@ def run_optimized_benchmark(args, original_dir):
             )
             return None
 
-        # Apply the custom attention hook
-        apply_hook, remove_hook = best_program.create_metal_qwen3_optimization_hook()
-        print("🔧 Applying custom Metal kernel optimized attention hook...")
+        # IMPORTANT: the benchmark suite runs `mlx_lm.generate` in a subprocess.
+        # Monkey-patching Attention in this parent process does not propagate to the subprocess.
+        # Instead, we pass the evolved program path so the subprocess can apply the hook in-process.
 
-        original_attention = apply_hook()
+        print("📊 Running full benchmark suite with custom Metal kernel optimization...")
+        print("⏳ This will take another 15-30 minutes...")
+        print("💡 The optimization uses a custom Metal kernel implementation for Apple Silicon GPU")
 
-        if original_attention is None:
-            print("❌ Failed to apply custom Metal kernel optimization hook")
-            print("This may indicate MLX-LM import issues or incompatible environment")
-            return None
+        optimized_suite = Qwen3BenchmarkSuite(args.model, hook_program_path=best_program_path)
+        optimized_results = optimized_suite.run_full_benchmark_suite()
 
-        print("✅ Custom Metal kernel optimization hook applied successfully")
-
-        try:
-            # Run benchmarks with optimized attention
-            print("📊 Running full benchmark suite with custom Metal kernel optimization...")
-            print("⏳ This will take another 15-30 minutes...")
-            print(
-                "💡 The optimization uses custom Metal kernel implementation for Apple Silicon GPU"
-            )
-
-            optimized_suite = Qwen3BenchmarkSuite(args.model)
-            optimized_results = optimized_suite.run_full_benchmark_suite()
-
-            print("✅ Custom Metal kernel benchmark suite completed successfully")
-            return optimized_results
-
-        finally:
-            # Always remove the hook to restore original behavior
-            print("🔄 Restoring standard attention...")
-            remove_hook(original_attention)
-            print("✅ Standard attention restored")
+        print("✅ Custom Metal kernel benchmark suite completed successfully")
+        return optimized_results
 
     except Exception as e:
         print(f"❌ Error running Metal kernel optimized benchmark: {e}")

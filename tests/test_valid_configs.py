@@ -24,6 +24,7 @@ class TestConfigValidity(unittest.TestCase):
                     config_files.append(os.path.join(root, file))
         return config_files
 
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-for-validation"})
     def test_import_config_files(self):
         """Attempt to import all config files"""
         config_files = self.collect_files()

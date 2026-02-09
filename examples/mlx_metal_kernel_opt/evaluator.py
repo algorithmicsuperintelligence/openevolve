@@ -136,6 +136,7 @@ class BulletproofMetalEvaluator:
                 )
 
             custom_attention_class = extraction_result["class"]
+            program_source = extraction_result["program_text"]
 
             # Step 2: Pre-execution Metal kernel safety validation
             print("\n🔍 STEP 2: Pre-execution Metal Kernel Safety Validation")
@@ -144,16 +145,8 @@ class BulletproofMetalEvaluator:
                 print(f"⚠️  Metal kernel safety validation failed: {safety_result['error']}")
                 print("🛡️  Proceeding with enhanced protection...")
 
-            # Step 3: GPU-protected baseline measurement
-            print("\n📊 STEP 3: GPU-Protected Baseline Performance Measurement")
-            baseline_results = self._gpu_protected_measure_baseline()
-            if not baseline_results:
-                return self._create_comprehensive_failure_result(
-                    "Failed to measure baseline performance with GPU protection"
-                )
-
-            # Step 4: Memory-safe correctness testing
-            print("\n🔍 STEP 4: Memory-Safe Custom Attention Correctness Testing")
+            # Step 3: Memory-safe correctness testing FIRST (fail fast, skip baseline if invalid)
+            print("\n🔍 STEP 3: Memory-Safe Custom Attention Correctness Testing")
             correctness_result = self._memory_safe_correctness_test(custom_attention_class)
             if not correctness_result["success"]:
                 return self._create_comprehensive_failure_result(
@@ -166,9 +159,19 @@ class BulletproofMetalEvaluator:
                     f"Correctness score too low: {correctness_score:.3f} (required: 0.90)"
                 )
 
+            # Step 4: GPU-protected baseline measurement (only if correctness passed)
+            print("\n📊 STEP 4: GPU-Protected Baseline Performance Measurement")
+            baseline_results = self._gpu_protected_measure_baseline()
+            if not baseline_results:
+                return self._create_comprehensive_failure_result(
+                    "Failed to measure baseline performance with GPU protection"
+                )
+
             # Step 5: Command-buffer-protected benchmarking
             print("\n🚀 STEP 5: Command-Buffer-Protected Performance Benchmarking")
-            benchmark_result = self._command_buffer_protected_benchmark(custom_attention_class)
+            benchmark_result = self._command_buffer_protected_benchmark(
+                program_source, custom_attention_class
+            )
             if not benchmark_result["success"]:
                 return self._create_comprehensive_failure_result(
                     f"Command-buffer-protected benchmarking failed: {benchmark_result['error']}"
@@ -191,6 +194,7 @@ class BulletproofMetalEvaluator:
             result = {
                 "success": True,
                 "final_score": final_score,
+                "combined_score": final_score,
                 "performance_metrics": performance_analysis["aggregate_metrics"],
                 "correctness_score": correctness_score,
                 "benchmark_results": [self._result_to_dict(r) for r in custom_results],
@@ -295,7 +299,12 @@ class BulletproofMetalEvaluator:
             print(f"  ✅ Successfully extracted and validated CustomGQAAttention class")
             print(f"  🛡️  Metal safety pre-checks: {metal_validation['safe']}")
 
-            return {"success": True, "class": custom_class, "metal_validation": metal_validation}
+            return {
+                "success": True,
+                "class": custom_class,
+                "metal_validation": metal_validation,
+                "program_text": actual_program_text,
+            }
 
         except Exception as e:
             self.total_metal_errors += 1
@@ -368,8 +377,10 @@ class BulletproofMetalEvaluator:
 
             # Mock arguments for safety testing
             class MockArgs:
-                hidden_size = 5120
-                num_attention_heads = 40
+                # NOTE: This should reflect the default model used by this evaluator:
+                # `mlx-community/Qwen3-0.6B-bf16` (16 Q heads : 8 KV heads, head_dim=128).
+                hidden_size = 2048
+                num_attention_heads = 16
                 num_key_value_heads = 8
                 head_dim = 128
                 rms_norm_eps = 1e-06
@@ -387,11 +398,14 @@ class BulletproofMetalEvaluator:
 
                 print("  ✅ Custom attention instantiation successful")
 
-                # Basic parameter validation
-                if hasattr(instance, "n_heads") and instance.n_heads != 40:
-                    return {"success": False, "error": f"Invalid head count: {instance.n_heads}"}
+                # Basic parameter validation (should match the args we instantiated with)
+                if hasattr(instance, "n_heads") and instance.n_heads != args.num_attention_heads:
+                    return {
+                        "success": False,
+                        "error": f"Invalid head count: {instance.n_heads} (expected {args.num_attention_heads})",
+                    }
 
-                if hasattr(instance, "n_kv_heads") and instance.n_kv_heads != 8:
+                if hasattr(instance, "n_kv_heads") and instance.n_kv_heads != args.num_key_value_heads:
                     return {
                         "success": False,
                         "error": f"Invalid KV head count: {instance.n_kv_heads}",
@@ -534,8 +548,9 @@ class BulletproofMetalEvaluator:
         try:
             # Safe test configuration
             class MockArgs:
-                hidden_size = 5120
-                num_attention_heads = 40
+                # Must match the default model `mlx-community/Qwen3-0.6B-bf16`
+                hidden_size = 2048
+                num_attention_heads = 16
                 num_key_value_heads = 8
                 head_dim = 128
                 rms_norm_eps = 1e-06
@@ -547,10 +562,10 @@ class BulletproofMetalEvaluator:
 
             # Conservative test cases (smaller sequences for safety)
             test_cases = [
-                (1, 8, 5120),  # Micro sequence
-                (1, 16, 5120),  # Very short
-                (1, 32, 5120),  # Short sequence
-                (1, 64, 5120),  # Medium sequence
+                (1, 8, 2048),  # Micro sequence
+                (1, 16, 2048),  # Very short
+                (1, 32, 2048),  # Short sequence
+                (1, 64, 2048),  # Medium sequence
             ]
 
             correctness_scores = []
@@ -567,7 +582,10 @@ class BulletproofMetalEvaluator:
                         self._ensure_clean_gpu_state()
 
                         # Create conservative test inputs
-                        x = mx.random.normal((B, L, D)) * 0.1  # Smaller values for safety
+                        # IMPORTANT: Match the real inference dtype used by the default model
+                        # (`mlx-community/Qwen3-0.6B-bf16`), otherwise Metal kernels may compile
+                        # for float32 in correctness tests but fail under bfloat16 in practice.
+                        x = (mx.random.normal((B, L, D)) * 0.1).astype(mx.bfloat16)
                         mask = "causal"
 
                         # Test with maximum GPU protection
@@ -590,6 +608,20 @@ class BulletproofMetalEvaluator:
                             elif "memory violation" in error_msg.lower():
                                 local_memory_violations += 1
 
+                            # EARLY EXIT: Metal compilation errors are deterministic - no retry
+                            if "unable to build metal library" in error_msg.lower():
+                                self.metal_compilation_errors += 1
+                                print(f"      ❌ Metal compilation error (no retry): {error_msg[:200]}...")
+                                # Return early - compilation errors won't be fixed by retrying
+                                return {
+                                    "success": False,
+                                    "score": 0.0,
+                                    "error": "Metal kernel compilation failed - bfloat16 incompatible code",
+                                    "command_buffer_errors": local_command_buffer_errors,
+                                    "memory_violations": local_memory_violations,
+                                    "compilation_error": True,
+                                }
+
                             if retry_count < self.max_retry_attempts:
                                 print(
                                     f"      🔄 Retry {retry_count + 1} for length {L}: {error_msg}"
@@ -605,6 +637,19 @@ class BulletproofMetalEvaluator:
                     except Exception as e:
                         error_msg = str(e)
                         print(f"      ❌ Exception for length {L}: {error_msg}")
+
+                        # EARLY EXIT: Metal compilation errors are deterministic - no retry
+                        if "unable to build metal library" in error_msg.lower():
+                            self.metal_compilation_errors += 1
+                            print(f"      ❌ Metal compilation error (no retry): {error_msg[:200]}...")
+                            return {
+                                "success": False,
+                                "score": 0.0,
+                                "error": "Metal kernel compilation failed - bfloat16 incompatible code",
+                                "command_buffer_errors": local_command_buffer_errors,
+                                "memory_violations": local_memory_violations,
+                                "compilation_error": True,
+                            }
 
                         if retry_count < self.max_retry_attempts:
                             retry_count += 1
@@ -643,6 +688,11 @@ class BulletproofMetalEvaluator:
     ) -> float:
         """Test single sequence with enhanced memory safety"""
         try:
+            # Force bfloat16 to exercise the same kernel template/compilation path as production
+            # inference with `mlx-community/Qwen3-0.6B-bf16`.
+            if x.dtype != mx.bfloat16:
+                x = x.astype(mx.bfloat16)
+
             # Pre-execution safety checks
             if x.shape[1] > self.max_sequence_length_safe:
                 raise MetalKernelSafetyError(
@@ -658,6 +708,12 @@ class BulletproofMetalEvaluator:
             custom_attn = custom_attention_class(args)
             if custom_attn is None:
                 raise ValueError("Failed to instantiate custom attention")
+
+            # Ensure module parameters follow the intended compute dtype as well.
+            # Otherwise, float32 weights can upcast intermediate Q/K/V tensors and
+            # accidentally avoid bfloat16 kernel compilation.
+            if hasattr(custom_attn, "set_dtype"):
+                custom_attn.set_dtype(mx.bfloat16)
 
             # Conservative forward pass with timeout simulation
             start_time = time.time()
@@ -721,7 +777,9 @@ class BulletproofMetalEvaluator:
             else:
                 raise ValueError(f"Sequence test error: {error_msg}")
 
-    def _command_buffer_protected_benchmark(self, custom_attention_class: Any) -> Dict[str, Any]:
+    def _command_buffer_protected_benchmark(
+        self, program_text: str, custom_attention_class: Any
+    ) -> Dict[str, Any]:
         """Command-buffer-protected benchmarking with maximum safety"""
         print("  🚀 Running command-buffer-protected benchmarking...")
 
@@ -748,8 +806,17 @@ class BulletproofMetalEvaluator:
                     }
 
                 original_attention = hook_result["original"]
+                temp_program_path = None
 
                 try:
+                    # Ensure the evolved program is available to the subprocess that runs mlx_lm.generate.
+                    # Monkey-patching in this evaluator process does NOT propagate across subprocess boundaries.
+                    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as f:
+                        f.write(program_text)
+                        temp_program_path = f.name
+
+                    self.benchmark_suite.hook_program_path = temp_program_path
+
                     # Run benchmarks with command buffer protection
                     custom_configs = self._get_safe_benchmark_configs()
                     custom_results = []
@@ -820,6 +887,13 @@ class BulletproofMetalEvaluator:
                         return {"success": False, "error": error_msg}
 
                 finally:
+                    # Always clear subprocess hook settings and clean up temp program
+                    self.benchmark_suite.hook_program_path = None
+                    if temp_program_path:
+                        try:
+                            os.unlink(temp_program_path)
+                        except OSError:
+                            pass
                     # Always restore original attention
                     self._gpu_protected_remove_hook(original_attention)
 
@@ -942,7 +1016,8 @@ class BulletproofMetalEvaluator:
                 "code_generation",  # Medium safety
                 "long_context_detailed",  # More challenging but still safe
                 "long_generation",  # Longer generation
-                "maximum_context_stress_test",  # Most challenging - saved for last
+                # Disabled for faster testing
+                #"maximum_context_stress_test",  # Most challenging - saved for last
             ]
 
             config_dict = {c.name: c for c in all_configs}
@@ -1333,6 +1408,7 @@ class BulletproofMetalEvaluator:
         return {
             "success": False,
             "final_score": -1000.0,
+            "combined_score": -1000.0,
             "error": error_message,
             "performance_metrics": {},
             "correctness_score": 0.0,

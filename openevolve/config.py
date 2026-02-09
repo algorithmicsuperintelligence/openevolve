@@ -64,8 +64,8 @@ class LLMModelConfig:
 
     # Generation parameters
     system_message: Optional[str] = None
-    temperature: float = None
-    top_p: float = None
+    temperature: float | None = None
+    top_p: float | None = None
     max_tokens: int = None
 
     # Request parameters
@@ -78,6 +78,10 @@ class LLMModelConfig:
 
     # Reasoning parameters
     reasoning_effort: Optional[str] = None
+
+    # Manual mode (human-in-the-loop)
+    manual_mode: Optional[bool] = None
+    _manual_queue_dir: Optional[str] = None
 
     def __post_init__(self):
         """Post-initialization to resolve ${VAR} env var references in api_key"""
@@ -93,8 +97,8 @@ class LLMConfig(LLMModelConfig):
 
     # Generation parameters
     system_message: Optional[str] = "system_message"
-    temperature: float = 0.7
-    top_p: float = 0.95
+    temperature: float | None = 0.7
+    top_p: float | None = None
     max_tokens: int = 4096
 
     # Request parameters
@@ -116,6 +120,9 @@ class LLMConfig(LLMModelConfig):
 
     # Reasoning parameters (inherited from LLMModelConfig but can be overridden)
     reasoning_effort: Optional[str] = None
+
+    # Manual mode switch
+    manual_mode: bool = False
 
     def __post_init__(self):
         """Post-initialization to set up model configurations"""
@@ -171,6 +178,7 @@ class LLMConfig(LLMModelConfig):
             "retry_delay": self.retry_delay,
             "random_seed": self.random_seed,
             "reasoning_effort": self.reasoning_effort,
+            "manual_mode": self.manual_mode,
         }
         self.update_model_params(shared_config)
 
@@ -236,6 +244,11 @@ class PromptConfig:
     system_message: str = "system_message"
     evaluator_system_message: str = "evaluator_system_message"
 
+    # Large-codebase mode: represent programs in prompts via compact changes descriptions
+    programs_as_changes_description: bool = False
+    system_message_changes_description: Optional[str] = None
+    initial_changes_description: str = ""
+
     # Number of examples to include in the prompt
     num_top_programs: int = 3
     num_diverse_programs: int = 2
@@ -267,6 +280,10 @@ class PromptConfig:
     comprehensive_implementation_min_lines: Optional[int] = (
         50  # Label as "comprehensive" if program has this many lines or more
     )
+
+    # Diff summary formatting for "Previous Attempts" section
+    diff_summary_max_line_len: int = 100  # Truncate lines longer than this
+    diff_summary_max_lines: int = 30  # Max lines per SEARCH/REPLACE block
 
     # Backward compatibility - deprecated
     code_length_threshold: Optional[int] = (
@@ -327,6 +344,9 @@ class DatabaseConfig:
     artifact_size_threshold: int = 32 * 1024  # 32KB threshold
     cleanup_old_artifacts: bool = True
     artifact_retention_days: int = 30
+    max_snapshot_artifacts: Optional[int] = (
+        100  # Max artifacts in worker snapshots (None=unlimited)
+    )
 
     novelty_llm: Optional["LLMInterface"] = None
     embedding_model: Optional[str] = None
@@ -413,9 +433,18 @@ class Config:
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "Config":
         """Load configuration from a YAML file"""
-        with open(path, "r") as f:
+        config_path = Path(path).resolve()
+        with open(config_path, "r") as f:
             config_dict = yaml.safe_load(f)
-        return cls.from_dict(config_dict)
+        config = cls.from_dict(config_dict)
+
+        # Resolve template_dir relative to config file location
+        if config.prompt.template_dir:
+            template_path = Path(config.prompt.template_dir)
+            if not template_path.is_absolute():
+                config.prompt.template_dir = str((config_path.parent / template_path).resolve())
+
+        return config
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "Config":
@@ -425,14 +454,31 @@ class Config:
             except re.error as e:
                 raise ValueError(f"Invalid regex pattern in diff_pattern: {e}")
 
+        # Remove None values for temperature and top_p to avoid dacite type errors;
+        # alternatively, pass check_types=False to dacite.from_dict, but that can hide other issues
+        if "llm" in config_dict:
+            if "temperature" in config_dict["llm"] and config_dict["llm"]["temperature"] is None:
+                del config_dict["llm"]["temperature"]
+            if "top_p" in config_dict["llm"] and config_dict["llm"]["top_p"] is None:
+                del config_dict["llm"]["top_p"]
+
         config: Config = dacite.from_dict(
             data_class=cls,
             data=config_dict,
-            config=dacite.Config(cast=[List, Union], forward_references={"LLMInterface": Any}),
+            config=dacite.Config(
+                cast=[List, Union],
+                forward_references={"LLMInterface": Any},
+            ),
         )
 
         if config.database.random_seed is None and config.random_seed is not None:
             config.database.random_seed = config.random_seed
+
+        if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
+            raise ValueError(
+                "prompt.programs_as_changes_description=true requires diff_based_evolution=true "
+                "(full rewrites cannot reliably update code and changes_description together)"
+            )
 
         return config
 

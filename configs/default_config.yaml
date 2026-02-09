@@ -78,9 +78,14 @@ prompt:
   # Feature extraction and program labeling thresholds
   # These control how the LLM perceives and categorizes programs
   suggest_simplification_after_chars: 500     # Suggest simplifying if program exceeds this many characters
-  include_changes_under_chars: 100           # Include change descriptions in features if under this length  
+  include_changes_under_chars: 100           # Include change descriptions in features if under this length
   concise_implementation_max_lines: 10        # Label as "concise" if program has this many lines or fewer
   comprehensive_implementation_min_lines: 50  # Label as "comprehensive" if program has this many lines or more
+
+  # Diff summary formatting for "Previous Attempts" section
+  # Controls how SEARCH/REPLACE blocks are displayed in prompts
+  diff_summary_max_line_len: 100              # Truncate lines longer than this (with "...")
+  diff_summary_max_lines: 30                  # Max lines per SEARCH/REPLACE block
 
   # Note: meta-prompting features are not yet implemented
 

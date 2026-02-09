@@ -1,0 +1,10 @@
+{
+    "metrics": {
+        "runs_successfully": 1.0,
+        "combined_score": 1.0,
+        "test_example_0_pass_at_2": 1,
+        "test_example_0_attempt_0": true,
+        "test_example_0_attempt_1": true
+    },
+    "artifacts": {}
+}

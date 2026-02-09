@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>OpenEvolve – Manual Mode</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+  <link rel="stylesheet" href="/static/css/manual.css"/>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Manual Tasks</h1>
+    <button id="refreshBtn" class="ghost">Refresh</button>
+  </header>
+
+  <main class="container">
+    <div id="taskList" class="task-list"></div>
+  </main>
+
+  <div id="modalOverlay" class="overlay hidden"></div>
+
+  <div id="taskModal" class="modal hidden">
+    <button id="closeModal" class="icon-btn close-btn" aria-label="Close">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <div class="modal-body">
+      <div class="pane left">
+        <div class="pane-title">Prompt</div>
+        <div id="promptEditor" class="editor-host" aria-label="Prompt (read-only)"></div>
+        <button id="copyBtn" class="copy-btn">Copy</button>
+      </div>
+
+      <div class="pane right">
+        <div class="pane-title">Your Answer</div>
+        <div class="editor-wrapper">
+          <div id="answerEditor" class="editor-host" aria-label="Your answer"></div>
+        </div>
+        <button id="completeBtn" class="primary complete-btn">Complete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/manual.js"></script>
+</body>
+</html>

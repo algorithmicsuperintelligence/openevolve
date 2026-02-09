@@ -1,11 +1,11 @@
 """
 Qwen3 Custom Metal Kernel for Grouped Query Attention (GQA) Optimization
 
-This module implements a custom Metal kernel for Qwen3's 40:8 GQA pattern using
+This module implements a custom Metal kernel for Qwen3's 16:8 GQA pattern using
 MLX's metal_kernel API. The kernel is designed to outperform mx.fast.scaled_dot_product_attention
-by leveraging Apple Silicon specific optimizations and the 5:1 query-to-KV head ratio.
+by leveraging Apple Silicon specific optimizations and the 2:1 query-to-KV head ratio.
 
-Target: Qwen3-0.6B with 40 query heads : 8 KV heads
+Target: Qwen3-0.6B with 16 query heads : 8 KV heads
 Hardware: Apple M-series GPUs with unified memory
 Baseline: Standard MLX-LM using mx.fast.scaled_dot_product_attention
 Goal: 5-15% performance improvement through custom Metal kernel optimization
@@ -26,19 +26,19 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
     Custom Metal kernel implementation for Qwen3 GQA attention.
 
     Args:
-        queries: [B, num_heads=40, L, head_dim=128]
+        queries: [B, num_heads=16, L, head_dim=128]
         keys: [B, num_kv_heads=8, L, head_dim=128]
         values: [B, num_kv_heads=8, L, head_dim=128]
         scale: Attention scaling factor (1/sqrt(head_dim))
         mask: Attention mask (None, "causal", or boolean tensor)
 
     Returns:
-        Attention output [B, num_heads=40, L, head_dim=128]
+        Attention output [B, num_heads=16, L, head_dim=128]
     """
 
     B, num_heads, L, head_dim = queries.shape
     _, num_kv_heads, _, _ = keys.shape
-    heads_per_kv = num_heads // num_kv_heads  # Should be 5 for Qwen3
+    heads_per_kv = num_heads // num_kv_heads  # 2 for Qwen3-0.6B (16:8)
 
     # Handle mask conversion
     if mask == "causal" or mask is None:
@@ -67,9 +67,9 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
 
     # EVOLVE-BLOCK-START
     # Custom Metal kernel source for Qwen3 GQA optimization
-    # This kernel leverages the 40:8 head ratio and Apple Silicon architecture
+    # This kernel leverages the 16:8 head ratio and Apple Silicon architecture
     kernel_source = """
-    // Qwen3 GQA Metal Kernel - Optimized for 40:8 head pattern
+    // Qwen3 GQA Metal Kernel - Optimized for 16:8 head pattern
     // Thread mapping: each thread processes one query position
     uint thread_id = thread_position_in_grid.x;
     uint head_idx = thread_position_in_grid.y; 
@@ -86,7 +86,7 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
     bool use_mask_val = use_mask[0] > 0;
     
     // GQA mapping: determine which KV head corresponds to this query head
-    uint kv_head_idx = head_idx / HEADS_PER_KV;  // 5 query heads per KV head
+    uint kv_head_idx = head_idx / HEADS_PER_KV;  // 2 query heads per KV head
     
     // Pre-calculate base indices for memory access optimization
     const uint q_base = batch_idx * (NUM_HEADS * SEQ_LEN * HEAD_DIM) + 
@@ -250,8 +250,8 @@ class CustomGQAAttention(nn.Module):
         super().__init__()
 
         # Standard Qwen3 parameters
-        dim = args.hidden_size  # 5120
-        self.n_heads = n_heads = args.num_attention_heads  # 40
+        dim = args.hidden_size  # 2048
+        self.n_heads = n_heads = args.num_attention_heads  # 16
         assert args.num_key_value_heads is not None
         self.n_kv_heads = n_kv_heads = args.num_key_value_heads  # 8
         head_dim = args.head_dim  # 128
@@ -364,8 +364,8 @@ def benchmark_metal_gqa_optimization():
 
     # Qwen3-0.6B configuration
     class MockArgs:
-        hidden_size = 5120
-        num_attention_heads = 40
+        hidden_size = 2048
+        num_attention_heads = 16
         num_key_value_heads = 8
         head_dim = 128
         rms_norm_eps = 1e-06
@@ -377,10 +377,10 @@ def benchmark_metal_gqa_optimization():
 
     # Test configurations for Metal kernel validation
     test_configs = [
-        ("short_sequence", 1, 128, 5120),
-        ("medium_sequence", 1, 512, 5120),
-        ("long_sequence", 1, 1024, 5120),
-        ("max_sequence", 1, 2048, 5120),
+        ("short_sequence", 1, 128, 2048),
+        ("medium_sequence", 1, 512, 2048),
+        ("long_sequence", 1, 1024, 2048),
+        ("max_sequence", 1, 2048, 2048),
     ]
 
     print("Benchmarking Custom Metal GQA Kernel vs MLX Baseline")
@@ -427,11 +427,11 @@ def test_metal_gqa_correctness():
     print("=" * 50)
 
     # Test configuration
-    B, L, D = 1, 64, 5120
+    B, L, D = 1, 64, 2048
 
     class MockArgs:
-        hidden_size = 5120
-        num_attention_heads = 40
+        hidden_size = 2048
+        num_attention_heads = 16
         num_key_value_heads = 8
         head_dim = 128
         rms_norm_eps = 1e-06
@@ -465,7 +465,7 @@ def test_metal_gqa_correctness():
 
     # Test direct kernel function
     print("\n=== Testing Direct Kernel Function ===")
-    B, H, L, D = 1, 40, 128, 128
+    B, H, L, D = 1, 16, 128, 128
     q = mx.random.normal((B, H, L, D))
     k = mx.random.normal((B, 8, L, D))  # 8 KV heads
     v = mx.random.normal((B, 8, L, D))
@@ -498,7 +498,7 @@ if __name__ == "__main__":
     print("Evolution focus:")
     print("1. 🔧 Metal kernel source code optimization")
     print("2. 💾 Memory access pattern improvements for Apple Silicon")
-    print("3. 🎯 GQA-specific optimizations for 40:8 head ratio")
+    print("3. 🎯 GQA-specific optimizations for 16:8 head ratio")
     print("4. ⚡ Vectorization and SIMD optimization")
     print("5. 🚀 Thread group and grid configuration tuning")
     print("Target: 5-15% performance improvement through Metal kernel innovation")

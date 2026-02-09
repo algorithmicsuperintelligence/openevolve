@@ -1,18 +1,47 @@
 """
 OpenAI API interface for LLMs
+
+This module also supports a "manual mode" (human-in-the-loop) where prompts are written
+to a task queue directory and the system waits for a corresponding *.answer.json file
 """
 
 import asyncio
+import json
 import logging
 import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import openai
 
-from openevolve.config import LLMConfig
 from openevolve.llm.base import LLMInterface
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_now() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _build_display_prompt(messages: List[Dict[str, str]]) -> str:
+    """
+    Render messages into a single plain-text prompt for the manual UI.
+    """
+    chunks: List[str] = []
+    for m in messages:
+        role = str(m.get("role", "user")).upper()
+        content = m.get("content", "")
+        chunks.append(f"### {role}\n{content}\n")
+    return "\n".join(chunks).rstrip() + "\n"
+
+
+def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{path.name}.tmp"
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 class OpenAILLM(LLMInterface):
@@ -35,15 +64,30 @@ class OpenAILLM(LLMInterface):
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
 
-        # Set up API client
-        # OpenAI client requires max_retries to be int, not None
-        max_retries = self.retries if self.retries is not None else 0
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url=self.api_base,
-            timeout=self.timeout,
-            max_retries=max_retries,
-        )
+        # Manual mode: enabled via llm.manual_mode in config.yaml
+        self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
+        self.manual_queue_dir: Optional[Path] = None
+
+        if self.manual_mode:
+            qdir = getattr(model_cfg, "_manual_queue_dir", None)
+            if not qdir:
+                raise ValueError(
+                    "Manual mode is enabled but manual_queue_dir is missing. "
+                    "This should be injected by the OpenEvolve controller."
+                )
+            self.manual_queue_dir = Path(str(qdir)).expanduser().resolve()
+            self.manual_queue_dir.mkdir(parents=True, exist_ok=True)
+            self.client = None
+        else:
+            # Set up API client (normal mode)
+            # OpenAI client requires max_retries to be int, not None
+            max_retries = self.retries if self.retries is not None else 0
+            self.client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=self.api_base,
+                timeout=self.timeout,
+                max_retries=max_retries,
+            )
 
         # Only log unique models to reduce duplication
         if not hasattr(logger, "_initialized_models"):
@@ -122,8 +166,9 @@ class OpenAILLM(LLMInterface):
 
         # Add seed parameter for reproducibility if configured
         # Skip seed parameter for Google AI Studio endpoint as it doesn't support it
+        # Seed only makes sense for actual API calls
         seed = kwargs.get("seed", self.random_seed)
-        if seed is not None:
+        if seed is not None and not self.manual_mode:
             if self.api_base == "https://generativelanguage.googleapis.com/v1beta/openai/":
                 logger.warning(
                     "Skipping seed parameter as Google AI Studio endpoint doesn't support it. "
@@ -135,6 +180,12 @@ class OpenAILLM(LLMInterface):
         # Attempt the API call with retries
         retries = kwargs.get("retries", self.retries)
         retry_delay = kwargs.get("retry_delay", self.retry_delay)
+
+        # Manual mode: no timeout unless explicitly passed by the caller
+        if self.manual_mode:
+            timeout = kwargs.get("timeout", None)
+            return await self._manual_wait_for_answer(params, timeout=timeout)
+
         timeout = kwargs.get("timeout", self.timeout)
 
         for attempt in range(retries + 1):
@@ -160,6 +211,9 @@ class OpenAILLM(LLMInterface):
 
     async def _call_api(self, params: Dict[str, Any]) -> str:
         """Make the actual API call"""
+        if self.client is None:
+            raise RuntimeError("OpenAI client is not initialized (manual_mode enabled?)")
+
         # Use asyncio to run the blocking API call in a thread pool
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
@@ -170,3 +224,63 @@ class OpenAILLM(LLMInterface):
         logger.debug(f"API parameters: {params}")
         logger.debug(f"API response: {response.choices[0].message.content}")
         return response.choices[0].message.content
+
+    async def _manual_wait_for_answer(
+        self, params: Dict[str, Any], timeout: Optional[Union[int, float]]
+    ) -> str:
+        """
+        Manual mode: write a task JSON file and poll for *.answer.json
+        If timeout is provided, we respect it; otherwise we wait indefinitely
+        """
+
+        if self.manual_queue_dir is None:
+            raise RuntimeError("manual_queue_dir is not initialized")
+
+        task_id = str(uuid.uuid4())
+        messages = params.get("messages", [])
+        display_prompt = _build_display_prompt(messages)
+
+        task_payload: Dict[str, Any] = {
+            "id": task_id,
+            "created_at": _iso_now(),
+            "model": params.get("model"),
+            "display_prompt": display_prompt,
+            "messages": messages,
+            "meta": {
+                "max_tokens": params.get("max_tokens"),
+                "max_completion_tokens": params.get("max_completion_tokens"),
+                "temperature": params.get("temperature"),
+                "top_p": params.get("top_p"),
+                "reasoning_effort": params.get("reasoning_effort"),
+                "verbosity": params.get("verbosity"),
+            },
+        }
+
+        task_path = self.manual_queue_dir / f"{task_id}.json"
+        answer_path = self.manual_queue_dir / f"{task_id}.answer.json"
+
+        _atomic_write_json(task_path, task_payload)
+        logger.info(f"[manual_mode] Task enqueued: {task_path}")
+
+        start = time.time()
+        poll_interval = 0.5
+
+        while True:
+            if answer_path.exists():
+                try:
+                    data = json.loads(answer_path.read_text(encoding="utf-8"))
+                except Exception as e:
+                    logger.warning(f"[manual_mode] Failed to parse answer JSON for {task_id}: {e}")
+                    await asyncio.sleep(poll_interval)
+                    continue
+
+                answer = str(data.get("answer") or "")
+                logger.info(f"[manual_mode] Answer received for {task_id}")
+                return answer
+
+            if timeout is not None and (time.time() - start) > float(timeout):
+                raise asyncio.TimeoutError(
+                    f"Manual mode timed out after {timeout} seconds waiting for answer of task {task_id}"
+                )
+
+            await asyncio.sleep(poll_interval)

@@ -33,6 +33,8 @@ class EvolutionTrace:
     child_metrics: Dict[str, Any]
     parent_code: Optional[str] = None
     child_code: Optional[str] = None
+    parent_changes_description: Optional[str] = None
+    child_changes_description: Optional[str] = None
     code_diff: Optional[str] = None
     prompt: Optional[Dict[str, str]] = None
     llm_response: Optional[str] = None
@@ -70,6 +72,7 @@ class EvolutionTracer:
         enabled: bool = True,
         buffer_size: int = 10,
         compress: bool = False,
+        include_changes_description: bool = True,
     ):
         """
         Initialize the evolution tracer
@@ -82,11 +85,13 @@ class EvolutionTracer:
             enabled: Whether tracing is enabled
             buffer_size: Number of traces to buffer before writing
             compress: Whether to compress output files
+            include_changes_description: Whether to include per-program changes descriptions
         """
         self.enabled = enabled
         self.format = format
         self.include_code = include_code
         self.include_prompts = include_prompts
+        self.include_changes_description = include_changes_description
         self.compress = compress
         self.buffer_size = buffer_size
 
@@ -171,6 +176,11 @@ class EvolutionTracer:
             if self.include_code:
                 trace.parent_code = parent_program.code
                 trace.child_code = child_program.code
+
+            # Changes descriptions (large-codebase mode)
+            if self.include_changes_description:
+                trace.parent_changes_description = getattr(parent_program, "changes_description", None)
+                trace.child_changes_description = getattr(child_program, "changes_description", None)
 
             # Optionally include prompts
             if self.include_prompts:
@@ -272,6 +282,7 @@ class EvolutionTracer:
                 "created_at": time.time(),
                 "include_code": self.include_code,
                 "include_prompts": self.include_prompts,
+                "include_changes_description": getattr(self, "include_changes_description", True),
                 "total_traces": len(self.json_traces),
             }
             export_traces_json(self.json_traces, self.output_path, metadata=metadata)
@@ -283,6 +294,7 @@ class EvolutionTracer:
                     "created_at": time.time(),
                     "include_code": self.include_code,
                     "include_prompts": self.include_prompts,
+                    "include_changes_description": getattr(self, "include_changes_description", True),
                 }
                 export_traces(all_traces, self.output_path, format="hdf5", metadata=metadata)
 
@@ -311,6 +323,7 @@ def extract_evolution_trace_from_checkpoint(
     format: str = "jsonl",
     include_code: bool = True,
     include_prompts: bool = True,
+    include_changes_description: bool = True,
 ) -> List[EvolutionTrace]:
     """
     Extract evolution traces from an existing checkpoint directory
@@ -361,6 +374,18 @@ def extract_evolution_trace_from_checkpoint(
         parent = programs[parent_id]
 
         # Create trace entry
+        parent_desc = parent.get("changes_description")
+        if not parent_desc:
+            parent_desc = (parent.get("metadata", {}) or {}).get("changes_description") or (
+                parent.get("metadata", {}) or {}
+            ).get("changes")
+
+        child_desc = prog.get("changes_description")
+        if not child_desc:
+            child_desc = (prog.get("metadata", {}) or {}).get("changes_description") or (
+                prog.get("metadata", {}) or {}
+            ).get("changes")
+
         trace = EvolutionTrace(
             iteration=prog.get("iteration_found", 0),
             timestamp=prog.get("timestamp", 0),
@@ -370,6 +395,8 @@ def extract_evolution_trace_from_checkpoint(
             child_metrics=prog.get("metrics", {}),
             generation=prog.get("generation", 0),
             island_id=prog.get("metadata", {}).get("island"),
+            parent_changes_description=parent_desc if include_changes_description else None,
+            child_changes_description=child_desc if include_changes_description else None,
             metadata=prog.get("metadata", {}),
         )
 
@@ -512,7 +539,12 @@ def extract_full_lineage_traces(
                 "improvement": improvement_deltas,
                 "generation": child.get("generation", 0),
                 "iteration_found": child.get("iteration_found", 0),
-                "changes_description": child.get("metadata", {}).get("changes", ""),
+                "changes_description": (
+                    child.get("changes_description")
+                    or (child.get("metadata", {}) or {}).get("changes_description")
+                    or (child.get("metadata", {}) or {}).get("changes")
+                    or ""
+                ),
                 "island_id": child.get("metadata", {}).get("island"),
                 "action": action,  # The prompt/response that led to this improvement
             }
@@ -523,6 +555,12 @@ def extract_full_lineage_traces(
             trace = {
                 "final_program_id": program_id,
                 "final_metrics": program.get("metrics", {}),
+                "final_changes_description": (
+                    program.get("changes_description")
+                    or (program.get("metadata", {}) or {}).get("changes_description")
+                    or (program.get("metadata", {}) or {}).get("changes")
+                    or ""
+                ),
                 "generation_depth": len(lineage),
                 "total_iterations": program.get("iteration_found", 0),
                 "improvement_steps": improvements,

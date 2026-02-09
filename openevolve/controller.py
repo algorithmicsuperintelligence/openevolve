@@ -5,6 +5,7 @@ Main controller for OpenEvolve
 import asyncio
 import logging
 import os
+import shutil
 import signal
 import time
 import uuid
@@ -84,6 +85,9 @@ class OpenEvolve:
 
         # Set up logging
         self._setup_logging()
+
+        # Manual mode queue lives in <openevolve_output>/manual_tasks_queue
+        self._setup_manual_mode_queue()
 
         # Set random seed for reproducibility if specified
         if self.config.random_seed is not None:
@@ -208,6 +212,35 @@ class OpenEvolve:
 
         logger.info(f"Logging to {log_file}")
 
+    def _setup_manual_mode_queue(self) -> None:
+        """
+        Set up manual task queue directory if llm.manual_mode is enabled
+
+        Queue directory is always:
+          <openevolve_output>/manual_tasks_queue
+
+        The directory is cleared on controller start so the UI shows only tasks
+        from the current run (no stale tasks after restart)
+        """
+        if not bool(getattr(self.config.llm, "manual_mode", False)):
+            return
+
+        qdir = (Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue")
+
+        # Clear stale tasks from previous runs
+        if qdir.exists():
+            shutil.rmtree(qdir)
+        qdir.mkdir(parents=True, exist_ok=True)
+
+        # Inject runtime-only queue dir into configs
+        self.config.llm._manual_queue_dir = str(qdir)
+        for model_cfg in self.config.llm.models:
+            model_cfg._manual_queue_dir = str(qdir)
+        for model_cfg in self.config.llm.evaluator_models:
+            model_cfg._manual_queue_dir = str(qdir)
+
+        logger.info(f"Manual mode enabled. Queue dir: {qdir}")
+
     def _load_initial_program(self) -> str:
         """Load the initial program from file"""
         with open(self.initial_program_path, "r") as f:
@@ -262,6 +295,7 @@ class OpenEvolve:
             initial_program = Program(
                 id=initial_program_id,
                 code=self.initial_program_code,
+                changes_description=self.config.prompt.initial_changes_description,
                 language=self.config.language,
                 metrics=initial_metrics,
                 iteration_found=start_iteration,

@@ -120,12 +120,32 @@ def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[
     return llm_response
 
 
-def format_diff_summary(diff_blocks: List[Tuple[str, str]]) -> str:
+def _format_block_lines(lines: List[str], max_line_len: int = 100, max_lines: int = 30) -> str:
+    """Format a block of lines for diff summary: show all lines (truncated per line, optional cap)."""
+    truncated = []
+    for line in lines[:max_lines]:
+        s = line.rstrip()
+        if len(s) > max_line_len:
+            s = s[: max_line_len - 3] + "..."
+        truncated.append("  " + s)
+    if len(lines) > max_lines:
+        truncated.append(f"  ... ({len(lines) - max_lines} more lines)")
+    return "\n".join(truncated) if truncated else "  (empty)"
+
+
+def format_diff_summary(
+    diff_blocks: List[Tuple[str, str]],
+    max_line_len: int = 100,
+    max_lines: int = 30,
+) -> str:
     """
-    Create a human-readable summary of the diff
+    Create a human-readable summary of the diff.
+    For multi-line blocks, shows the full search and replace content (all lines).
 
     Args:
         diff_blocks: List of (search_text, replace_text) tuples
+        max_line_len: Maximum characters per line before truncation (default: 100)
+        max_lines: Maximum lines per SEARCH/REPLACE block (default: 30)
 
     Returns:
         Summary string
@@ -136,17 +156,12 @@ def format_diff_summary(diff_blocks: List[Tuple[str, str]]) -> str:
         search_lines = search_text.strip().split("\n")
         replace_lines = replace_text.strip().split("\n")
 
-        # Create a short summary
         if len(search_lines) == 1 and len(replace_lines) == 1:
             summary.append(f"Change {i+1}: '{search_lines[0]}' to '{replace_lines[0]}'")
         else:
-            search_summary = (
-                f"{len(search_lines)} lines" if len(search_lines) > 1 else search_lines[0]
-            )
-            replace_summary = (
-                f"{len(replace_lines)} lines" if len(replace_lines) > 1 else replace_lines[0]
-            )
-            summary.append(f"Change {i+1}: Replace {search_summary} with {replace_summary}")
+            search_block = _format_block_lines(search_lines, max_line_len, max_lines)
+            replace_block = _format_block_lines(replace_lines, max_line_len, max_lines)
+            summary.append(f"Change {i+1}: Replace:\n{search_block}\nwith:\n{replace_block}")
 
     return "\n".join(summary)
 
@@ -212,3 +227,73 @@ def extract_code_language(code: str) -> str:
         return "sql"
 
     return "unknown"
+
+
+def _can_apply_linewise(haystack_lines: List[str], needle_lines: List[str]) -> bool:
+    if not needle_lines:
+        return False
+
+    for i in range(len(haystack_lines) - len(needle_lines) + 1):
+        if haystack_lines[i : i + len(needle_lines)] == needle_lines:
+            return True
+
+    return False
+
+
+def apply_diff_blocks(original_text: str, diff_blocks: List[Tuple[str, str]]) -> Tuple[str, int]:
+    """
+    Apply diff blocks line-wise and return (new_text, applied_count)
+    """
+    lines = original_text.split("\n")
+    applied = 0
+
+    for search_text, replace_text in diff_blocks:
+        search_lines = search_text.split("\n")
+        replace_lines = replace_text.split("\n")
+
+        for i in range(len(lines) - len(search_lines) + 1):
+            if lines[i : i + len(search_lines)] == search_lines:
+                lines[i : i + len(search_lines)] = replace_lines
+                applied += 1
+                break
+
+    return "\n".join(lines), applied
+
+
+def split_diffs_by_target(
+    diff_blocks: List[Tuple[str, str]],
+    *,
+    code_text: str,
+    changes_description_text: str,
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """
+    Route diff blocks to either code or changes_description based on exact line-wise match
+    of SEARCH text. Returns (code_blocks, changes_desc_blocks, unmatched_blocks)
+
+    If a SEARCH matches both targets, it's ambiguous and we raise error
+    """
+    code_lines = code_text.split("\n")
+    desc_lines = changes_description_text.split("\n")
+
+    code_blocks: List[Tuple[str, str]] = []
+    desc_blocks: List[Tuple[str, str]] = []
+    unmatched: List[Tuple[str, str]] = []
+
+    for search_text, replace_text in diff_blocks:
+        search_lines = search_text.split("\n")
+
+        matches_code = _can_apply_linewise(code_lines, search_lines)
+        matches_desc = _can_apply_linewise(desc_lines, search_lines)
+
+        if matches_code and matches_desc:
+            raise ValueError(
+                "Ambiguous diff block: SEARCH matches both code and changes_description"
+            )
+        if matches_code:
+            code_blocks.append((search_text, replace_text))
+        elif matches_desc:
+            desc_blocks.append((search_text, replace_text))
+        else:
+            unmatched.append((search_text, replace_text))
+
+    return code_blocks, desc_blocks, unmatched

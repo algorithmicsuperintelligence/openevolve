@@ -1,0 +1,81 @@
+# Configuration for tsp tour minimization example
+max_iterations: 10000
+random_seed: 42
+checkpoint_interval: 1
+language: "mixed"
+log_level: "INFO"
+
+# LLM configuration
+llm:
+  primary_model: "deepseek-reasoner"
+  primary_model_weight: 1.0
+  api_base: "https://api.deepseek.com"
+  api_key: "<your-api-key>"
+  temperature: 0.5
+  max_tokens: 64000
+  timeout: 600
+
+# Prompt configuration
+prompt:
+  system_message: |
+    You are an expert in the Traveling Salesman Problem (TSP).
+    Task:
+      Recent papers (2024–2025) have proposed various approaches to the TSP. For example, the UTSP paper introduces a graph neural network (GNN) that generates an n×n heat map of edge probabilities, indicating how likely each edge is to be part of the optimal Hamiltonian cycle. It then applies 2-opt and k-opt (MCTS-based) searches in C++ using this heat map to find the final solution.
+
+    However, a later paper (2025) questions the effectiveness of the heat map, showing that 2-opt and k-opt searches perform comparably well—even without it—achieving similar or better solution quality and faster runtime. This approach relies on selecting k-nearest neighbors (KNN) as candidate edges for each city/node.
+
+    Your task is to explore a new method or improvement that surpasses the current implementations in terms of the combined score, defined as a function of the average Hamiltonian cycle length and the average time required to produce a solution. I would say that the path length is more important in terms of a combined score than time. For N=1000, the average path length should be about 23.1
+    You can use up to 160 seconds of C++ compute (so, maybe it is better to increase `restarts_number` first with new algorithm, and then improve time if needed).
+
+    It seems that implementation that uses double type to calc distances is quite slow (in comparison with int32 and int64, that is why the initial program contains implementation in 3 types).
+
+    Do not modify the `cities_number` in config.json, as it will be automatically replaced with the appropriate value (1000) during testing. Also, do not modify the `input_path` or `output_path` parameters. All other parameters may be edited.
+    Additional information: all test cities were randomly generated within the square [0, 1] × [0, 1] (as is standard in most papers). The number of test samples in a testing batch is 48 (12 cpu cores x 4 launches).
+
+    Timeouts (error if exceeds):
+      Heat map train: 480 seconds.
+      Heat map inference: 60 seconds per instance.
+      TSP compilation: 10 seconds.
+      TSP run: 160 seconds per instance (as in the SOTA 2024 paper for N=1000).
+    
+    If training heat map, do not forget to clean GPU (cuda:0) entirely before starting training procedure. Environment characteristics: python3.11, ubuntu 22.04, nvidia A100 40 GB GPU.
+    
+    The C++ program will be compiled using C++ 17 standart. The compilation command: "g++ -std=gnu++17 -O3 -DNDEBUG -march=native -funroll-loops -ffast-math -Iinclude TSP.cpp -o bin/runner -lpthread -lm -ldl" (may slightly vary depending on the operation system)
+    The C++ program is implemented in a way that supports double, int32 (int) and int64 (long long) distance calculations that is specified in runtime in config.json (that you can change).
+
+    You can — and probably should — write something to stdout for yourself. This stdout output will be shown to you in future calls.
+
+  programs_as_changes_description: true
+
+  system_message_changes_description: |
+    Important: Describe your changes and any new methods in the "Changes Description" field, replacing the previous description first (as usual, using SEARCH & REPLACE blocks). If you skip this step, all proposed changes will be discarded because our evolution algorithm depends on it.
+    It is recommended to write the description in plain language as a short numbered list (avoid long paragraphs and complex symbols), since a different LLM model (or you later) will need to update this text in future calls.
+  
+  initial_changes_description: |
+    Default workflow from the 2024 paper "UTSP" implementing 2'opt and k'opt searches.
+    No further changes.
+
+  include_artifacts: true
+  num_top_programs: 3
+  num_diverse_programs: 2
+  suggest_simplification_after_chars: 60000
+  concise_implementation_max_lines: 1000
+  comprehensive_implementation_min_lines: 5000
+
+# Database configuration
+database:
+  population_size: 100
+  archive_size: 40
+  num_islands: 3
+  elite_selection_ratio: 0.2
+  exploitation_ratio: 0.7
+
+# Evaluator configuration
+evaluator:
+  timeout: 1500
+  cascade_evaluation: false
+  parallel_evaluations: 3
+
+# Evolution settings
+diff_based_evolution: true
+max_code_length: 150000

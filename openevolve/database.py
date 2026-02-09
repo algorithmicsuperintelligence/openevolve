@@ -47,6 +47,7 @@ class Program:
     # Program identification
     id: str
     code: str
+    changes_description: str = ""  # compact program changes description (via LLM) stored per program
     language: str = "python"
 
     # Evolution information
@@ -82,6 +83,19 @@ class Program:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Program":
         """Create from dictionary representation"""
+        # old DBs don't have changes_description (backward-compatibility)
+        if "changes_description" not in data:
+            metadata = data.get("metadata") or {}
+            if isinstance(metadata, dict):
+                data = {
+                    **data,
+                    "changes_description": metadata.get("changes_description")
+                    or metadata.get("changes")
+                    or "empty",
+                }
+            else:
+                data = {**data, "changes_description": "empty"}
+
         # Get the valid field names for the Program dataclass
         valid_fields = {f.name for f in fields(cls)}
 
@@ -1069,8 +1083,8 @@ class ProgramDatabase:
             other = self.programs[pid]
 
             if other.embedding is None:
-                logger.log(
-                    "Warning: Program %s has no embedding, skipping similarity check", other.id
+                logger.warning(
+                    f"Program {other.id} has no embedding, skipping similarity check"
                 )
                 continue
 
@@ -1289,6 +1303,7 @@ class ProgramDatabase:
                 copy_program = Program(
                     id=str(uuid.uuid4()),
                     code=best_program.code,
+                    changes_description=best_program.changes_description,
                     language=best_program.language,
                     parent_id=best_program.id,
                     generation=best_program.generation,
@@ -1334,6 +1349,7 @@ class ProgramDatabase:
                 copy_program = Program(
                     id=str(uuid.uuid4()),
                     code=best_program.code,
+                    changes_description=best_program.changes_description,
                     language=best_program.language,
                     parent_id=best_program.id,
                     generation=best_program.generation,
@@ -1839,6 +1855,7 @@ class ProgramDatabase:
                     migrant_copy = Program(
                         id=str(uuid.uuid4()),
                         code=migrant.code,
+                        changes_description=migrant.changes_description,
                         language=migrant.language,
                         parent_id=migrant.id,
                         generation=migrant.generation,

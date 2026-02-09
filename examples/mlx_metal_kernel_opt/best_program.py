@@ -1,11 +1,11 @@
 """
 Qwen3 Custom Metal Kernel for Grouped Query Attention (GQA) Optimization
 
-This module implements a custom Metal kernel for Qwen3's 40:8 GQA pattern using
+This module implements a custom Metal kernel for Qwen3's 16:8 GQA pattern using
 MLX's metal_kernel API. The kernel is designed to outperform mx.fast.scaled_dot_product_attention
-by leveraging Apple Silicon specific optimizations and the 5:1 query-to-KV head ratio.
+by leveraging Apple Silicon specific optimizations and the 2:1 query-to-KV head ratio.
 
-Target: Qwen3-0.6B with 40 query heads : 8 KV heads
+Target: Qwen3-0.6B with 16 query heads : 8 KV heads
 Hardware: Apple M-series GPUs with unified memory
 Baseline: Standard MLX-LM using mx.fast.scaled_dot_product_attention
 Goal: 5-15% performance improvement through custom Metal kernel optimization
@@ -26,19 +26,19 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
     Custom Metal kernel implementation for Qwen3 GQA attention.
 
     Args:
-        queries: [B, num_heads=40, L, head_dim=128]
+        queries: [B, num_heads=16, L, head_dim=128]
         keys: [B, num_kv_heads=8, L, head_dim=128]
         values: [B, num_kv_heads=8, L, head_dim=128]
         scale: Attention scaling factor (1/sqrt(head_dim))
         mask: Attention mask (None, "causal", or boolean tensor)
 
     Returns:
-        Attention output [B, num_heads=40, L, head_dim=128]
+        Attention output [B, num_heads=16, L, head_dim=128]
     """
 
     B, num_heads, L, head_dim = queries.shape
     _, num_kv_heads, _, _ = keys.shape
-    heads_per_kv = num_heads // num_kv_heads  # Should be 5 for Qwen3
+    heads_per_kv = num_heads // num_kv_heads  # 2 for Qwen3-0.6B (16:8)
 
     # Handle mask conversion
     if mask == "causal" or mask is None:
@@ -67,9 +67,9 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
 
     # EVOLVE-BLOCK-START
     # Custom Metal kernel source for Qwen3 GQA optimization
-    # This kernel leverages the 40:8 head ratio and Apple Silicon architecture
+    # This kernel leverages the 16:8 head ratio and Apple Silicon architecture
     kernel_source = """
-    // Qwen3 GQA Metal Kernel - Optimized for 40:8 head pattern
+    // Qwen3 GQA Metal Kernel - Optimized for 16:8 head pattern
     // Thread mapping: each thread processes one query position
     uint thread_id = thread_position_in_grid.x;
     uint head_idx = thread_position_in_grid.y; 
@@ -86,7 +86,7 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
     bool use_mask_val = use_mask[0] > 0;
     
     // GQA mapping: determine which KV head corresponds to this query head
-    uint kv_head_idx = head_idx / HEADS_PER_KV;  // 5 query heads per KV head
+    uint kv_head_idx = head_idx / HEADS_PER_KV;  // 2 query heads per KV head
     
     // Pre-calculate base indices for memory access optimization
     const uint q_base = batch_idx * (NUM_HEADS * SEQ_LEN * HEAD_DIM) + 
@@ -104,91 +104,96 @@ def qwen3_custom_gqa_attention(queries, keys, values, scale=1.0, mask=None):
                            
     const uint out_base = q_base;
     
-    // Use vector type for query_vec (e.g., float8 or half8 for better SIMD utilization)
-    // HEAD_DIM is 128, so 16 vec<T, 8> elements
-    vec<T, 8> query_vec_v[HEAD_DIM / 8];
-    for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) {
-        query_vec_v[d_vec] = ((device vec<T, 8>*) (queries + q_base))[d_vec];
+    // Load query vector for this position (8-wide unrolled for better instruction-level parallelism)
+    T query_vec[HEAD_DIM];
+    for (uint d = 0; d < HEAD_DIM; d += 8) {
+        query_vec[d]   = queries[q_base + d];
+        query_vec[d+1] = queries[q_base + d+1];
+        query_vec[d+2] = queries[q_base + d+2];
+        query_vec[d+3] = queries[q_base + d+3];
+        query_vec[d+4] = queries[q_base + d+4];
+        query_vec[d+5] = queries[q_base + d+5];
+        query_vec[d+6] = queries[q_base + d+6];
+        query_vec[d+7] = queries[q_base + d+7];
     }
     
-    // Pass 1: Compute max_score for numerical stability (online max)
+    // First pass: compute attention scores and find maximum for numerical stability
     T max_score = T(-INFINITY);
+    T scores[SEQ_LEN];  // Cache scores to avoid recomputation
     
     for (uint key_pos = 0; key_pos < SEQ_LEN; key_pos++) {
-        bool is_valid = use_mask_val ? mask[mask_base + key_pos] : true;
+        // Compute Q @ K^T for this key position
+        const uint k_base = k_base_start + key_pos * HEAD_DIM;
+        T score = T(0.0);
         
-        T score;
-        if (!is_valid) {
-            score = T(-INFINITY); // Masked scores are -infinity, consistent with Pass 2
-        } else {
-            // Compute Q @ K^T for this key position using vectorized dot product
-            const uint k_base = k_base_start + key_pos * HEAD_DIM;
-            score = T(0.0); // Initialize score here
-            
-            for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) { // Use vec<T, 8>
-                score += dot(query_vec_v[d_vec], ((device vec<T, 8>*) (keys + k_base))[d_vec]);
-            }
-            
-            // Apply attention scaling
-            score *= scale_val;
+        // Vectorized dot product - process 8 elements at a time for wider SIMD utilization.
+        // HEAD_DIM=128 is a multiple of 8, so no remainder check is needed.
+        for (uint d = 0; d < HEAD_DIM; d += 8) {
+            score += query_vec[d]   * keys[k_base + d]   +
+                     query_vec[d+1] * keys[k_base + d+1] +
+                     query_vec[d+2] * keys[k_base + d+2] +
+                     query_vec[d+3] * keys[k_base + d+3] +
+                     query_vec[d+4] * keys[k_base + d+4] +
+                     query_vec[d+5] * keys[k_base + d+5] +
+                     query_vec[d+6] * keys[k_base + d+6] +
+                     query_vec[d+7] * keys[k_base + d+7];
         }
-        max_score = max(max_score, score);
+        
+        // Apply attention scaling
+        score *= scale_val;
+        
+        // Check attention mask and set score to -INFINITY if invalid.
+        // This makes the loop body uniform, avoiding conditional branching mid-loop.
+        bool is_valid = use_mask_val ? mask[mask_base + key_pos] : true;
+        scores[key_pos] = is_valid ? score : T(-INFINITY);
+        max_score = max(max_score, scores[key_pos]);
     }
     
-    // Pass 2: Compute softmax denominator and weighted sum (online sum)
+    // Second pass: compute softmax denominator
     T sum_exp = T(0.0);
-    vec<T, 8> output_acc_v[HEAD_DIM / 8]; // Accumulator for output vector, use vec<T, 8>
-    
-    // Initialize output accumulator to zero
-    for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) {
-        output_acc_v[d_vec] = T(0.0);
-    }
-
     for (uint key_pos = 0; key_pos < SEQ_LEN; key_pos++) {
-        bool is_valid = use_mask_val ? mask[mask_base + key_pos] : true;
-        
-        T current_score;
-        if (!is_valid) {
-            current_score = T(-INFINITY); // Masked scores are -infinity
-        } else {
-            // Recompute Q @ K^T for this key position
-            const uint k_base = k_base_start + key_pos * HEAD_DIM;
-            T score = T(0.0);
-            for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) { // Use vec<T, 8>
-                score += dot(query_vec_v[d_vec], ((device vec<T, 8>*) (keys + k_base))[d_vec]);
-            }
-            current_score = score * scale_val;
-        }
-
-        // Apply softmax (exp and sum)
-        T exp_score;
-        if (current_score == T(-INFINITY)) {
-            exp_score = T(0.0); // exp(-infinity) is 0
-        } else {
-            exp_score = exp(current_score - max_score);
-        }
+        // Compute exp(score - max_score) unconditionally.
+        // If scores[key_pos] was -INFINITY (due to masking), exp(...) will correctly evaluate to 0.
+        T exp_score = exp(scores[key_pos] - max_score);
+        scores[key_pos] = exp_score;  // Overwrite with exp(score - max)
         sum_exp += exp_score;
-        
-        // Compute weighted sum of values
-        if (exp_score > T(0.0)) { // Only add if exp_score is positive
-            const uint v_base = v_base_start + key_pos * HEAD_DIM;
-            for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) { // Use vec<T, 8>
-                output_acc_v[d_vec] += exp_score * ((device vec<T, 8>*) (values + v_base))[d_vec];
-            }
-        }
     }
     
-    // Final normalization and write result to global memory
-    if (sum_exp > T(0.0)) {
-        for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) { // Use vec<T, 8>
-            output_acc_v[d_vec] /= sum_exp;
-            ((device vec<T, 8>*) (output + out_base))[d_vec] = output_acc_v[d_vec];
-        }
-    } else {
-        // Handle case where sum_exp is zero (e.g., all scores were masked or extremely small)
-        // Set output to zero to avoid NaN/Inf results.
-        for (uint d_vec = 0; d_vec < HEAD_DIM / 8; d_vec++) { // Use vec<T, 8>
-            ((device vec<T, 8>*) (output + out_base))[d_vec] = T(0.0);
+    // Initialize output to zero (8-wide unrolled)
+    for (uint d = 0; d < HEAD_DIM; d += 8) {
+        output[out_base + d]   = T(0.0);
+        output[out_base + d+1] = T(0.0);
+        output[out_base + d+2] = T(0.0);
+        output[out_base + d+3] = T(0.0);
+        output[out_base + d+4] = T(0.0);
+        output[out_base + d+5] = T(0.0);
+        output[out_base + d+6] = T(0.0);
+        output[out_base + d+7] = T(0.0);
+    }
+    
+    // Third pass: compute weighted sum of values
+    if (sum_exp > T(0.0)) { // This outer check is necessary to prevent division by zero
+        T inv_sum_exp = T(1.0) / sum_exp; // Pre-compute inverse for performance
+        for (uint key_pos = 0; key_pos < SEQ_LEN; key_pos++) {
+            T attention_weight = scores[key_pos] * inv_sum_exp; // Use pre-computed inverse
+            
+            // If scores[key_pos] was 0 (due to mask or exp(-inf)), attention_weight will be 0.
+            // Multiplying by 0 won't change the accumulator, so the branch is not strictly needed
+            // and removing it can improve SIMD utilization by making the loop uniform.
+            const uint v_base = v_base_start + key_pos * HEAD_DIM;
+            
+            // Vectorized accumulation - process 8 elements at a time.
+            // HEAD_DIM=128 is a multiple of 8, so no remainder check is needed.
+            for (uint d = 0; d < HEAD_DIM; d += 8) {
+                output[out_base + d]   += attention_weight * values[v_base + d];
+                output[out_base + d+1] += attention_weight * values[v_base + d+1];
+                output[out_base + d+2] += attention_weight * values[v_base + d+2];
+                output[out_base + d+3] += attention_weight * values[v_base + d+3];
+                output[out_base + d+4] += attention_weight * values[v_base + d+4];
+                output[out_base + d+5] += attention_weight * values[v_base + d+5];
+                output[out_base + d+6] += attention_weight * values[v_base + d+6];
+                output[out_base + d+7] += attention_weight * values[v_base + d+7];
+            }
         }
     }
     """
@@ -248,8 +253,8 @@ class CustomGQAAttention(nn.Module):
         super().__init__()
 
         # Standard Qwen3 parameters
-        dim = args.hidden_size  # 5120
-        self.n_heads = n_heads = args.num_attention_heads  # 40
+        dim = args.hidden_size  # 2048
+        self.n_heads = n_heads = args.num_attention_heads  # 16
         assert args.num_key_value_heads is not None
         self.n_kv_heads = n_kv_heads = args.num_key_value_heads  # 8
         head_dim = args.head_dim  # 128
@@ -362,8 +367,8 @@ def benchmark_metal_gqa_optimization():
 
     # Qwen3-0.6B configuration
     class MockArgs:
-        hidden_size = 5120
-        num_attention_heads = 40
+        hidden_size = 2048
+        num_attention_heads = 16
         num_key_value_heads = 8
         head_dim = 128
         rms_norm_eps = 1e-06
@@ -375,10 +380,10 @@ def benchmark_metal_gqa_optimization():
 
     # Test configurations for Metal kernel validation
     test_configs = [
-        ("short_sequence", 1, 128, 5120),
-        ("medium_sequence", 1, 512, 5120),
-        ("long_sequence", 1, 1024, 5120),
-        ("max_sequence", 1, 2048, 5120),
+        ("short_sequence", 1, 128, 2048),
+        ("medium_sequence", 1, 512, 2048),
+        ("long_sequence", 1, 1024, 2048),
+        ("max_sequence", 1, 2048, 2048),
     ]
 
     print("Benchmarking Custom Metal GQA Kernel vs MLX Baseline")
@@ -425,11 +430,11 @@ def test_metal_gqa_correctness():
     print("=" * 50)
 
     # Test configuration
-    B, L, D = 1, 64, 5120
+    B, L, D = 1, 64, 2048
 
     class MockArgs:
-        hidden_size = 5120
-        num_attention_heads = 40
+        hidden_size = 2048
+        num_attention_heads = 16
         num_key_value_heads = 8
         head_dim = 128
         rms_norm_eps = 1e-06
@@ -463,7 +468,7 @@ def test_metal_gqa_correctness():
 
     # Test direct kernel function
     print("\n=== Testing Direct Kernel Function ===")
-    B, H, L, D = 1, 40, 128, 128
+    B, H, L, D = 1, 16, 128, 128
     q = mx.random.normal((B, H, L, D))
     k = mx.random.normal((B, 8, L, D))  # 8 KV heads
     v = mx.random.normal((B, 8, L, D))
@@ -496,7 +501,7 @@ if __name__ == "__main__":
     print("Evolution focus:")
     print("1. 🔧 Metal kernel source code optimization")
     print("2. 💾 Memory access pattern improvements for Apple Silicon")
-    print("3. 🎯 GQA-specific optimizations for 40:8 head ratio")
+    print("3. 🎯 GQA-specific optimizations for 16:8 head ratio")
     print("4. ⚡ Vectorization and SIMD optimization")
     print("5. 🚀 Thread group and grid configuration tuning")
     print("Target: 5-15% performance improvement through Metal kernel innovation")

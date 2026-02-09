@@ -1,20 +1,22 @@
 import asyncio
-import os
-import uuid
 import logging
+import os
 import time
+import uuid
 from dataclasses import dataclass
 
-from openevolve.database import Program, ProgramDatabase
 from openevolve.config import Config
+from openevolve.database import Program, ProgramDatabase
 from openevolve.evaluator import Evaluator
 from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.prompt.sampler import PromptSampler
 from openevolve.utils.code_utils import (
     apply_diff,
+    apply_diff_blocks,
     extract_diffs,
     format_diff_summary,
     parse_full_rewrite,
+    split_diffs_by_target,
 )
 
 
@@ -59,6 +61,15 @@ async def run_iteration_with_shared_db(
         island_previous_programs = database.get_top_programs(3, island_idx=parent_island)
 
         # Build prompt
+        if config.prompt.programs_as_changes_description:
+            parent_changes_desc = (
+                parent.changes_description or config.prompt.initial_changes_description
+            )
+            child_changes_desc = parent_changes_desc
+        else:
+            parent_changes_desc = None
+            child_changes_desc = None
+
         prompt = prompt_sampler.build_prompt(
             current_program=parent.code,
             parent_program=parent.code,
@@ -71,6 +82,7 @@ async def run_iteration_with_shared_db(
             diff_based_evolution=config.diff_based_evolution,
             program_artifacts=parent_artifacts if parent_artifacts else None,
             feature_dimensions=database.config.feature_dimensions,
+            current_changes_description=parent_changes_desc,
         )
 
         result = Result(parent=parent)
@@ -90,9 +102,46 @@ async def run_iteration_with_shared_db(
                 logger.warning(f"Iteration {iteration+1}: No valid diffs found in response")
                 return None
 
-            # Apply the diffs
-            child_code = apply_diff(parent.code, llm_response, config.diff_pattern)
-            changes_summary = format_diff_summary(diff_blocks)
+            if config.prompt.programs_as_changes_description:
+                try:
+                    code_blocks, desc_blocks, _unmatched = split_diffs_by_target(
+                        diff_blocks,
+                        code_text=parent.code,
+                        changes_description_text=parent_changes_desc,
+                    )
+                except Exception as e:
+                    logger.warning(f"Iteration {iteration + 1}: {e}")
+                    return None
+
+                child_code, _ = apply_diff_blocks(parent.code, code_blocks)
+                child_changes_desc, desc_applied = apply_diff_blocks(
+                    parent_changes_desc, desc_blocks
+                )
+
+                # Must update the previous changes description
+                if (
+                    desc_applied == 0
+                    or not child_changes_desc.strip()
+                    or child_changes_desc.strip() == parent_changes_desc.strip()
+                ):
+                    logger.warning(
+                        f"Iteration {iteration+1}: changes_description was not updated or empty, program is discarded"
+                    )
+                    return None
+
+                changes_summary = format_diff_summary(
+                    code_blocks,
+                    max_line_len=config.prompt.diff_summary_max_line_len,
+                    max_lines=config.prompt.diff_summary_max_lines,
+                )
+            else:
+                # All diffs applied only to code
+                child_code = apply_diff(parent.code, llm_response, config.diff_pattern)
+                changes_summary = format_diff_summary(
+                    diff_blocks,
+                    max_line_len=config.prompt.diff_summary_max_line_len,
+                    max_lines=config.prompt.diff_summary_max_lines,
+                )
         else:
             # Parse full rewrite
             new_code = parse_full_rewrite(llm_response, config.language)
@@ -126,6 +175,7 @@ async def run_iteration_with_shared_db(
         result.child_program = Program(
             id=child_id,
             code=child_code,
+            changes_description=child_changes_desc,
             language=config.language,
             parent_id=parent.id,
             generation=parent.generation + 1,

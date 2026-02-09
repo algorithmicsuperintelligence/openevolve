@@ -1,0 +1,19 @@
+{
+    "cities_number": 1000,
+    "input_path": "input.txt",
+    "output_path": "output.txt",
+    "use_heat_map_as_initial_weights": false,
+    "candidates_source": "knn",
+    "candidates_number": 10,
+    "max_k_opt_depth": 28,
+    "random_k_opt_depth_after_first_iteration": true,
+    "min_potential_to_consider": 0.040,
+    "exploration_coefficient": 0.0015,
+    "weight_delta_coefficient": 25.0,
+    "use_sensitivity_decrease": true,
+    "sensitivity_temperature": 2.0,
+    "max_k_opt_simulations_without_improve_to_stop": 15,
+    "restarts_number": 120000,
+    "distance_type": "int64",
+    "magnify_rate": 32000000
+}

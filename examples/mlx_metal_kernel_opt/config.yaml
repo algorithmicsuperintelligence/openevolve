@@ -4,9 +4,9 @@ log_level: "INFO"
 
 # LLM configuration for Metal kernel optimization
 llm:
-  primary_model: "gemini-2.5-flash-preview-05-20"
+  primary_model: "gemini-2.5-flash"
   primary_model_weight: 0.6
-  secondary_model: "gemini-2.5-pro-preview-06-05"
+  secondary_model: "gemini-2.5-pro"
   secondary_model_weight: 0.4
   api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
   temperature: 0.6
@@ -22,7 +22,7 @@ prompt:
     # TARGET: Optimize Metal Kernel for Qwen3 Grouped Query Attention (GQA)
     # HARDWARE: Apple M-series GPUs with unified memory architecture
     # BASELINE: Standard MLX scaled_dot_product_attention
-    # ARCHITECTURE: 40 query heads : 8 KV heads (5:1 ratio), 128 head dimension
+    # ARCHITECTURE: 16 query heads : 8 KV heads (2:1 ratio), 128 head dimension
     # GOAL: 5-15% performance improvement through Metal kernel optimization
     
     # CURRENT METAL KERNEL STRUCTURE:
@@ -33,7 +33,7 @@ prompt:
         uint head_idx = thread_position_in_grid.y; 
         uint batch_idx = thread_position_in_grid.z;
         
-        // GQA mapping: 5 query heads per KV head
+        // GQA mapping: 2 query heads per KV head
         uint kv_head_idx = head_idx / HEADS_PER_KV;
         
         // Current algorithm:
@@ -76,10 +76,10 @@ prompt:
     **3. GQA-Specific Optimizations:**
     ```metal
     // CURRENT: Basic kv_head_idx = head_idx / HEADS_PER_KV
-    // OPTIMIZE: Leverage the specific 5:1 ratio pattern
+    // OPTIMIZE: Leverage the specific 2:1 ratio pattern
     
-    // Example: Process 5 query heads together for each KV head
-    // Example: Optimize memory layout for the 40:8 pattern
+    // Example: Process 2 query heads together for each KV head
+    // Example: Optimize memory layout for the 16:8 pattern
     // Example: Reduce broadcast overhead through clever indexing
     ```
     
@@ -180,8 +180,8 @@ prompt:
     
     **Strategy 4: GQA Pattern Exploitation**
     ```metal
-    // Optimize for the specific 5:1 query:KV ratio
-    // Process query heads in groups of 5
+    // Optimize for the specific 2:1 query:KV ratio
+    // Process query heads in groups of 2
     // Reduce KV head indexing overhead
     ```
     
@@ -203,7 +203,7 @@ prompt:
     - Focus ONLY on optimizing the Metal kernel source code in the EVOLVE-BLOCK
     - The kernel will be compiled using mx.fast.metal_kernel() automatically
     - Maintain the exact same attention computation semantics
-    - Test with Qwen3's specific 40:8 head configuration
+    - Test with Qwen3-0.6B's specific 16:8 head configuration
     - Leverage Apple Silicon's unified memory and SIMD capabilities
     
     Your goal is to discover Metal kernel optimizations that outperform MLX's 
@@ -226,6 +226,8 @@ database:
 evaluator:
   timeout: 900  # 15 minutes for Metal kernel compilation and testing
   parallel_evaluations: 1
+  # This example's evaluator does not implement evaluate_stage1.
+  cascade_evaluation: false
 
 # Evolution settings
 diff_based_evolution: true
