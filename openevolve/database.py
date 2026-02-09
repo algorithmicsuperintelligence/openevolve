@@ -11,6 +11,7 @@ import shutil
 import time
 import uuid
 import math
+import copy
 from dataclasses import asdict, dataclass, field, fields
 
 # FileLock removed - no longer needed with threaded parallel processing
@@ -1440,6 +1441,7 @@ class ProgramDatabase:
                     metadata={"island": self.current_island},
                     artifacts_json=best_program.artifacts_json,
                     artifact_dir=best_program.artifact_dir,
+                    embedding=copy.deepcopy(best_program.embedding)
                 )
                 self.programs[copy_program.id] = copy_program
                 self.islands[self.current_island].add(copy_program.id)
@@ -1486,6 +1488,7 @@ class ProgramDatabase:
                     metadata={"island": self.current_island},
                     artifacts_json=best_program.artifacts_json,
                     artifact_dir=best_program.artifact_dir,
+                    embedding=copy.deepcopy(best_program.embedding)
                 )
                 self.programs[copy_program.id] = copy_program
                 self.islands[self.current_island].add(copy_program.id)
