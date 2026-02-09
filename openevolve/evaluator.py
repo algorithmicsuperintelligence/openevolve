@@ -7,6 +7,7 @@ import importlib.util
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,7 @@ class Evaluator:
         prompt_sampler: Optional[PromptSampler] = None,
         database: Optional[ProgramDatabase] = None,
         suffix: Optional[str] = ".py",
+        initial_program_path: Optional[str] = None,
     ):
         self.config = config
         self.evaluation_file = evaluation_file
@@ -52,6 +54,7 @@ class Evaluator:
         self.llm_ensemble = llm_ensemble
         self.prompt_sampler = prompt_sampler
         self.database = database
+        self.initial_program_path = initial_program_path
 
         # Create a task pool for parallel evaluation
         self.task_pool = TaskPool(max_concurrency=config.parallel_evaluations)
@@ -153,10 +156,29 @@ class Evaluator:
         # Retry logic for evaluation
         last_exception = None
         for attempt in range(self.config.max_retries + 1):
-            # Create a temporary file for the program
-            with tempfile.NamedTemporaryFile(suffix=self.program_suffix, delete=False) as temp_file:
-                temp_file.write(program_code.encode("utf-8"))
-                temp_file_path = temp_file.name
+            # Create a temporary file or directory for the program
+            if self.initial_program_path and self.program_suffix != ".py":
+                # For non-Python files, create temp directory with all files from source directory
+                temp_dir = tempfile.mkdtemp()
+                src_dir = os.path.dirname(os.path.abspath(self.initial_program_path))
+                initial_file_name = os.path.basename(self.initial_program_path)
+                
+                # Copy all files from source directory except the initial program file
+                for file_name in os.listdir(src_dir):
+                    if file_name != initial_file_name:
+                        src_file = os.path.join(src_dir, file_name)
+                        if os.path.isfile(src_file):
+                            shutil.copy2(src_file, temp_dir)
+                
+                # Write the program_code to the initial file name in temp directory
+                temp_file_path = os.path.join(temp_dir, initial_file_name)
+                with open(temp_file_path, "w", encoding="utf-8") as f:
+                    f.write(program_code)
+            else:
+                # Standard temp file creation for Python or when no initial_program_path
+                with tempfile.NamedTemporaryFile(suffix=self.program_suffix, delete=False) as temp_file:
+                    temp_file.write(program_code.encode("utf-8"))
+                    temp_file_path = temp_file.name
 
             try:
                 # Run evaluation
