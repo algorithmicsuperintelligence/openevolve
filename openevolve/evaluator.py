@@ -208,7 +208,8 @@ class Evaluator:
                         if "combined_score" in eval_result.metrics:
                             # Original combined_score is just accuracy
                             accuracy = eval_result.metrics["combined_score"]
-                            # Combine with LLM average (70% accuracy, 30% LLM quality)
+                            # Combine accuracy with LLM average using dynamic weighting:
+                            # (1 - llm_feedback_weight) * accuracy + llm_feedback_weight * LLM quality
                             eval_result.metrics["combined_score"] = (
                                 accuracy * (1-self.config.llm_feedback_weight) + llm_average * self.config.llm_feedback_weight
                             )
