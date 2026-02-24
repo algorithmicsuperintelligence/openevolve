@@ -352,6 +352,9 @@ class DatabaseConfig:
     embedding_model: Optional[str] = None
     similarity_threshold: float = 0.99
 
+    # Bahlous-Boldi, R., Faldor, M., Grillotti, L., Janmohamed, H., Coiffard, L., Spector, L., & Cully, A. (2025, July). Dominated novelty search: Rethinking local competition in quality-diversity. In Proceedings of the Genetic and Evolutionary Computation Conference (pp. 104-112).
+    variant: str = "DNSProgramDatabase"
+    distance_threshold: float = 1.5
 
 @dataclass
 class EvaluatorConfig:

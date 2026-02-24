@@ -20,6 +20,8 @@ import numpy as np
 from openevolve.config import DatabaseConfig
 from openevolve.utils.code_utils import calculate_edit_distance
 from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+import copy
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -1205,7 +1207,8 @@ class ProgramDatabase:
             self.best_program_id = program.id
 
             # Log the change
-            if "combined_score" in program.metrics and "combined_score" in current_best.metrics:
+            if "combined_score" in program.metrics and "combined_score" in current_best.metrics \
+                and not math.isinf(program.metrics["combined_score"]) and not math.isinf(current_best.metrics["combined_score"]):
                 old_score = current_best.metrics["combined_score"]
                 new_score = program.metrics["combined_score"]
                 score_diff = new_score - old_score
@@ -1313,6 +1316,7 @@ class ProgramDatabase:
                     metadata={"island": self.current_island},
                     artifacts_json=best_program.artifacts_json,
                     artifact_dir=best_program.artifact_dir,
+                    embedding=copy.deepcopy(best_program.embedding),
                 )
                 self.programs[copy_program.id] = copy_program
                 self.islands[self.current_island].add(copy_program.id)
@@ -1359,6 +1363,7 @@ class ProgramDatabase:
                     metadata={"island": self.current_island},
                     artifacts_json=best_program.artifacts_json,
                     artifact_dir=best_program.artifact_dir,
+                    embedding=copy.deepcopy(best_program.embedding),
                 )
                 self.programs[copy_program.id] = copy_program
                 self.islands[self.current_island].add(copy_program.id)
@@ -1983,7 +1988,7 @@ class ProgramDatabase:
                     get_fitness_score(p.metrics, self.config.feature_dimensions)
                     for p in island_programs
                 ]
-
+                scores = [score for score in scores if not math.isinf(score)]
                 best_score = max(scores) if scores else 0.0
                 avg_score = sum(scores) / len(scores) if scores else 0.0
                 diversity = self._calculate_island_diversity(island_programs)
@@ -2561,3 +2566,254 @@ class ProgramDatabase:
         if program_id not in self.prompts_by_program:
             self.prompts_by_program[program_id] = {}
         self.prompts_by_program[program_id][template_key] = prompt
+
+
+class ThresholdElitesProgramDatabase(ProgramDatabase):
+    def add(
+        self, program: Program, iteration: int = None, target_island: Optional[int] = None
+    ) -> str:
+        """
+        Add a program to the database
+
+        Args:
+            program: Program to add
+            iteration: Current iteration (defaults to last_iteration)
+            target_island: Specific island to add to (auto-detects parent's island if None)
+
+        Returns:
+            Program ID
+        """
+        # Store the program
+        # If iteration is provided, update the program's iteration_found
+        # Bahlous-Boldi, R., Faldor, M., Grillotti, L., Janmohamed, H., Coiffard, L., Spector, L., & Cully, A. (2025, July). Dominated novelty search: Rethinking local competition in quality-diversity. In Proceedings of the Genetic and Evolutionary Computation Conference (pp. 104-112).
+        if iteration is not None:
+            program.iteration_found = iteration
+            # Update last_iteration if needed
+            self.last_iteration = max(self.last_iteration, iteration)
+
+        self.programs[program.id] = program
+
+        # Calculate feature coordinates for Threshold-Elites
+        embd = self._calculate_feature_coords(program)
+        score = get_fitness_score(program.metrics, self.config.feature_dimensions)
+        program.embedding = embd
+        if "combined_score" not in program.metrics:
+            program.metrics["combined_score"] = score
+
+        # Determine target island
+        # If target_island is not specified and program has a parent, inherit parent's island
+        if target_island is None and program.parent_id:
+            parent = self.programs.get(program.parent_id)
+            if parent and "island" in parent.metadata:
+                # Child inherits parent's island to maintain island isolation
+                island_idx = parent.metadata["island"]
+                logger.debug(
+                    f"Program {program.id} inheriting island {island_idx} from parent {program.parent_id}"
+                )
+            else:
+                # Parent not found or has no island, use current_island
+                island_idx = self.current_island
+                if parent:
+                    logger.warning(
+                        f"Parent {program.parent_id} has no island metadata, using current_island {island_idx}"
+                    )
+                else:
+                    logger.warning(
+                        f"Parent {program.parent_id} not found, using current_island {island_idx}"
+                    )
+        elif target_island is not None:
+            # Explicit target island specified (e.g., for migrants)
+            island_idx = target_island
+        else:
+            # No parent and no target specified, use current island
+            island_idx = self.current_island
+
+        island_idx = island_idx % len(self.islands)  # Ensure valid island
+
+        # Novelty check before adding
+        if not self._is_novel(program.id, island_idx):
+            logger.debug(
+                f"Program {program.id} failed in novelty check and won't be added in the island {island_idx}"
+            )
+            return program.id  # Do not add non-novel program
+
+
+        distance_threshold = getattr(self.config, "distance_threshold", 1)
+        for pid in self.islands[island_idx]:
+            other = self.programs[pid]
+
+            if other.embedding is None:
+                logger.warning(
+                    f"Warning: Program {other.id} has no embedding, skipping similarity check"
+                )
+                continue
+
+            distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(embd, other.embedding)))
+
+            if distance < distance_threshold: 
+                if score > other.metrics["combined_score"]:
+                    other.metrics["combined_score"] = float("-inf")
+                else:
+                    program.metrics["combined_score"] = float("-inf")
+
+
+        # Add to island
+        self.islands[island_idx].add(program.id)
+
+        # Track which island this program belongs to
+        program.metadata["island"] = island_idx
+
+        # Update archive
+        self._update_archive(program)
+
+        # Enforce population size limit BEFORE updating best program tracking
+        # This ensures newly added programs aren't immediately removed
+        self._enforce_population_limit(exclude_program_id=program.id)
+
+        # Update the absolute best program tracking (after population enforcement)
+        self._update_best_program(program)
+
+        # Update island-specific best program tracking
+        self._update_island_best_program(program, island_idx)
+
+        # Save to disk if configured
+        if self.config.db_path:
+            self._save_program(program)
+
+        logger.debug(f"Added program {program.id} to island {island_idx}")
+
+        return program.id
+    
+
+class DNSProgramDatabase(ProgramDatabase):
+    def add(
+        self, program: Program, iteration: int = None, target_island: Optional[int] = None
+    ) -> str:
+        """
+        Add a program to the database
+
+        Args:
+            program: Program to add
+            iteration: Current iteration (defaults to last_iteration)
+            target_island: Specific island to add to (auto-detects parent's island if None)
+
+        Returns:
+            Program ID
+        """
+        # Store the program
+        # If iteration is provided, update the program's iteration_found
+        # Bahlous-Boldi, R., Faldor, M., Grillotti, L., Janmohamed, H., Coiffard, L., Spector, L., & Cully, A. (2025, July). Dominated novelty search: Rethinking local competition in quality-diversity. In Proceedings of the Genetic and Evolutionary Computation Conference (pp. 104-112).
+        if iteration is not None:
+            program.iteration_found = iteration
+            # Update last_iteration if needed
+            self.last_iteration = max(self.last_iteration, iteration)
+
+        self.programs[program.id] = program
+
+        # Calculate feature coordinates for Threshold-Elites
+        embd = self._calculate_feature_coords(program)
+        score = get_fitness_score(program.metrics, self.config.feature_dimensions)
+        program.embedding = embd
+        if "combined_score" not in program.metrics:
+            program.metrics["combined_score"] = score
+
+        # Determine target island
+        # If target_island is not specified and program has a parent, inherit parent's island
+        if target_island is None and program.parent_id:
+            parent = self.programs.get(program.parent_id)
+            if parent and "island" in parent.metadata:
+                # Child inherits parent's island to maintain island isolation
+                island_idx = parent.metadata["island"]
+                logger.debug(
+                    f"Program {program.id} inheriting island {island_idx} from parent {program.parent_id}"
+                )
+            else:
+                # Parent not found or has no island, use current_island
+                island_idx = self.current_island
+                if parent:
+                    logger.warning(
+                        f"Parent {program.parent_id} has no island metadata, using current_island {island_idx}"
+                    )
+                else:
+                    logger.warning(
+                        f"Parent {program.parent_id} not found, using current_island {island_idx}"
+                    )
+        elif target_island is not None:
+            # Explicit target island specified (e.g., for migrants)
+            island_idx = target_island
+        else:
+            # No parent and no target specified, use current island
+            island_idx = self.current_island
+
+        island_idx = island_idx % len(self.islands)  # Ensure valid island
+
+        # Novelty check before adding
+        if not self._is_novel(program.id, island_idx):
+            logger.debug(
+                f"Program {program.id} failed in novelty check and won't be added in the island {island_idx}"
+            )
+            return program.id  # Do not add non-novel program
+
+        def _is_negative_infinity(value):
+            return math.isinf(value) and value < 0
+        
+        p2dns = dict()
+        pids = list(self.islands[island_idx]) + [program.id]
+
+        for pid_i in pids:
+            program_i = self.programs[pid_i]
+
+            if _is_negative_infinity(program_i.metrics["combined_score"]):
+                p2dns[pid_i] = float("-inf")
+                continue
+            
+            D_i = []
+            for pid_j in pids:
+                if pid_j != pid_i:
+                    program_j = self.programs[pid_j]
+                    if program_j.metrics["combined_score"] > program_i.metrics["combined_score"]:
+                        D_i.append(pid_j)
+
+            if len(D_i) > 0:
+                distances = []
+                for pid_j in D_i:
+                    program_j = self.programs[pid_j]
+                    distances.append(math.sqrt(sum((a - b) ** 2 for a, b in zip(program_i.embedding, program_j.embedding))))
+                dominated_novelty_score = np.mean(distances)
+            else:
+                dominated_novelty_score = float("+inf")    
+            p2dns[pid_i] = dominated_novelty_score
+
+        dns_median = np.median(list(p2dns.values()))
+        for pid_i in pids:
+            program_i = self.programs[pid_i] 
+            dominated_novelty_score = p2dns[pid_i]
+            if dominated_novelty_score < dns_median:
+                program_i.metrics["combined_score"] = float("-inf")
+
+        # Add to island
+        self.islands[island_idx].add(program.id)
+
+        # Track which island this program belongs to
+        program.metadata["island"] = island_idx
+
+        # Update archive
+        self._update_archive(program)
+
+        # Enforce population size limit BEFORE updating best program tracking
+        # This ensures newly added programs aren't immediately removed
+        self._enforce_population_limit(exclude_program_id=program.id)
+
+        # Update the absolute best program tracking (after population enforcement)
+        self._update_best_program(program)
+
+        # Update island-specific best program tracking
+        self._update_island_best_program(program, island_idx)
+
+        # Save to disk if configured
+        if self.config.db_path:
+            self._save_program(program)
+
+        logger.debug(f"Added program {program.id} to island {island_idx}")
+
+        return program.id
