@@ -163,6 +163,74 @@ def evaluate(program_path):
         # Verify shutdown event is set
         self.assertTrue(controller.shutdown_event.is_set())
 
+    def test_hard_timeout_watchdog_requeues_stuck_future(self):
+        """Test that watchdog cancels and requeues a stuck future."""
+
+        async def run_test():
+            controller = ProcessParallelController(self.config, self.eval_file, self.database)
+            controller.executor = Mock()  # run_evolution requires a started executor
+
+            self.config.stuck_future_timeout = 0.01
+            self.config.stuck_future_max_retries = 1
+
+            stuck_future = MagicMock(spec=Future)
+            stuck_future.done.return_value = False
+            stuck_future.cancel.return_value = True
+
+            retry_future = MagicMock(spec=Future)
+            retry_future.done.return_value = True
+            retry_future.result.return_value = SerializableResult(
+                child_program_dict={
+                    "id": "child_retry_success",
+                    "code": "def evolved(): return 42",
+                    "language": "python",
+                    "parent_id": "test_0",
+                    "generation": 1,
+                    "metrics": {"score": 0.8, "performance": 0.9},
+                    "iteration_found": 1,
+                    "metadata": {"changes": "watchdog retry", "island": 0},
+                },
+                parent_id="test_0",
+                iteration_time=0.1,
+                iteration=1,
+                target_island=0,
+            )
+
+            with patch.object(
+                controller, "_submit_iteration", side_effect=[stuck_future, retry_future]
+            ) as mock_submit:
+                await controller.run_evolution(start_iteration=1, max_iterations=1, target_score=None)
+
+            self.assertEqual(mock_submit.call_count, 2)
+            mock_submit.assert_any_call(1, 0)
+            self.assertTrue(stuck_future.cancel.called)
+            self.assertIn("child_retry_success", self.database.programs)
+
+        asyncio.run(run_test())
+
+    def test_hard_timeout_watchdog_respects_retry_limit(self):
+        """Test that watchdog stops requeueing after max retries are exhausted."""
+
+        async def run_test():
+            controller = ProcessParallelController(self.config, self.eval_file, self.database)
+            controller.executor = Mock()  # run_evolution requires a started executor
+
+            self.config.stuck_future_timeout = 0.01
+            self.config.stuck_future_max_retries = 0
+
+            stuck_future = MagicMock(spec=Future)
+            stuck_future.done.return_value = False
+            stuck_future.cancel.return_value = True
+
+            with patch.object(controller, "_submit_iteration", return_value=stuck_future) as mock_submit:
+                await controller.run_evolution(start_iteration=1, max_iterations=1, target_score=None)
+
+            self.assertEqual(mock_submit.call_count, 1)
+            self.assertTrue(stuck_future.cancel.called)
+            self.assertNotIn("child_retry_success", self.database.programs)
+
+        asyncio.run(run_test())
+
     def test_serializable_result(self):
         """Test SerializableResult dataclass"""
         result = SerializableResult(
