@@ -83,6 +83,12 @@ class LLMModelConfig:
     manual_mode: Optional[bool] = None
     _manual_queue_dir: Optional[str] = None
 
+    # OpenAI API mode
+    # - "chat_completions": use client.chat.completions.create(...)
+    # - "responses": use client.responses.create(...)
+    # - "auto": choose based on endpoint compatibility
+    api_mode: Optional[str] = None
+
     def __post_init__(self):
         """Post-initialization to resolve ${VAR} env var references in api_key"""
         self.api_key = _resolve_env_var(self.api_key)
@@ -123,6 +129,9 @@ class LLMConfig(LLMModelConfig):
 
     # Manual mode switch
     manual_mode: bool = False
+
+    # OpenAI API mode (inherited by per-model config when unset there)
+    api_mode: str = "chat_completions"
 
     def __post_init__(self):
         """Post-initialization to set up model configurations"""
@@ -179,6 +188,7 @@ class LLMConfig(LLMModelConfig):
             "random_seed": self.random_seed,
             "reasoning_effort": self.reasoning_effort,
             "manual_mode": self.manual_mode,
+            "api_mode": self.api_mode,
         }
         self.update_model_params(shared_config)
 
@@ -232,6 +242,7 @@ class LLMConfig(LLMModelConfig):
             "retry_delay": self.retry_delay,
             "random_seed": self.random_seed,
             "reasoning_effort": self.reasoning_effort,
+            "api_mode": self.api_mode,
         }
         self.update_model_params(shared_config)
 

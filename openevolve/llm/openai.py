@@ -63,6 +63,7 @@ class OpenAILLM(LLMInterface):
         self.api_key = model_cfg.api_key
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
+        self.api_mode = str(getattr(model_cfg, "api_mode", "chat_completions") or "chat_completions")
 
         # Manual mode: enabled via llm.manual_mode in config.yaml
         self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
@@ -97,6 +98,139 @@ class OpenAILLM(LLMInterface):
             logger.info(f"Initialized OpenAI LLM with model: {self.model}")
             logger._initialized_models.add(self.model)
 
+    def _resolve_api_mode(self) -> str:
+        """Resolve effective API mode for this request."""
+        mode = str(self.api_mode).lower()
+        valid_modes = {"chat_completions", "responses", "auto"}
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Invalid api_mode '{self.api_mode}'. Expected one of: {sorted(valid_modes)}"
+            )
+
+        if mode != "auto":
+            return mode
+
+        base = (self.api_base or "").lower().rstrip("/")
+        # Conservative auto mode: prefer Responses API only for official OpenAI endpoints.
+        if base in {"https://api.openai.com/v1", "https://api.openai.com"}:
+            return "responses"
+        return "chat_completions"
+
+    @staticmethod
+    def _is_openai_reasoning_model(model_name: str) -> bool:
+        """Check whether model follows OpenAI reasoning model naming patterns."""
+        openai_reasoning_model_prefixes = (
+            # O-series reasoning models
+            "o1-",
+            "o1",  # o1, o1-mini, o1-preview
+            "o3-",
+            "o3",  # o3, o3-mini, o3-pro
+            "o4-",  # o4-mini
+            # GPT-5 series are also reasoning models
+            "gpt-5-",
+            "gpt-5",  # gpt-5, gpt-5-mini, gpt-5-nano
+            # GPT OSS series
+            "gpt-oss-120b",
+            "gpt-oss-20b",
+        )
+        return str(model_name).lower().startswith(openai_reasoning_model_prefixes)
+
+    def _build_chat_completion_params(
+        self, formatted_messages: List[Dict[str, str]], **kwargs
+    ) -> Dict[str, Any]:
+        """Build request params for Chat Completions API."""
+        is_openai_reasoning_model = self._is_openai_reasoning_model(self.model)
+
+        if is_openai_reasoning_model:
+            params = {
+                "model": self.model,
+                "messages": formatted_messages,
+                "max_completion_tokens": kwargs.get("max_tokens", self.max_tokens),
+            }
+            reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
+            if reasoning_effort is not None:
+                params["reasoning_effort"] = reasoning_effort
+            if "verbosity" in kwargs:
+                params["verbosity"] = kwargs["verbosity"]
+            return params
+
+        params = {
+            "model": self.model,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", self.temperature),
+            "top_p": kwargs.get("top_p", self.top_p),
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+        }
+        reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
+        if reasoning_effort is not None:
+            params["reasoning_effort"] = reasoning_effort
+        return params
+
+    def _build_responses_params(
+        self, formatted_messages: List[Dict[str, str]], **kwargs
+    ) -> Dict[str, Any]:
+        """Build request params for Responses API."""
+        # Responses API accepts role/content messages via the input field.
+        input_messages = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in formatted_messages
+        ]
+
+        params = {
+            "model": self.model,
+            "input": input_messages,
+            "max_output_tokens": kwargs.get("max_tokens", self.max_tokens),
+        }
+
+        is_openai_reasoning_model = self._is_openai_reasoning_model(self.model)
+        if not is_openai_reasoning_model:
+            params["temperature"] = kwargs.get("temperature", self.temperature)
+            params["top_p"] = kwargs.get("top_p", self.top_p)
+
+        reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
+        if reasoning_effort is not None:
+            params["reasoning"] = {"effort": reasoning_effort}
+
+        if "verbosity" in kwargs:
+            params["verbosity"] = kwargs["verbosity"]
+
+        return params
+
+    @staticmethod
+    def _extract_responses_text(response: Any) -> str:
+        """Extract text content from OpenAI Responses API result."""
+        output_text = getattr(response, "output_text", None)
+        if isinstance(output_text, str) and output_text:
+            return output_text
+
+        # Fallback for SDK objects and dict-like responses.
+        output_items = getattr(response, "output", None)
+        if output_items is None and isinstance(response, dict):
+            output_items = response.get("output")
+
+        text_chunks: List[str] = []
+        for item in output_items or []:
+            content_list = getattr(item, "content", None)
+            if content_list is None and isinstance(item, dict):
+                content_list = item.get("content")
+
+            for content in content_list or []:
+                content_type = getattr(content, "type", None)
+                if content_type is None and isinstance(content, dict):
+                    content_type = content.get("type")
+
+                if content_type in {"output_text", "text"}:
+                    text_value = getattr(content, "text", None)
+                    if text_value is None and isinstance(content, dict):
+                        text_value = content.get("text")
+                    if isinstance(text_value, str) and text_value:
+                        text_chunks.append(text_value)
+
+        if text_chunks:
+            return "\n".join(text_chunks)
+
+        raise ValueError("Responses API returned no text output")
+
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate text from a prompt"""
         return await self.generate_with_context(
@@ -112,57 +246,11 @@ class OpenAILLM(LLMInterface):
         # Prepare messages with system message
         formatted_messages = [{"role": "system", "content": system_message}]
         formatted_messages.extend(messages)
-
-        # Set up generation parameters
-        # Define OpenAI reasoning models that require max_completion_tokens
-        # These models don't support temperature/top_p and use different parameters
-        OPENAI_REASONING_MODEL_PREFIXES = (
-            # O-series reasoning models
-            "o1-",
-            "o1",  # o1, o1-mini, o1-preview
-            "o3-",
-            "o3",  # o3, o3-mini, o3-pro
-            "o4-",  # o4-mini
-            # GPT-5 series are also reasoning models
-            "gpt-5-",
-            "gpt-5",  # gpt-5, gpt-5-mini, gpt-5-nano
-            # The GPT OSS series are also reasoning models
-            "gpt-oss-120b",
-            "gpt-oss-20b",
-        )
-
-        # Check if this is an OpenAI reasoning model based on model name pattern
-        # This works for all endpoints (OpenAI, Azure, OptiLLM, OpenRouter, etc.)
-        model_lower = str(self.model).lower()
-        is_openai_reasoning_model = model_lower.startswith(OPENAI_REASONING_MODEL_PREFIXES)
-
-        if is_openai_reasoning_model:
-            # For OpenAI reasoning models
-            params = {
-                "model": self.model,
-                "messages": formatted_messages,
-                "max_completion_tokens": kwargs.get("max_tokens", self.max_tokens),
-            }
-            # Add optional reasoning parameters if provided
-            reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
-            if reasoning_effort is not None:
-                params["reasoning_effort"] = reasoning_effort
-            if "verbosity" in kwargs:
-                params["verbosity"] = kwargs["verbosity"]
+        effective_api_mode = self._resolve_api_mode()
+        if effective_api_mode == "responses":
+            params = self._build_responses_params(formatted_messages, **kwargs)
         else:
-            # Standard parameters for all other models
-            params = {
-                "model": self.model,
-                "messages": formatted_messages,
-                "temperature": kwargs.get("temperature", self.temperature),
-                "top_p": kwargs.get("top_p", self.top_p),
-                "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-            }
-
-            # Handle reasoning_effort for open source reasoning models.
-            reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
-            if reasoning_effort is not None:
-                params["reasoning_effort"] = reasoning_effort
+            params = self._build_chat_completion_params(formatted_messages, **kwargs)
 
         # Add seed parameter for reproducibility if configured
         # Skip seed parameter for Google AI Studio endpoint as it doesn't support it
@@ -184,13 +272,17 @@ class OpenAILLM(LLMInterface):
         # Manual mode: no timeout unless explicitly passed by the caller
         if self.manual_mode:
             timeout = kwargs.get("timeout", None)
-            return await self._manual_wait_for_answer(params, timeout=timeout)
+            manual_params = params.copy()
+            manual_params["messages"] = formatted_messages
+            return await self._manual_wait_for_answer(manual_params, timeout=timeout)
 
         timeout = kwargs.get("timeout", self.timeout)
 
         for attempt in range(retries + 1):
             try:
-                response = await asyncio.wait_for(self._call_api(params), timeout=timeout)
+                response = await asyncio.wait_for(
+                    self._call_api(params, api_mode=effective_api_mode), timeout=timeout
+                )
                 return response
             except asyncio.TimeoutError:
                 if attempt < retries:
@@ -209,18 +301,22 @@ class OpenAILLM(LLMInterface):
                     logger.error(f"All {retries + 1} attempts failed with error: {str(e)}")
                     raise
 
-    async def _call_api(self, params: Dict[str, Any]) -> str:
+    async def _call_api(self, params: Dict[str, Any], api_mode: str = "chat_completions") -> str:
         """Make the actual API call"""
         if self.client is None:
             raise RuntimeError("OpenAI client is not initialized (manual_mode enabled?)")
 
         # Use asyncio to run the blocking API call in a thread pool
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None, lambda: self.client.chat.completions.create(**params)
-        )
+        if api_mode == "responses":
+            response = await loop.run_in_executor(None, lambda: self.client.responses.create(**params))
+            response_text = self._extract_responses_text(response)
+            logger.debug(f"API parameters: {params}")
+            logger.debug(f"API response: {response_text}")
+            return response_text
+
+        response = await loop.run_in_executor(None, lambda: self.client.chat.completions.create(**params))
         # Logging of system prompt, user message and response content
-        logger = logging.getLogger(__name__)
         logger.debug(f"API parameters: {params}")
         logger.debug(f"API response: {response.choices[0].message.content}")
         return response.choices[0].message.content
@@ -249,9 +345,11 @@ class OpenAILLM(LLMInterface):
             "meta": {
                 "max_tokens": params.get("max_tokens"),
                 "max_completion_tokens": params.get("max_completion_tokens"),
+                "max_output_tokens": params.get("max_output_tokens"),
                 "temperature": params.get("temperature"),
                 "top_p": params.get("top_p"),
-                "reasoning_effort": params.get("reasoning_effort"),
+                "reasoning_effort": params.get("reasoning_effort")
+                or (params.get("reasoning", {}) or {}).get("effort"),
                 "verbosity": params.get("verbosity"),
             },
         }
