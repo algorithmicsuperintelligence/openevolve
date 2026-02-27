@@ -511,6 +511,7 @@ class ProcessParallelController:
 
         # Early stopping tracking
         early_stopping_enabled = self.config.early_stopping_patience is not None
+        termination_reason = None
         if early_stopping_enabled:
             best_score = float("-inf")
             iterations_without_improvement = 0
@@ -686,6 +687,7 @@ class ProcessParallelController:
                             logger.info(
                                 f"Target score {target_score} reached at iteration {completed_iteration}"
                             )
+                            termination_reason = "target_score"
                             break
 
                     # Check early stopping
@@ -731,6 +733,7 @@ class ProcessParallelController:
                                         f"No improvement for {iterations_without_improvement} iterations "
                                         f"(best score: {best_score:.4f})"
                                     )
+                                    termination_reason = "early_stopping"
                                     break
 
                             else:
@@ -742,6 +745,7 @@ class ProcessParallelController:
                                         f"Task successfully solved with score {best_score:.4f}."
                                     )
                                     self.early_stopping_triggered = True
+                                    termination_reason = "early_stopping"
                                     break
 
             except FutureTimeoutError:
@@ -777,17 +781,40 @@ class ProcessParallelController:
                         next_iteration += 1
                         break  # Only submit one iteration per completion to maintain balance
 
-        # Handle shutdown
-        if self.shutdown_event.is_set():
-            logger.info("Shutdown requested, canceling remaining evaluations...")
+        # Handle shutdown / early termination by canceling pending work quickly.
+        if self.shutdown_event.is_set() and termination_reason is None:
+            termination_reason = "shutdown"
+
+        if termination_reason in {"target_score", "early_stopping", "shutdown"}:
+            if termination_reason == "shutdown":
+                logger.info("Shutdown requested, canceling remaining evaluations...")
+            else:
+                logger.info(
+                    f"{termination_reason} triggered, canceling remaining pending evaluations..."
+                )
             for future in pending_futures.values():
                 future.cancel()
 
+        # Determine completion reason if no explicit early termination was set.
+        if termination_reason is None:
+            if completed_iterations >= max_iterations:
+                termination_reason = "max_iterations"
+            elif not pending_futures:
+                termination_reason = "no_pending_futures"
+            elif self.shutdown_event.is_set():
+                termination_reason = "shutdown"
+            else:
+                termination_reason = "max_iterations"
+
         # Log completion reason
-        if self.early_stopping_triggered:
+        if termination_reason == "early_stopping":
             logger.info("✅ Evolution completed - Early stopping triggered due to convergence")
-        elif self.shutdown_event.is_set():
+        elif termination_reason == "target_score":
+            logger.info("✅ Evolution completed - Target score reached")
+        elif termination_reason == "shutdown":
             logger.info("✅ Evolution completed - Shutdown requested")
+        elif termination_reason == "no_pending_futures":
+            logger.info("✅ Evolution completed - No pending futures remaining")
         else:
             logger.info("✅ Evolution completed - Maximum iterations reached")
 

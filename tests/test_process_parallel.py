@@ -163,6 +163,47 @@ def evaluate(program_path):
         # Verify shutdown event is set
         self.assertTrue(controller.shutdown_event.is_set())
 
+    def test_target_score_fast_exit_cancels_pending_futures(self):
+        """Test that reaching target score cancels pending futures immediately."""
+
+        async def run_test():
+            controller = ProcessParallelController(self.config, self.eval_file, self.database)
+            controller.executor = Mock()  # run_evolution requires a started executor
+
+            done_future = MagicMock(spec=Future)
+            done_future.done.return_value = True
+            done_future.result.return_value = SerializableResult(
+                child_program_dict={
+                    "id": "child_target_hit",
+                    "code": "def evolved(): return 99",
+                    "language": "python",
+                    "parent_id": "test_0",
+                    "generation": 1,
+                    "metrics": {"combined_score": 0.95, "score": 0.95},
+                    "iteration_found": 1,
+                    "metadata": {"changes": "target score hit", "island": 0},
+                },
+                parent_id="test_0",
+                iteration_time=0.1,
+                iteration=1,
+                target_island=0,
+            )
+
+            pending_future = MagicMock(spec=Future)
+            pending_future.done.return_value = False
+            pending_future.cancel.return_value = True
+
+            with patch.object(
+                controller, "_submit_iteration", side_effect=[done_future, pending_future]
+            ) as mock_submit:
+                await controller.run_evolution(start_iteration=1, max_iterations=2, target_score=0.9)
+
+            self.assertEqual(mock_submit.call_count, 2)
+            self.assertTrue(pending_future.cancel.called)
+            self.assertIn("child_target_hit", self.database.programs)
+
+        asyncio.run(run_test())
+
     def test_serializable_result(self):
         """Test SerializableResult dataclass"""
         result = SerializableResult(
