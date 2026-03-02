@@ -3,6 +3,7 @@ High-level API for using OpenEvolve as a library
 """
 
 import asyncio
+import pickle
 import tempfile
 import os
 import uuid
@@ -239,20 +240,33 @@ def _prepare_evaluator(
 
     # If it's a callable, create a wrapper module
     if callable(evaluator):
-        # Create a unique global name for this evaluator
-        evaluator_id = f"_openevolve_evaluator_{uuid.uuid4().hex[:8]}"
+        try:
+            import cloudpickle as _pickle_mod
+        except ImportError:
+            _pickle_mod = pickle
 
-        # Store in globals so the wrapper can find it
-        globals()[evaluator_id] = evaluator
+        # Serialize the callable to a file so subprocess workers can load it
+        if temp_dir is None:
+            temp_dir = tempfile.gettempdir()
+
+        pickle_path = os.path.join(temp_dir, f"evaluator_{uuid.uuid4().hex[:8]}.pkl")
+        with open(pickle_path, "wb") as pf:
+            _pickle_mod.dump(evaluator, pf)
+        temp_files.append(pickle_path)
 
         evaluator_code = f"""
-# Wrapper for user-provided evaluator function
-import {__name__} as api_module
+# Wrapper for user-provided evaluator function (serialized to disk for cross-process access)
+import pickle
+
+_cached_evaluator = None
 
 def evaluate(program_path):
-    '''Wrapper for user-provided evaluator function'''
-    user_evaluator = getattr(api_module, '{evaluator_id}')
-    return user_evaluator(program_path)
+    '''Wrapper that loads the evaluator from a pickle file'''
+    global _cached_evaluator
+    if _cached_evaluator is None:
+        with open({pickle_path!r}, 'rb') as f:
+            _cached_evaluator = pickle.load(f)
+    return _cached_evaluator(program_path)
 """
     else:
         # Treat as code string
