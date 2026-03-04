@@ -61,6 +61,7 @@ class OpenAILLM(LLMInterface):
         self.retry_delay = model_cfg.retry_delay
         self.api_base = model_cfg.api_base
         self.api_key = model_cfg.api_key
+        self.default_headers = getattr(model_cfg, "default_headers", None)
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
 
@@ -82,12 +83,15 @@ class OpenAILLM(LLMInterface):
             # Set up API client (normal mode)
             # OpenAI client requires max_retries to be int, not None
             max_retries = self.retries if self.retries is not None else 0
-            self.client = openai.OpenAI(
-                api_key=self.api_key,
-                base_url=self.api_base,
-                timeout=self.timeout,
-                max_retries=max_retries,
-            )
+            client_kwargs = {
+                "api_key": self.api_key,
+                "base_url": self.api_base,
+                "timeout": self.timeout,
+                "max_retries": max_retries,
+            }
+            if self.default_headers:
+                client_kwargs["default_headers"] = self.default_headers
+            self.client = openai.OpenAI(**client_kwargs)
 
         # Only log unique models to reduce duplication
         if not hasattr(logger, "_initialized_models"):

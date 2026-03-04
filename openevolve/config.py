@@ -55,6 +55,7 @@ class LLMModelConfig:
     api_base: str = None
     api_key: Optional[str] = None
     name: str = None
+    default_headers: Optional[Dict[str, str]] = None
 
     # Custom LLM client
     init_client: Optional[Callable] = None
@@ -84,8 +85,14 @@ class LLMModelConfig:
     _manual_queue_dir: Optional[str] = None
 
     def __post_init__(self):
-        """Post-initialization to resolve ${VAR} env var references in api_key"""
+        """Post-initialization to resolve ${VAR} env var references in api_key and headers"""
         self.api_key = _resolve_env_var(self.api_key)
+        # Resolve environment variables in default_headers values
+        if self.default_headers:
+            resolved_headers = {}
+            for key, value in self.default_headers.items():
+                resolved_headers[key] = _resolve_env_var(value) if isinstance(value, str) else value
+            self.default_headers = resolved_headers
 
 
 @dataclass
@@ -170,6 +177,7 @@ class LLMConfig(LLMModelConfig):
         shared_config = {
             "api_base": self.api_base,
             "api_key": self.api_key,
+            "default_headers": self.default_headers,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
