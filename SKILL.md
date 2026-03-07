@@ -88,7 +88,7 @@ if __name__ == "__main__":
 #### evaluator.py
 
 Must define `evaluate(program_path)` returning a dict of numeric metrics.
-The key `combined_score` (or the average of all numeric values) determines fitness.
+Fitness is taken from the `combined_score` key when present; otherwise it is computed as the average of all numeric metric values excluding any MAP-Elites feature dimensions (non-numeric and boolean values are ignored).
 
 ```python
 import importlib.util
