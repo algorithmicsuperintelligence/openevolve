@@ -36,13 +36,13 @@ Verify: `openevolve-run --help`
 
 ## Core Concepts
 
-Every OpenEvolve experiment requires exactly **3 files**:
+Every OpenEvolve experiment requires **2 files** (with an optional third):
 
-| File | Purpose |
-|------|---------|
-| `initial_program.py` | Starting code with `EVOLVE-BLOCK` markers around the section to evolve |
-| `evaluator.py` | Defines `evaluate(program_path) -> dict` that scores each variant |
-| `config.yaml` | LLM provider, iterations, population size, system message |
+| File | Required | Purpose |
+|------|----------|---------|
+| `initial_program.py` | Yes | Starting code with `EVOLVE-BLOCK` markers around the section to evolve |
+| `evaluator.py` | Yes | Defines `evaluate(program_path) -> dict` that scores each variant |
+| `config.yaml` | No | LLM provider, iterations, population size, system message (sensible defaults are used when omitted) |
 
 ---
 
@@ -50,7 +50,7 @@ Every OpenEvolve experiment requires exactly **3 files**:
 
 ### Step 1: Scaffold the experiment
 
-Create a project directory with the three required files.
+Create a project directory with the required files.
 
 ```bash
 mkdir -p my_experiment
@@ -58,7 +58,7 @@ mkdir -p my_experiment
 
 #### initial_program.py
 
-Wrap the code to evolve in `EVOLVE-BLOCK` markers. Code outside the markers stays fixed.
+Wrap the code to evolve in `EVOLVE-BLOCK` markers. These markers serve as guidance for the LLM, signaling which sections should be modified. Note: the markers are not enforced by the tool — the diff engine can technically change any part of the file — but they strongly steer the LLM's attention.
 
 ```python
 import math
@@ -79,10 +79,11 @@ if __name__ == "__main__":
     print(solve([3, 1, 4, 1, 5]))
 ```
 
-**Rules for EVOLVE-BLOCK markers:**
+**Guidelines for EVOLVE-BLOCK markers:**
 - Both `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END` are required as a pair
 - Multiple blocks are supported for evolving different sections
-- If omitted, OpenEvolve wraps the entire file (less control)
+- If omitted, the LLM may modify any part of the file (less control)
+- These markers are conventions that guide the LLM prompt — they are not enforced at the tool level
 - Keep the code between markers self-contained — imports and helpers go outside
 
 #### evaluator.py
@@ -202,7 +203,8 @@ evaluator:
 | `database.num_islands` | 5 | Parallel evolving populations |
 | `database.migration_interval` | 50 | Generations between island migration |
 | `evaluator.cascade_evaluation` | true | Multi-stage filtering of bad programs |
-| `evaluator.enable_artifacts` | true | Feed errors/warnings back to LLM |
+| `evaluator.enable_artifacts` | true | Capture and store evaluation artifacts |
+| `prompt.include_artifacts` | true | Include artifacts in LLM prompts (feedback loop) |
 
 **LLM provider examples:**
 
@@ -312,28 +314,31 @@ result = evolve_function(
 **Output directory structure:**
 
 ```
-output/
+my_experiment/output/
 ├── checkpoints/
 │   ├── checkpoint_100/
-│   │   ├── metadata.json       # iteration info, best program ID
-│   │   └── programs/
-│   │       ├── <program_id>.py # evolved program variants
-│   │       └── ...
+│   │   ├── metadata.json           # database state and iteration info
+│   │   ├── best_program.py         # best evolved code (extension matches language)
+│   │   ├── best_program_info.json  # best program metadata (id, metrics, generation)
+│   │   ├── programs/               # all population programs as JSON
+│   │   │   ├── <program_id>.json
+│   │   │   └── ...
+│   │   └── artifacts/              # evaluation artifacts (if any)
 │   └── checkpoint_200/
-└── evolution_trace.jsonl        # per-iteration log (if enabled)
+└── evolution_trace.jsonl            # per-iteration log (if enabled)
 ```
 
 **Get the best program from the latest checkpoint:**
 
 ```bash
 # Find the latest checkpoint
-ls -d output/checkpoints/checkpoint_* | sort -t_ -k2 -n | tail -1
+ls -d my_experiment/output/checkpoints/checkpoint_* | sort -t_ -k2 -n | tail -1
 
-# Read metadata to find best program ID
-cat output/checkpoints/checkpoint_200/metadata.json | python -m json.tool
+# View the best evolved code directly
+cat my_experiment/output/checkpoints/checkpoint_200/best_program.py
 
-# View the best evolved code
-cat output/checkpoints/checkpoint_200/programs/<best_program_id>.py
+# Read best program metadata (id, metrics, generation, etc.)
+cat my_experiment/output/checkpoints/checkpoint_200/best_program_info.json | python -m json.tool
 ```
 
 **Check score progression (if evolution_trace is enabled):**
@@ -342,7 +347,7 @@ cat output/checkpoints/checkpoint_200/programs/<best_program_id>.py
 # Extract scores from JSONL trace
 python -c "
 import json
-with open('output/evolution_trace.jsonl') as f:
+with open('my_experiment/output/evolution_trace.jsonl') as f:
     for line in f:
         entry = json.loads(line)
         if 'metrics' in entry:
@@ -356,7 +361,7 @@ with open('output/evolution_trace.jsonl') as f:
 openevolve-run my_experiment/initial_program.py \
   my_experiment/evaluator.py \
   --config my_experiment/config.yaml \
-  --checkpoint output/checkpoints/checkpoint_200 \
+  --checkpoint my_experiment/output/checkpoints/checkpoint_200 \
   --iterations 100
 ```
 
@@ -366,7 +371,7 @@ This loads the MAP-Elites population from the checkpoint and runs 100 more itera
 
 ```bash
 pip install flask
-python scripts/visualizer.py --path output/checkpoints/checkpoint_200/
+python scripts/visualizer.py --path my_experiment/output/checkpoints/checkpoint_200/
 ```
 
 Opens a web UI with evolution tree, score progression, code diffs, and MAP-Elites grid.
@@ -446,7 +451,7 @@ as `feature_dimensions` in the database config. OpenEvolve maintains Pareto-opti
 | Evolution stuck at same score | Increase `temperature`, add more `num_diverse_programs`, improve system message |
 | Out of memory | Reduce `population_size`, enable `cascade_evaluation` |
 | LLM rate limits | Add `retry_delay: 10` in llm config, or use OptiLLM proxy |
-| Bad evolved code | Enable `enable_artifacts: true` so errors feed back to the LLM |
+| Bad evolved code | Enable `evaluator.enable_artifacts: true` and `prompt.include_artifacts: true` so errors feed back to the LLM |
 
 ---
 
