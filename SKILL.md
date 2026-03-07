@@ -101,8 +101,10 @@ def evaluate(program_path: str) -> dict:
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-    except Exception as e:
-        return {"combined_score": 0.0, "error": str(e)}
+    except Exception:
+        # On load failure, return a numeric-only metrics dict.
+        # In a real evaluator, log the exception or store it in artifacts, not metrics.
+        return {"combined_score": 0.0}
 
     # Define test cases
     test_cases = [
