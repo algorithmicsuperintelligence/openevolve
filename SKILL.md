@@ -363,7 +363,7 @@ This loads the MAP-Elites population from the checkpoint and runs 100 more itera
 ### Step 6: Visualize (optional)
 
 ```bash
-pip install flask plotly
+pip install flask
 python scripts/visualizer.py --path output/checkpoints/checkpoint_200/
 ```
 
