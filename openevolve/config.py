@@ -4,6 +4,7 @@ Configuration handling for OpenEvolve
 
 import os
 import re
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
@@ -435,8 +436,11 @@ class Config:
         """Load configuration from a YAML file"""
         config_path = Path(path).resolve()
         with open(config_path, "r") as f:
-            config_dict = yaml.safe_load(f)
-        config = cls.from_dict(config_dict)
+            config_content = f.read()
+
+        # Render placeholders in content
+        rendered_dict = render_config_dict(config_content)
+        config = cls.from_dict(rendered_dict)
 
         # Resolve template_dir relative to config file location
         if config.prompt.template_dir:
@@ -489,6 +493,122 @@ class Config:
         """Save configuration to a YAML file"""
         with open(path, "w") as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False)
+
+
+class ConfigContext:
+    """Helper class to allow dot notation access to nested dictionaries in eval()"""
+    def __init__(self, data):
+        self._data = data
+
+    def __getattr__(self, name):
+        if name in self._data:
+            val = self._data[name]
+            if isinstance(val, dict):
+                return ConfigContext(val)
+            return val
+        raise AttributeError(f"ConfigContext has no attribute '{name}'")
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+def render_config_dict(config_content: str) -> Dict[str, Any]:
+    """
+    Render placeholders in the config content and return the resulting dictionary.
+    Supports:
+    - {{key}} or {{parent.child}} syntax
+    - f"{expression}" syntax for complex math and variable references
+    """
+    # Try to load for value lookup
+    try:
+        config_data = yaml.safe_load(config_content) or {}
+    except yaml.YAMLError:
+        # If load fails due to placeholders, try loading without those lines to get context
+        temp_lines = [
+            line
+            for line in config_content.splitlines()
+            if "{{" not in line and 'f"' not in line
+        ]
+        try:
+            config_data = yaml.safe_load("\n".join(temp_lines)) or {}
+        except yaml.YAMLError:
+            config_data = {}
+
+    # 1. Handle legacy {{key}} placeholders
+    def legacy_replacer(match):
+        full_match = match.group(0)
+        placeholder = match.group(2)
+        has_quotes = full_match.startswith('"') or full_match.startswith("'")
+
+        keys = placeholder.split(".")
+        value = config_data
+        try:
+            for key in keys:
+                value = value[key]
+
+            if isinstance(value, (int, float, bool)) and has_quotes:
+                return str(value)
+            return str(value)
+        except (KeyError, TypeError):
+            return full_match
+
+    rendered_content = re.sub(
+        r"([\"']?)\{\{([\w\.]+)\}\}\1", legacy_replacer, config_content
+    )
+
+    # 2. Handle f"{expression}" syntax
+    # We need to re-parse the partially rendered content to handle f-strings in a tree-like manner
+    try:
+        config_tree = yaml.safe_load(rendered_content) or {}
+    except yaml.YAMLError:
+        config_tree = config_data
+
+    def evaluate_f_strings(node, context_root):
+        if isinstance(node, dict):
+            return {k: evaluate_f_strings(v, context_root) for k, v in node.items()}
+        elif isinstance(node, list):
+            return [evaluate_f_strings(i, context_root) for i in node]
+        elif isinstance(node, str) and node.startswith('f"') and node.endswith('"'):
+            content = node[2:-1]
+
+            # Check if the entire content is a single expression like f"{...}"
+            # If so, we want to return the actual type (int, float, etc.)
+            if (
+                content.startswith("{")
+                and content.endswith("}")
+                and content.count("{") == 1
+            ):
+                expr = content[1:-1]
+                try:
+                    safe_ns = {"math": math, "__builtins__": {}}
+                    for k, v in context_root.items():
+                        if isinstance(v, dict):
+                            safe_ns[k] = ConfigContext(v)
+                        else:
+                            safe_ns[k] = v
+                    return eval(expr, safe_ns)
+                except Exception as e:
+                    return f"<Error: {e}>"
+
+            # Mixed content or multiple expressions: return as string
+            def f_replacer(match):
+                expr = match.group(1)
+                try:
+                    safe_ns = {"math": math, "__builtins__": {}}
+                    for k, v in context_root.items():
+                        if isinstance(v, dict):
+                            safe_ns[k] = ConfigContext(v)
+                        else:
+                            safe_ns[k] = v
+
+                    result = eval(expr, safe_ns)
+                    return str(result)
+                except Exception as e:
+                    return f"<Error: {e}>"
+
+            return re.sub(r"\{([^}]+)\}", f_replacer, content)
+        return node
+
+    return evaluate_f_strings(config_tree, config_tree)
 
 
 def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
