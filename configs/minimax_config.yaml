@@ -1,0 +1,74 @@
+# OpenEvolve Configuration for MiniMax
+# MiniMax provides OpenAI-compatible API with powerful models like MiniMax-M2.5
+# Get your API key from: https://platform.minimaxi.com/
+#
+# Set your API key:
+#   export MINIMAX_API_KEY="your-minimax-api-key"
+
+# General settings
+max_iterations: 100
+checkpoint_interval: 10
+log_level: "INFO"
+random_seed: 42
+
+# LLM configuration for MiniMax
+llm:
+  api_base: "https://api.minimax.io/v1"
+  api_key: "${MINIMAX_API_KEY}"
+
+  # MiniMax models for evolution
+  models:
+    - name: "MiniMax-M2.5"
+      weight: 0.6
+    - name: "MiniMax-M2.5-highspeed"
+      weight: 0.4
+
+  # MiniMax models for LLM feedback
+  evaluator_models:
+    - name: "MiniMax-M2.5-highspeed"
+      weight: 1.0
+
+  # Generation parameters
+  # Note: MiniMax requires temperature to be in (0.0, 1.0] — zero is not accepted
+  temperature: 0.7
+  top_p: 0.95
+  max_tokens: 4096
+
+  # Request parameters
+  timeout: 120
+  retries: 3
+  retry_delay: 5
+
+# Evolution settings
+diff_based_evolution: true
+max_code_length: 10000
+
+# Prompt configuration
+prompt:
+  system_message: "You are an expert coder helping to improve programs through evolution."
+  evaluator_system_message: "You are an expert code reviewer."
+  num_top_programs: 3
+  num_diverse_programs: 2
+  use_template_stochasticity: true
+  include_artifacts: true
+
+# Database configuration
+database:
+  population_size: 1000
+  num_islands: 5
+  migration_interval: 50
+  migration_rate: 0.1
+  feature_dimensions:
+    - "complexity"
+    - "diversity"
+  feature_bins: 10
+
+# Evaluator configuration
+evaluator:
+  timeout: 300
+  cascade_evaluation: true
+  cascade_thresholds:
+    - 0.5
+    - 0.75
+    - 0.9
+  parallel_evaluations: 4
