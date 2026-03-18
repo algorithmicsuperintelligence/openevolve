@@ -239,13 +239,40 @@ def _prepare_evaluator(
 
     # If it's a callable, create a wrapper module
     if callable(evaluator):
-        # Create a unique global name for this evaluator
-        evaluator_id = f"_openevolve_evaluator_{uuid.uuid4().hex[:8]}"
+        # Try to get the source code of the callable so it can be serialized
+        # into a standalone file that works in subprocesses
+        try:
+            func_source = inspect.getsource(evaluator)
+            # Dedent in case the function was defined inside another scope
+            import textwrap
 
-        # Store in globals so the wrapper can find it
-        globals()[evaluator_id] = evaluator
+            func_source = textwrap.dedent(func_source)
+            func_name = evaluator.__name__
 
-        evaluator_code = f"""
+            # Build a self-contained evaluator module with the function source
+            # and an evaluate() entry point that calls it
+            evaluator_code = f"""
+# Auto-generated evaluator from user-provided callable
+import importlib.util
+import sys
+import os
+import copy
+import json
+import time
+
+{func_source}
+
+def evaluate(program_path):
+    '''Wrapper that calls the user-provided evaluator function'''
+    return {func_name}(program_path)
+"""
+        except (OSError, TypeError):
+            # If we can't get source (e.g. built-in, lambda, or closure),
+            # fall back to the globals-based approach
+            evaluator_id = f"_openevolve_evaluator_{uuid.uuid4().hex[:8]}"
+            globals()[evaluator_id] = evaluator
+
+            evaluator_code = f"""
 # Wrapper for user-provided evaluator function
 import {__name__} as api_module
 
@@ -335,57 +362,67 @@ def evolve_function(
         lines.insert(func_end + 1, " " * (indent + 4) + "# EVOLVE-BLOCK-END")
         func_source = "\n".join(lines)
 
-    # Create evaluator that tests the function
-    def evaluator(program_path):
-        import importlib.util
-        import sys
+    # Create a self-contained evaluator as a code string so it works in subprocesses.
+    # Closure-based evaluators fail with process-based parallelism because subprocess
+    # workers cannot access the parent process's memory.
+    evaluator_code = f"""
+import importlib.util
+import copy
 
-        # Load the evolved program
-        spec = importlib.util.spec_from_file_location("evolved", program_path)
-        if spec is None or spec.loader is None:
-            return {"score": 0.0, "error": "Failed to load program"}
+FUNC_NAME = {func_name!r}
+TEST_CASES = {test_cases!r}
 
-        module = importlib.util.module_from_spec(spec)
+def evaluate(program_path):
+    '''Auto-generated evaluator for evolve_function'''
+    # Load the evolved program
+    spec = importlib.util.spec_from_file_location("evolved", program_path)
+    if spec is None or spec.loader is None:
+        return {{"combined_score": 0.0, "score": 0.0, "error": "Failed to load program"}}
 
+    module = importlib.util.module_from_spec(spec)
+
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Failed to execute program: {{str(e)}}"}}
+
+    if not hasattr(module, FUNC_NAME):
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Function '{{FUNC_NAME}}' not found"}}
+
+    evolved_func = getattr(module, FUNC_NAME)
+    correct = 0
+    total = len(TEST_CASES)
+    errors = []
+
+    for input_val, expected in TEST_CASES:
         try:
-            spec.loader.exec_module(module)
+            # Handle case where input is a list/mutable - make a copy
+            if isinstance(input_val, list):
+                test_input = input_val.copy()
+            else:
+                test_input = input_val
+
+            result = evolved_func(test_input)
+            if result == expected:
+                correct += 1
+            else:
+                errors.append(f"Input {{input_val}}: expected {{expected}}, got {{result}}")
         except Exception as e:
-            return {"score": 0.0, "error": f"Failed to execute program: {str(e)}"}
+            errors.append(f"Input {{input_val}}: {{str(e)}}")
 
-        if not hasattr(module, func_name):
-            return {"score": 0.0, "error": f"Function '{func_name}' not found"}
-
-        evolved_func = getattr(module, func_name)
-        correct = 0
-        total = len(test_cases)
-        errors = []
-
-        for input_val, expected in test_cases:
-            try:
-                # Handle case where input is a list/mutable - make a copy
-                if isinstance(input_val, list):
-                    test_input = input_val.copy()
-                else:
-                    test_input = input_val
-
-                result = evolved_func(test_input)
-                if result == expected:
-                    correct += 1
-                else:
-                    errors.append(f"Input {input_val}: expected {expected}, got {result}")
-            except Exception as e:
-                errors.append(f"Input {input_val}: {str(e)}")
-
-        return {
-            "score": correct / total,
-            "test_pass_rate": correct / total,
-            "tests_passed": correct,
-            "total_tests": total,
-            "errors": errors[:3],  # Limit error details
-        }
+    score = correct / total if total > 0 else 0.0
+    return {{
+        "combined_score": score,
+        "score": score,
+        "test_pass_rate": score,
+        "tests_passed": correct,
+        "total_tests": total,
+        "errors": errors[:3],
+    }}
+"""
 
     return run_evolution(
-        initial_program=func_source, evaluator=evaluator, iterations=iterations, **kwargs
+        initial_program=func_source, evaluator=evaluator_code, iterations=iterations, **kwargs
     )
 
 
@@ -447,36 +484,51 @@ def evolve_algorithm(
         lines.append(" " * (indent + 4) + "# EVOLVE-BLOCK-END")
         class_source = "\n".join(lines)
 
-    # Create evaluator
-    def evaluator(program_path):
-        import importlib.util
+    # Create a self-contained evaluator as a code string so it works in subprocesses.
+    import textwrap
 
-        # Load the evolved program
-        spec = importlib.util.spec_from_file_location("evolved", program_path)
-        if spec is None or spec.loader is None:
-            return {"score": 0.0, "error": "Failed to load program"}
+    class_name = algorithm_class.__name__
+    benchmark_source = textwrap.dedent(inspect.getsource(benchmark))
 
-        module = importlib.util.module_from_spec(spec)
+    evaluator_code = f"""
+import importlib.util
 
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            return {"score": 0.0, "error": f"Failed to execute program: {str(e)}"}
+CLASS_NAME = {class_name!r}
 
-        if not hasattr(module, algorithm_class.__name__):
-            return {"score": 0.0, "error": f"Class '{algorithm_class.__name__}' not found"}
+{benchmark_source}
 
-        AlgorithmClass = getattr(module, algorithm_class.__name__)
+def evaluate(program_path):
+    '''Auto-generated evaluator for evolve_algorithm'''
+    spec = importlib.util.spec_from_file_location("evolved", program_path)
+    if spec is None or spec.loader is None:
+        return {{"combined_score": 0.0, "score": 0.0, "error": "Failed to load program"}}
 
-        try:
-            instance = AlgorithmClass()
-            metrics = benchmark(instance)
-            return metrics if isinstance(metrics, dict) else {"score": metrics}
-        except Exception as e:
-            return {"score": 0.0, "error": str(e)}
+    module = importlib.util.module_from_spec(spec)
+
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Failed to execute program: {{str(e)}}"}}
+
+    if not hasattr(module, CLASS_NAME):
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Class '{{CLASS_NAME}}' not found"}}
+
+    AlgorithmClass = getattr(module, CLASS_NAME)
+
+    try:
+        instance = AlgorithmClass()
+        metrics = {benchmark.__name__}(instance)
+        if not isinstance(metrics, dict):
+            metrics = {{"score": metrics}}
+        if "combined_score" not in metrics:
+            metrics["combined_score"] = metrics.get("score", 0.0)
+        return metrics
+    except Exception as e:
+        return {{"combined_score": 0.0, "score": 0.0, "error": str(e)}}
+"""
 
     return run_evolution(
-        initial_program=class_source, evaluator=evaluator, iterations=iterations, **kwargs
+        initial_program=class_source, evaluator=evaluator_code, iterations=iterations, **kwargs
     )
 
 
