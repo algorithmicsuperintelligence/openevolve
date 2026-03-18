@@ -202,7 +202,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 <details>
 <summary><b>Advanced LLM Integration</b></summary>
 
-- **Universal API**: Works with OpenAI, Google, MiniMax, local models, and proxies
+- **Universal API**: Works with OpenAI, Google, MiniMax (M2.7), local models, and proxies
 - **Intelligent Ensembles**: Weighted combinations with sophisticated fallback
 - **Test-Time Compute**: Enhanced reasoning through proxy systems (see [OptiLLM setup](#llm-provider-setup))
 - **Plugin Ecosystem**: Support for advanced reasoning plugins
@@ -281,7 +281,7 @@ docker run --rm -v $(pwd):/app ghcr.io/algorithmicsuperintelligence/openevolve:l
 - **o3-mini**: ~$0.03-0.12 per iteration (more cost-effective)
 - **Gemini-2.5-Pro**: ~$0.08-0.30 per iteration
 - **Gemini-2.5-Flash**: ~$0.01-0.05 per iteration (fastest and cheapest)
-- **MiniMax-M2.5**: ~$0.02-0.08 per iteration (204K context, OpenAI-compatible)
+- **MiniMax-M2.7**: ~$0.02-0.08 per iteration (204K context, OpenAI-compatible)
 - **Local models**: Nearly free after setup
 - **OptiLLM**: Use cheaper models with test-time compute for better results
 
@@ -332,9 +332,9 @@ llm:
   api_base: "https://api.minimax.io/v1"
   api_key: "${MINIMAX_API_KEY}"
   models:
-    - name: "MiniMax-M2.5"
+    - name: "MiniMax-M2.7"
       weight: 0.6
-    - name: "MiniMax-M2.5-highspeed"
+    - name: "MiniMax-M2.7-highspeed"
       weight: 0.4
 ```
 

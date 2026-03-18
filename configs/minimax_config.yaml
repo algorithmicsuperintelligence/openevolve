@@ -1,5 +1,5 @@
 # OpenEvolve Configuration for MiniMax
-# MiniMax provides OpenAI-compatible API with powerful models like MiniMax-M2.5
+# MiniMax provides OpenAI-compatible API with powerful models like MiniMax-M2.7
 # Get your API key from: https://platform.minimaxi.com/
 #
 # Set your API key:
@@ -18,14 +18,14 @@ llm:
 
   # MiniMax models for evolution
   models:
-    - name: "MiniMax-M2.5"
+    - name: "MiniMax-M2.7"
       weight: 0.6
-    - name: "MiniMax-M2.5-highspeed"
+    - name: "MiniMax-M2.7-highspeed"
       weight: 0.4
 
   # MiniMax models for LLM feedback
   evaluator_models:
-    - name: "MiniMax-M2.5-highspeed"
+    - name: "MiniMax-M2.7-highspeed"
       weight: 1.0
 
   # Generation parameters
