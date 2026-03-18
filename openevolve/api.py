@@ -141,6 +141,13 @@ async def _run_evolution_async(
         # Process evaluator
         evaluator_path = _prepare_evaluator(evaluator, temp_dir, temp_files)
 
+        # Auto-disable cascade evaluation if the evaluator doesn't define stage functions
+        if config_obj.evaluator.cascade_evaluation:
+            with open(evaluator_path, "r") as f:
+                eval_content = f.read()
+            if "evaluate_stage1" not in eval_content:
+                config_obj.evaluator.cascade_evaluation = False
+
         # Create and run controller
         controller = OpenEvolve(
             initial_program_path=program_path,
