@@ -162,8 +162,10 @@ def evaluate_stage3(program_path):
             self.assertLess(elapsed_time, 5)
 
             # Should return timeout result
+            self.assertIn("combined_score", result)
+            self.assertEqual(result["combined_score"], 0.0)
             self.assertIn("error", result)
-            self.assertEqual(result["error"], 0.0)
+            self.assertEqual(result["error"], "Evaluation timed out")
             self.assertIn("timeout", result)
             self.assertTrue(result["timeout"])
 
