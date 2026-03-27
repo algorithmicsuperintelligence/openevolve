@@ -160,7 +160,7 @@ class PromptSampler:
             **kwargs,
         )
 
-        if self.config.programs_as_changes_description:
+        if self.config.programs_as_changes_description and current_changes_description is not None:
             user_message = self.template_manager.get_template("user_message_with_changes_description").format(
                 user_message=user_message,
                 changes_description=current_changes_description.rstrip(),
