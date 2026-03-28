@@ -19,6 +19,11 @@ class TestIsReasoningModel(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertTrue(is_reasoning_model(model))
 
+    def test_openai_gpt_oss_auto_detected(self):
+        for model in ["gpt-oss-120b", "gpt-oss-20b", "gpt-oss-30b"]:
+            with self.subTest(model=model):
+                self.assertTrue(is_reasoning_model(model))
+
     def test_openai_non_reasoning_not_detected(self):
         for model in ["gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"]:
             with self.subTest(model=model):

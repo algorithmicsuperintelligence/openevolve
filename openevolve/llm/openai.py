@@ -22,19 +22,15 @@ logger = logging.getLogger(__name__)
 
 # OpenAI reasoning models that require max_completion_tokens instead of max_tokens.
 # These models don't support temperature/top_p and use different parameters.
-OPENAI_REASONING_MODEL_PREFIXES = (
-    # O-series reasoning models
-    "o1-",
-    "o1",  # o1, o1-mini, o1-preview
-    "o3-",
-    "o3",  # o3, o3-mini, o3-pro
-    "o4-",  # o4-mini
-    # GPT-5 series are also reasoning models
-    "gpt-5-",
-    "gpt-5",  # gpt-5, gpt-5-mini, gpt-5-nano
-    # The GPT OSS series are also reasoning models
-    "gpt-oss-120b",
-    "gpt-oss-20b",
+OPENAI_REASONING_MODEL_PREFIXES: tuple[str, ...] = (
+    # O-series reasoning models (o1, o1-mini, o1-preview, o3, o3-mini, o3-pro, o4-mini, etc.)
+    "o1",
+    "o3",
+    "o4-",
+    # GPT-5 series (gpt-5, gpt-5-mini, gpt-5-nano, etc.)
+    "gpt-5",
+    # GPT OSS series (gpt-oss-120b, gpt-oss-20b, etc.)
+    "gpt-oss-",
 )
 
 

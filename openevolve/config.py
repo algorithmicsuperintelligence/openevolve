@@ -172,6 +172,8 @@ class LLMConfig(LLMModelConfig):
             self.evaluator_models = self.models.copy()
 
         # Update models with shared configuration values
+        # Note: is_reasoning_model is intentionally excluded from shared_config.
+        # It is a per-model override, not a shared default.
         shared_config = {
             "api_base": self.api_base,
             "api_key": self.api_key,
@@ -226,6 +228,8 @@ class LLMConfig(LLMModelConfig):
             self.evaluator_models = self.models.copy()
 
         # Update models with shared configuration values
+        # Note: is_reasoning_model is intentionally excluded from shared_config.
+        # It is a per-model override, not a shared default.
         shared_config = {
             "api_base": self.api_base,
             "api_key": self.api_key,
