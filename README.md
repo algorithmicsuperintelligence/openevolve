@@ -119,13 +119,16 @@ def bubble_sort(arr):
                 arr[j], arr[j+1] = arr[j+1], arr[j] 
     return arr
 
-result = evolve_function(
-    bubble_sort,
-    test_cases=[([3,1,2], [1,2,3]), ([5,2,8], [2,5,8])],
-    iterations=50
-)
-print(f"Evolved sorting algorithm: {result.best_code}")
+if __name__ == '__main__':
+    result = evolve_function(
+        bubble_sort,
+        test_cases=[([3,1,2], [1,2,3]), ([5,2,8], [2,5,8])],
+        iterations=50
+    )
+    print(f"Evolved sorting algorithm: {result.best_code}")
 ```
+
+> **Note:** On macOS and Windows, Python uses `spawn` for multiprocessing. You must wrap evolution calls in `if __name__ == '__main__':` to avoid subprocess bootstrap errors.
 
 **Prefer Docker?** See the [Installation & Setup](#installation--setup) section for Docker options.
 

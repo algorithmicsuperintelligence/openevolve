@@ -3,6 +3,7 @@ High-level API for using OpenEvolve as a library
 """
 
 import asyncio
+import pickle
 import tempfile
 import os
 import uuid
@@ -246,47 +247,33 @@ def _prepare_evaluator(
 
     # If it's a callable, create a wrapper module
     if callable(evaluator):
-        # Try to get the source code of the callable so it can be serialized
-        # into a standalone file that works in subprocesses
         try:
-            func_source = inspect.getsource(evaluator)
-            # Dedent in case the function was defined inside another scope
-            import textwrap
+            import cloudpickle as _pickle_mod
+        except ImportError:
+            _pickle_mod = pickle
 
-            func_source = textwrap.dedent(func_source)
-            func_name = evaluator.__name__
+        # Serialize the callable to a file so subprocess workers can load it
+        if temp_dir is None:
+            temp_dir = tempfile.gettempdir()
 
-            # Build a self-contained evaluator module with the function source
-            # and an evaluate() entry point that calls it
-            evaluator_code = f"""
-# Auto-generated evaluator from user-provided callable
-import importlib.util
-import sys
-import os
-import copy
-import json
-import time
+        pickle_path = os.path.join(temp_dir, f"evaluator_{uuid.uuid4().hex[:8]}.pkl")
+        with open(pickle_path, "wb") as pf:
+            _pickle_mod.dump(evaluator, pf)
+        temp_files.append(pickle_path)
 
-{func_source}
+        evaluator_code = f"""
+# Wrapper for user-provided evaluator function (serialized to disk for cross-process access)
+import pickle
 
-def evaluate(program_path):
-    '''Wrapper that calls the user-provided evaluator function'''
-    return {func_name}(program_path)
-"""
-        except (OSError, TypeError):
-            # If we can't get source (e.g. built-in, lambda, or closure),
-            # fall back to the globals-based approach
-            evaluator_id = f"_openevolve_evaluator_{uuid.uuid4().hex[:8]}"
-            globals()[evaluator_id] = evaluator
-
-            evaluator_code = f"""
-# Wrapper for user-provided evaluator function
-import {__name__} as api_module
+_cached_evaluator = None
 
 def evaluate(program_path):
-    '''Wrapper for user-provided evaluator function'''
-    user_evaluator = getattr(api_module, '{evaluator_id}')
-    return user_evaluator(program_path)
+    '''Wrapper that loads the evaluator from a pickle file'''
+    global _cached_evaluator
+    if _cached_evaluator is None:
+        with open({pickle_path!r}, 'rb') as f:
+            _cached_evaluator = pickle.load(f)
+    return _cached_evaluator(program_path)
 """
     else:
         # Treat as code string
