@@ -157,6 +157,7 @@ class OpenAILLM(LLMInterface):
                 "temperature": kwargs.get("temperature", self.temperature),
                 "top_p": kwargs.get("top_p", self.top_p),
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                "stream": False,  # Explicitly request non-streaming responses to avoid SSE issues
             }
 
             # Handle reasoning_effort for open source reasoning models.
