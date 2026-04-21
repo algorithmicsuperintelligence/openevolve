@@ -19,7 +19,8 @@ import numpy as np
 
 from openevolve.config import DatabaseConfig
 from openevolve.utils.code_utils import calculate_edit_distance
-from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+from openevolve.utils.format_utils import format_score
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,9 @@ class Program:
     # Program identification
     id: str
     code: str
-    changes_description: str = ""  # compact program changes description (via LLM) stored per program
+    changes_description: str = (
+        ""  # compact program changes description (via LLM) stored per program
+    )
     language: str = "python"
 
     # Evolution information
@@ -298,9 +301,7 @@ class ProgramDatabase:
 
             if feature_key not in island_feature_map:
                 # New cell occupation in this island
-                logger.info(
-                    "New MAP-Elites cell occupied in island %d: %s", island_idx, coords_dict
-                )
+                logger.info(f"New MAP-Elites cell occupied in island {island_idx}: {coords_dict}")
                 # Check coverage milestone for this island
                 total_possible_cells = self.feature_bins ** len(self.config.feature_dimensions)
                 island_coverage = (len(island_feature_map) + 1) / total_possible_cells
@@ -321,12 +322,11 @@ class ProgramDatabase:
                     existing_fitness = get_fitness_score(
                         existing_program.metrics, self.config.feature_dimensions
                     )
+                    new_fitness_str = format_score(new_fitness)
+                    existing_fitness_str = format_score(existing_fitness)
+
                     logger.info(
-                        "Island %d MAP-Elites cell improved: %s (fitness: %.3f -> %.3f)",
-                        island_idx,
-                        coords_dict,
-                        existing_fitness,
-                        new_fitness,
+                        f"Island {island_idx} MAP-Elites cell improved: {coords_dict} (fitness: {existing_fitness_str} -> {new_fitness_str})"
                     )
 
                     # use MAP-Elites to manage archive
@@ -993,6 +993,7 @@ class ProgramDatabase:
         Use LLM to judge if a program is novel compared to a similar existing program
         """
         import asyncio
+
         from openevolve.novelty_judge import NOVELTY_SYSTEM_MSG, NOVELTY_USER_MSG
 
         user_msg = NOVELTY_USER_MSG.format(
@@ -1081,9 +1082,7 @@ class ProgramDatabase:
             other = self.programs[pid]
 
             if other.embedding is None:
-                logger.warning(
-                    f"Program {other.id} has no embedding, skipping similarity check"
-                )
+                logger.warning(f"Program {other.id} has no embedding, skipping similarity check")
                 continue
 
             similarity = self._cosine_similarity(embd, other.embedding)
@@ -1208,9 +1207,9 @@ class ProgramDatabase:
             if "combined_score" in program.metrics and "combined_score" in current_best.metrics:
                 old_score = current_best.metrics["combined_score"]
                 new_score = program.metrics["combined_score"]
-                score_diff = new_score - old_score
+                score_diff = np.subtract(new_score, old_score)
                 logger.info(
-                    f"New best program {program.id} replaces {old_id} (combined_score: {old_score:.4f} → {new_score:.4f}, +{score_diff:.4f})"
+                    f"New best program {program.id} replaces {old_id} (combined_score: {format_score(old_score)} → {format_score(new_score)}, +{format_score(score_diff)})"
                 )
             else:
                 logger.info(f"New best program {program.id} replaces {old_id}")
@@ -1257,10 +1256,10 @@ class ProgramDatabase:
             ):
                 old_score = current_island_best.metrics["combined_score"]
                 new_score = program.metrics["combined_score"]
-                score_diff = new_score - old_score
+                score_diff = np.subtract(new_score, old_score)
                 logger.debug(
                     f"Island {island_idx}: New best program {program.id} replaces {old_id} "
-                    f"(combined_score: {old_score:.4f} → {new_score:.4f}, +{score_diff:.4f})"
+                    f"(combined_score: {format_score(old_score)} → {format_score(new_score)}, +{format_score(score_diff)})"
                 )
             else:
                 logger.debug(
@@ -1983,9 +1982,19 @@ class ProgramDatabase:
                     get_fitness_score(p.metrics, self.config.feature_dimensions)
                     for p in island_programs
                 ]
+                if scores:
+                    best_score = max(scores)
+                    scores_np = np.array(scores)
+                    avg_score: np.generic = scores_np.mean(axis=0)
 
-                best_score = max(scores) if scores else 0.0
-                avg_score = sum(scores) / len(scores) if scores else 0.0
+                    if isinstance(best_score, (tuple, list)):
+                        avg_score = type(best_score)(avg_score.tolist())
+                    else:
+                        avg_score = float(avg_score)
+                else:
+                    best_score = 0.0
+                    avg_score = 0.0
+
                 diversity = self._calculate_island_diversity(island_programs)
             else:
                 best_score = avg_score = diversity = 0.0
@@ -2323,7 +2332,7 @@ class ProgramDatabase:
             best_indicator = f" (best: {island_best_id})" if island_best_id else ""
             logger.info(
                 f"{current_marker} Island {stat['island']}: {stat['population_size']} programs, "
-                f"best={stat['best_score']:.4f}, avg={stat['average_score']:.4f}, "
+                f"best={format_score(stat['best_score'])}, avg={format_score(stat['average_score'])}, "
                 f"diversity={stat['diversity']:.2f}, gen={stat['generation']}{best_indicator}"
             )
 

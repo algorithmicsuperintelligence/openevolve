@@ -3,17 +3,18 @@ High-level API for using OpenEvolve as a library
 """
 
 import asyncio
-import tempfile
-import os
-import uuid
 import inspect
-from typing import Union, Callable, Optional, List, Dict, Any, Tuple
+import os
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from openevolve.config import Config, LLMModelConfig, load_config
 from openevolve.controller import OpenEvolve
-from openevolve.config import Config, load_config, LLMModelConfig
 from openevolve.database import Program
+from openevolve.utils.format_utils import format_score
 
 
 @dataclass
@@ -21,13 +22,13 @@ class EvolutionResult:
     """Result of an evolution run"""
 
     best_program: Optional[Program]
-    best_score: float
+    best_score: float | tuple[float, ...] | list[float]
     best_code: str
     metrics: Dict[str, Any]
     output_dir: Optional[str]
 
     def __repr__(self):
-        return f"EvolutionResult(best_score={self.best_score:.4f})"
+        return f"EvolutionResult(best_score={format_score(self.best_score)})"
 
 
 def run_evolution(
