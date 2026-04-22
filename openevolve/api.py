@@ -37,6 +37,8 @@ def run_evolution(
     iterations: Optional[int] = None,
     output_dir: Optional[str] = None,
     cleanup: bool = True,
+    target_score: Optional[float] = None,
+    checkpoint_path: Optional[str] = None,
 ) -> EvolutionResult:
     """
     Run evolution with flexible inputs - the main library API
@@ -90,7 +92,7 @@ def run_evolution(
         )
     """
     return asyncio.run(
-        _run_evolution_async(initial_program, evaluator, config, iterations, output_dir, cleanup)
+        _run_evolution_async(initial_program, evaluator, config, iterations, output_dir, cleanup, target_score, checkpoint_path)
     )
 
 
@@ -101,6 +103,8 @@ async def _run_evolution_async(
     iterations: Optional[int],
     output_dir: Optional[str],
     cleanup: bool,
+    target_score: Optional[float] = None,
+    checkpoint_path: Optional[str] = None,
 ) -> EvolutionResult:
     """Async implementation of run_evolution"""
 
@@ -156,7 +160,7 @@ async def _run_evolution_async(
             output_dir=actual_output_dir,
         )
 
-        best_program = await controller.run(iterations=iterations)
+        best_program = await controller.run(iterations=iterations,target_score=target_score,checkpoint_path=checkpoint_path)
 
         # Prepare result
         best_score = 0.0

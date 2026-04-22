@@ -264,7 +264,6 @@ class OpenEvolve:
             Best program found
         """
         max_iterations = iterations or self.config.max_iterations
-
         # Determine starting iteration
         start_iteration = 0
         if checkpoint_path and os.path.exists(checkpoint_path):
