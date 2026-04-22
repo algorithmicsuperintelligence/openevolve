@@ -4,12 +4,57 @@ Tests for ProgramDatabase in openevolve.database
 
 import unittest
 import uuid
+
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
 
 
 class TestProgramDatabase(unittest.TestCase):
-    """Tests for program database"""
+    def test_get_island_stats_best_and_avg_score(self):
+        """Test get_island_stats best_score and average_score logic for float, list, tuple"""
+        from openevolve.database import Program
+
+        # single-island float
+        db = self.db
+        db.islands = [set()]
+        db.island_best_programs = [None]
+        db.current_island = 0
+        db.programs.clear()
+        p1 = Program(id="f1", code="a", metrics={"combined_score": 1.0})
+        p2 = Program(id="f2", code="b", metrics={"combined_score": 2.0})
+        db.add(p1)
+        db.add(p2)
+        stats = db.get_island_stats()[0]
+        self.assertEqual(stats["best_score"], 2.0)
+        self.assertAlmostEqual(stats["average_score"], 1.5)
+
+        # single-island list (lexicographic best, element-wise average)
+        db = self.db
+        db.islands = [set()]
+        db.island_best_programs = [None]
+        db.current_island = 0
+        db.programs.clear()
+        p3 = Program(id="l1", code="a", metrics={"combined_score": [1.0, 2.0]})
+        p4 = Program(id="l2", code="b", metrics={"combined_score": [3.0, 0.0]})
+        db.add(p3)
+        db.add(p4)
+        stats = db.get_island_stats()[0]
+        self.assertEqual(stats["best_score"], [3.0, 0.0])
+        self.assertEqual(stats["average_score"], [2.0, 1.0])
+
+        # single-island tuple (lexicographic best, element-wise average)
+        db = self.db
+        db.islands = [set()]
+        db.island_best_programs = [None]
+        db.current_island = 0
+        db.programs.clear()
+        p5 = Program(id="t1", code="a", metrics={"combined_score": (1.0, 2.0, 3.0)})
+        p6 = Program(id="t2", code="b", metrics={"combined_score": (3.0, 0.0, 4.0)})
+        db.add(p5)
+        db.add(p6)
+        stats = db.get_island_stats()[0]
+        self.assertEqual(stats["best_score"], (3.0, 0.0, 4.0))
+        self.assertEqual(stats["average_score"], (2.0, 1.0, 3.5))
 
     def setUp(self):
         """Set up test database"""
@@ -183,12 +228,16 @@ class TestProgramDatabase(unittest.TestCase):
             all_feature_map_values.extend(island_map.values())
 
         # At least one of our test programs should be in some island's feature map
-        test_programs_in_map = [v for v in all_feature_map_values if v in ["map_test1", "map_test2"]]
+        test_programs_in_map = [
+            v for v in all_feature_map_values if v in ["map_test1", "map_test2"]
+        ]
         self.assertGreater(
-            len(test_programs_in_map), 0, "At least one test program should be in island feature maps"
+            len(test_programs_in_map),
+            0,
+            "At least one test program should be in island feature maps",
         )
 
-        # If both are in the same island's map with the same feature coordinates, 
+        # If both are in the same island's map with the same feature coordinates,
         # verify the better program is kept
         for island_map in self.db.island_feature_maps:
             if "map_test1" in island_map.values() and "map_test2" in island_map.values():
@@ -199,7 +248,7 @@ class TestProgramDatabase(unittest.TestCase):
                         key1 = k
                     elif v == "map_test2":
                         key2 = k
-                
+
                 # If they have the same key, the better program should be kept
                 if key1 == key2:
                     self.assertEqual(island_map[key1], "map_test2")
@@ -505,11 +554,15 @@ class TestProgramDatabase(unittest.TestCase):
         # With new implementation, no programs should have _migrant_ suffixes
         new_programs = set(multi_db.programs.keys())
         new_migrant_ids = [pid for pid in new_programs if "_migrant_" in pid]
-        self.assertEqual(len(new_migrant_ids), 0, "New implementation should not create _migrant suffix programs")
-        
+        self.assertEqual(
+            len(new_migrant_ids), 0, "New implementation should not create _migrant suffix programs"
+        )
+
         # Verify that programs are still distributed across islands (migration occurred)
         total_programs_in_maps = sum(len(island_map) for island_map in multi_db.island_feature_maps)
-        self.assertGreaterEqual(total_programs_in_maps, 3, "Programs should be distributed in island feature maps")
+        self.assertGreaterEqual(
+            total_programs_in_maps, 3, "Programs should be distributed in island feature maps"
+        )
 
     def test_empty_island_initialization_creates_copies(self):
         """Test that empty islands are initialized with copies, not shared references"""

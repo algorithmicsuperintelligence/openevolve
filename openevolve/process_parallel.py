@@ -14,9 +14,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
-from openevolve.utils.metrics_utils import safe_numeric_average
+from openevolve.utils.format_utils import format_score
+from openevolve.utils.metrics_utils import broadcast_value, safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
@@ -704,15 +707,27 @@ class ProcessParallelController:
                             )
                             current_score = safe_numeric_average(child_program.metrics)
 
-                        if current_score is not None and isinstance(current_score, (int, float)):
+                        if current_score is not None:
                             # Check for improvement
                             if self.config.early_stopping_patience > 0:
-                                improvement = current_score - best_score
-                                if improvement >= self.config.convergence_threshold:
+                                convergence_threshold = self.config.convergence_threshold
+                                convergence_threshold = broadcast_value(
+                                    convergence_threshold, current_score
+                                )
+
+                                # if the score is a list/tuple, we need to compare element-wise and check if all elements meet the threshold
+                                if best_score == float("-inf"):
+                                    best_score = broadcast_value(best_score, current_score)
+
+                                improvement = np.subtract(current_score, best_score)
+                                if isinstance(improvement, np.ndarray):
+                                    improvement = type(current_score)(improvement.tolist())
+
+                                if improvement >= convergence_threshold:
                                     best_score = current_score
                                     iterations_without_improvement = 0
                                     logger.debug(
-                                        f"New best score: {best_score:.4f} (improvement: {improvement:+.4f})"
+                                        f"New best score: {format_score(best_score)} (improvement: {format_score(improvement)})"
                                     )
                                 else:
                                     iterations_without_improvement += 1
@@ -729,17 +744,17 @@ class ProcessParallelController:
                                     logger.info(
                                         f"🛑 Early stopping triggered at iteration {completed_iteration}: "
                                         f"No improvement for {iterations_without_improvement} iterations "
-                                        f"(best score: {best_score:.4f})"
+                                        f"(best score: {format_score(best_score)})"
                                     )
                                     break
 
                             else:
                                 # Event-based early stopping
-                                if current_score == self.config.convergence_threshold:
+                                if np.allclose(current_score, convergence_threshold):
                                     best_score = current_score
                                     logger.info(
                                         f"🛑 Early stopping (event-based) triggered at iteration {completed_iteration}: "
-                                        f"Task successfully solved with score {best_score:.4f}."
+                                        f"Task successfully solved with score {format_score(best_score)}."
                                     )
                                     self.early_stopping_triggered = True
                                     break

@@ -1,7 +1,7 @@
 {
-  "fitness_improved": "Fitness improved: {prev:.4f} → {current:.4f}",
-  "fitness_declined": "Fitness declined: {prev:.4f} → {current:.4f}. Consider revising recent changes.",
-  "fitness_stable": "Fitness unchanged at {current:.4f}",
+  "fitness_improved": "Fitness improved: {prev} → {current}",
+  "fitness_declined": "Fitness declined: {prev} → {current}. Consider revising recent changes.",
+  "fitness_stable": "Fitness unchanged at {current}",
   "exploring_region": "Exploring {features} region of solution space",
   "metrics_label": "Metrics: {metrics}",
   "outcome_all_improved": "All metrics improved",

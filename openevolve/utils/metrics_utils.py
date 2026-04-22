@@ -68,7 +68,7 @@ def safe_numeric_sum(metrics: Dict[str, Any]) -> float:
 
 def get_fitness_score(
     metrics: Dict[str, Any], feature_dimensions: Optional[List[str]] = None
-) -> float:
+) -> float | list[float] | tuple[float, ...]:
     """
     Calculate fitness score, excluding MAP-Elites feature dimensions
 
@@ -88,7 +88,11 @@ def get_fitness_score(
     # Always prefer combined_score if available
     if "combined_score" in metrics:
         try:
-            return float(metrics["combined_score"])
+            v = metrics["combined_score"]
+            if isinstance(v, (int, float)):
+                return float(v)
+            elif isinstance(v, (list, tuple)):
+                return metrics["combined_score"]
         except (ValueError, TypeError):
             pass
 
@@ -143,3 +147,10 @@ def format_feature_coordinates(metrics: Dict[str, Any], feature_dimensions: List
         return ""
 
     return ", ".join(feature_values)
+
+
+def broadcast_value(value: int | float, x: tuple[float, ...] | list[float] | float | int):
+    if isinstance(x, (tuple, list)):
+        return type(x)([value] * len(x))
+    else:
+        return value
