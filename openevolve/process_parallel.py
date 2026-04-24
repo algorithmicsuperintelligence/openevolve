@@ -93,6 +93,7 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
     _worker_evaluator = None
     _worker_llm_ensemble = None
     _worker_prompt_sampler = None
+    _worker_embedding_client = None
 
 
 def _lazy_init_worker_components():
@@ -100,6 +101,7 @@ def _lazy_init_worker_components():
     global _worker_evaluator
     global _worker_llm_ensemble
     global _worker_prompt_sampler
+    global _worker_embedding_client
 
     if _worker_llm_ensemble is None:
         from openevolve.llm.ensemble import LLMEnsemble
@@ -129,6 +131,72 @@ def _lazy_init_worker_components():
             database=None,  # No shared database in worker
             suffix=getattr(_worker_config, "file_suffix", ".py"),
         )
+
+    if _worker_embedding_client is None:
+        embedding_model = getattr(_worker_config.database, "embedding_model", None)
+        if embedding_model:
+            from openevolve.embedding import EmbeddingClient
+
+            _worker_embedding_client = EmbeddingClient(embedding_model)
+
+
+def _pre_eval_novelty_check(
+    child_code: str, db_snapshot: Dict[str, Any], island_idx: int
+) -> Optional[str]:
+    """
+    Check if the generated code is novel before evaluation.
+
+    This runs the embedding-based similarity check in the worker process,
+    before the expensive program evaluation step. Programs that are too
+    similar to existing island programs are rejected early, saving compute.
+
+    Returns None if the program is novel (or novelty checking is disabled),
+    or an error string if it should be rejected.
+    """
+    if _worker_embedding_client is None:
+        return None
+
+    similarity_threshold = getattr(_worker_config.database, "similarity_threshold", 0.99)
+    if similarity_threshold <= 0.0:
+        return None
+
+    try:
+        import numpy as np
+
+        child_embd = _worker_embedding_client.get_embedding(child_code)
+        if not child_embd:
+            return None
+
+        child_arr = np.array(child_embd, dtype=np.float32)
+        child_norm = np.linalg.norm(child_arr)
+        if child_norm == 0:
+            return None
+
+        island_program_ids = db_snapshot["islands"][island_idx]
+        programs = db_snapshot["programs"]
+
+        for pid in island_program_ids:
+            prog_dict = programs.get(pid)
+            if prog_dict is None:
+                continue
+            other_embd = prog_dict.get("embedding")
+            if not other_embd:
+                continue
+            other_arr = np.array(other_embd, dtype=np.float32)
+            other_norm = np.linalg.norm(other_arr)
+            if other_norm == 0:
+                continue
+            similarity = float(np.dot(child_arr, other_arr) / (child_norm * other_norm))
+            if similarity >= similarity_threshold:
+                return (
+                    f"Pre-evaluation novelty check failed: generated code is too similar "
+                    f"to existing program {pid} (similarity={similarity:.4f} >= "
+                    f"threshold={similarity_threshold}), skipping evaluation"
+                )
+    except Exception as e:
+        logger.warning(f"Pre-evaluation novelty check error (skipping check): {e}")
+
+    return None
 
 
 def _run_iteration_worker(
@@ -284,6 +352,12 @@ def _run_iteration_worker(
                 error=f"Generated code exceeds maximum length ({len(child_code)} > {_worker_config.max_code_length})",
                 iteration=iteration,
             )
+
+        # Pre-evaluation novelty check using embedding similarity.
+        # This avoids wasting compute evaluating programs that are too similar to existing ones.
+        novelty_check_result = _pre_eval_novelty_check(child_code, db_snapshot, parent_island)
+        if novelty_check_result is not None:
+            return SerializableResult(error=novelty_check_result, iteration=iteration)
 
         # Evaluate the child program
         import uuid
