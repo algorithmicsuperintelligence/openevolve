@@ -202,7 +202,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 <details>
 <summary><b>Advanced LLM Integration</b></summary>
 
-- **Universal API**: Works with OpenAI, Google, local models, and proxies
+- **Universal API**: Works with OpenAI, Google, Claude Code CLI, local models, and proxies
 - **Intelligent Ensembles**: Weighted combinations with sophisticated fallback
 - **Test-Time Compute**: Enhanced reasoning through proxy systems (see [OptiLLM setup](#llm-provider-setup))
 - **Plugin Ecosystem**: Support for advanced reasoning plugins
@@ -233,7 +233,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 
 ### Requirements
 - **Python**: 3.10+ 
-- **LLM Access**: Any OpenAI-compatible API
+- **LLM Access**: Any OpenAI-compatible API, or [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - **Optional**: Docker for containerized runs
 
 ### Installation Options
@@ -353,6 +353,35 @@ llm:
   api_base: "http://localhost:8000/v1"
   model: "moa&readurls-o3"  # Test-time compute + web access
 ```
+
+</details>
+
+<details>
+<summary><b>🔮 Claude Code CLI (No API Key)</b></summary>
+
+Use the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the LLM backend — no API keys needed, authentication uses the CLI's OAuth session.
+
+```bash
+# Install and authenticate
+npm install -g @anthropic-ai/claude-code
+claude login
+```
+
+```yaml
+# config.yaml
+llm:
+  provider: "claude_code"
+  models:
+    - name: "sonnet"
+      weight: 0.8
+      max_tokens: 16000
+      max_budget_usd: 1.0
+    - name: "haiku"
+      weight: 0.2
+      max_tokens: 8000
+```
+
+See the [Claude Code quickstart example](examples/claude_code_quickstart/) for a complete walkthrough.
 
 </details>
 

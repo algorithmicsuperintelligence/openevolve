@@ -43,6 +43,8 @@ class ClaudeCodeLLM(LLMInterface):
         self.max_tokens = getattr(model_cfg, "max_tokens", 16000)
         self.timeout = getattr(model_cfg, "timeout", 300)
         self.weight = getattr(model_cfg, "weight", 1.0)
+        self.retries = getattr(model_cfg, "retries", 3)
+        self.retry_delay = getattr(model_cfg, "retry_delay", 5)
         self.max_budget_usd = getattr(model_cfg, "max_budget_usd", 1.0)
         self.cwd = getattr(model_cfg, "cwd", None)
         logger.info(f"Initialized ClaudeCodeLLM with model: {self.model}")
@@ -65,9 +67,11 @@ class ClaudeCodeLLM(LLMInterface):
         cmd = [
             "claude",
             "-p",
-            "--model", self.model,
+            "--model",
+            self.model,
             "--no-session-persistence",
-            "--output-format", "text",
+            "--output-format",
+            "text",
         ]
         if system_message:
             cmd.extend(["--system-prompt", system_message])
@@ -78,20 +82,35 @@ class ClaudeCodeLLM(LLMInterface):
         cmd.append(user_content)
 
         timeout = kwargs.get("timeout", self.timeout)
+        retries = kwargs.get("retries", self.retries)
+        retry_delay = kwargs.get("retry_delay", self.retry_delay)
 
         loop = asyncio.get_event_loop()
-        try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: self._run_cli(cmd, timeout)),
-                timeout=timeout + 30,
-            )
-            return result
-        except asyncio.TimeoutError:
-            logger.error(f"Claude Code CLI timed out after {timeout}s")
-            raise
-        except Exception as e:
-            logger.error(f"Claude Code CLI error: {e}")
-            raise
+        for attempt in range(retries + 1):
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: self._run_cli(cmd, timeout)),
+                    timeout=timeout + 30,
+                )
+                return result
+            except asyncio.TimeoutError:
+                if attempt < retries:
+                    logger.warning(
+                        f"Claude Code CLI timeout on attempt {attempt + 1}/{retries + 1}. Retrying..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"All {retries + 1} attempts failed with timeout")
+                    raise
+            except Exception as e:
+                if attempt < retries:
+                    logger.warning(
+                        f"Claude Code CLI error on attempt {attempt + 1}/{retries + 1}: {e}. Retrying..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"All {retries + 1} attempts failed with error: {e}")
+                    raise
 
     def _run_cli(self, cmd: list, timeout: int) -> str:
         try:
@@ -108,9 +127,7 @@ class ClaudeCodeLLM(LLMInterface):
                     logger.warning(f"Claude CLI stderr: {stderr[:500]}")
             output = result.stdout.strip()
             if not output:
-                raise RuntimeError(
-                    f"Empty response from Claude CLI. stderr: {result.stderr[:500]}"
-                )
+                raise RuntimeError(f"Empty response from Claude CLI. stderr: {result.stderr[:500]}")
             return output
         except subprocess.TimeoutExpired:
             raise asyncio.TimeoutError("Claude CLI subprocess timed out")
