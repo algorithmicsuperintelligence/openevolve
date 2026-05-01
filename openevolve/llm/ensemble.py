@@ -13,6 +13,25 @@ from openevolve.config import LLMModelConfig
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_REGISTRY = {
+    "openai": lambda cfg: OpenAILLM(cfg),
+}
+
+try:
+    from openevolve.llm.claude_code import ClaudeCodeLLM
+    _PROVIDER_REGISTRY["claude_code"] = lambda cfg: ClaudeCodeLLM(cfg)
+except ImportError:
+    pass
+
+
+def _create_model(model_cfg: LLMModelConfig) -> LLMInterface:
+    if model_cfg.init_client:
+        return model_cfg.init_client(model_cfg)
+    provider = getattr(model_cfg, "provider", None)
+    if provider and provider in _PROVIDER_REGISTRY:
+        return _PROVIDER_REGISTRY[provider](model_cfg)
+    return OpenAILLM(model_cfg)
+
 
 class LLMEnsemble:
     """Ensemble of LLMs"""
@@ -21,10 +40,7 @@ class LLMEnsemble:
         self.models_cfg = models_cfg
 
         # Initialize models from the configuration
-        self.models = [
-            model_cfg.init_client(model_cfg) if model_cfg.init_client else OpenAILLM(model_cfg)
-            for model_cfg in models_cfg
-        ]
+        self.models = [_create_model(model_cfg) for model_cfg in models_cfg]
 
         # Extract and normalize model weights
         self.weights = [model.weight for model in models_cfg]

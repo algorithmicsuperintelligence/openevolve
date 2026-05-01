@@ -56,6 +56,9 @@ class LLMModelConfig:
     api_key: Optional[str] = None
     name: str = None
 
+    # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
+    provider: Optional[str] = None
+
     # Custom LLM client
     init_client: Optional[Callable] = None
 
