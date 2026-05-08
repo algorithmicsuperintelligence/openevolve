@@ -404,6 +404,7 @@ class Config:
     # General settings
     max_iterations: int = 10000
     checkpoint_interval: int = 100
+    checkpoint_on_improvement: bool = False
     log_level: str = "INFO"
     log_dir: Optional[str] = None
     random_seed: Optional[int] = 42
