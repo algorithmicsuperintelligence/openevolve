@@ -303,6 +303,12 @@ class OpenEvolve:
 
             self.database.add(initial_program)
 
+            # Check for and store artifacts from initial program
+            initial_artifacts = self.evaluator.get_pending_artifacts(initial_program_id)
+            if initial_artifacts:
+                self.database.store_artifacts(initial_program_id, initial_artifacts)
+                logger.info(f"Stored artifacts for initial program")
+
             # Check if combined_score is present in the metrics
             if "combined_score" not in initial_metrics:
                 # Calculate average of numeric metrics
