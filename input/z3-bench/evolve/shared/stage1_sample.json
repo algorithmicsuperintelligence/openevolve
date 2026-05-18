@@ -1,0 +1,39 @@
+{
+  "seed": 42,
+  "num_buckets": 5,
+  "source": "z3-bench/problems.jsonl",
+  "sha256": [
+    "ac90ca97ff993ebed2e7b1dfdd4e670b0bac1c67d04ac3d592d58456dc4425d9",
+    "133383a624eff676bc61f99b5a18375904aaba4fe865cd2d4afc76d5f00f948f",
+    "29efe6d38d7b8fcf41ed69b73f5a0bb370f782ab61ffe564fbe41512ea75ce5f",
+    "86468fd861ffa391b567ca57dc57c9b95b8577942d3fd2587e244073bdee43ef",
+    "3854194b901b0b424b5199a54fa8e626506e605f0dd8cae64c75786012037c44"
+  ],
+  "summary": [
+    {
+      "sha": "ac90ca97ff99",
+      "baseline_ms": 239,
+      "baseline_result": "Unsat"
+    },
+    {
+      "sha": "133383a624ef",
+      "baseline_ms": 480,
+      "baseline_result": "Unsat"
+    },
+    {
+      "sha": "29efe6d38d7b",
+      "baseline_ms": 12712,
+      "baseline_result": "Unsat"
+    },
+    {
+      "sha": "86468fd861ff",
+      "baseline_ms": 15671,
+      "baseline_result": "Sat"
+    },
+    {
+      "sha": "3854194b901b",
+      "baseline_ms": 66100,
+      "baseline_result": "Sat"
+    }
+  ]
+}

@@ -56,3 +56,4 @@ htmlcov/
 # For SR
 secrets.yaml
 problems
+input/z3-bench/raw-data

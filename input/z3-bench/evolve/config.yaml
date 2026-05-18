@@ -1,0 +1,72 @@
+# Shared OpenEvolve config for all Z3 tuning phases.
+# Per-phase iteration count is set in run_phase.sh.
+
+max_iterations: 100
+checkpoint_interval: 10
+log_level: "INFO"
+random_seed: 42
+
+diff_based_evolution: true
+max_code_length: 20000        # phase2 (~95 keys) needs headroom
+
+early_stopping_patience: null
+convergence_threshold: 0.001
+early_stopping_metric: "combined_score"
+
+llm:
+  primary_model: "gemini-2.5-flash"
+  primary_model_weight: 0.8
+  secondary_model: "gemini-2.5-pro"
+  secondary_model_weight: 0.2
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  temperature: 0.7
+  max_tokens: 16000
+  timeout: 180
+
+prompt:
+  system_message: |
+    You tune Z3 SMT solver parameters for a MaxSMT/optimization workload (50 SMT2 instances
+    with ~13k Int / 19k Bool / 40 Real vars, ~2k soft + 105k hard constraints, opt.* engaged).
+
+    The initial_program.py exposes an EVOLVE-BLOCK dict (per phase: opt.*+sls.*, sat.*, smt.*,
+    or unified). Your job is to mutate this dict to MINIMIZE wall-clock time across the
+    benchmark while PRESERVING correctness (Sat/Unsat must match baseline).
+
+    Hard rules:
+      - Do NOT modify sat.random_seed, smt.random_seed, sls.random_seed, parallel.enable
+        (locked; evaluator returns 0 on violation).
+      - Use only valid Z3 4.13.x parameter keys. Unknown keys cause evaluator to return 0
+        and surface the offending key in artifacts.
+      - Respect types: bool=true/false, ints, floats, symbols (bare strings like "vsids").
+
+    Knob domains (non-exhaustive):
+      sat.branching.heuristic in {vsids, lrb, chb}
+      sat.restart in {luby, geometric, ema, static}
+      sat.phase in {always_false, always_true, basic_caching, random, caching}
+      sat.gc in {glue, psm, glue_psm, dyn_psm}
+      sat.pb.solver in {circuit, sorting, totalizer, solver, segmented, binary_merge}
+      sat.cardinality.encoding in {grouped, bimander, ordered, unate, circuit}
+      smt.phase_selection 0..5
+      smt.case_split 0..6
+      smt.restart_strategy in {0=geometric, 1=inner_outer, 2=luby, 3=fixed, 4=arithmetic}
+      smt.arith.solver in {2=simplex, 5=infinitary_lra, 6=lra}
+      opt.maxsat_engine in {maxres, pd-maxres, wmax, sortmax, rc2, maxres-bin}
+      opt.optsmt_engine in {basic, farkas, symba}
+      opt.priority in {lex, pareto, box}
+      sls.walksat_ucb_constant: float, sls.wp: percent 0..100
+
+    Read the per_problem artifacts each round — they show speedup/regression per instance.
+    Look for patterns: which knob change helped the slow Unsat cases vs the fast Sat cases?
+
+database:
+  population_size: 50
+  archive_size: 20
+  num_islands: 3
+  elite_selection_ratio: 0.2
+  exploitation_ratio: 0.7
+  similarity_threshold: 0.95
+
+evaluator:
+  timeout: 1800              # 30 min cap per variant (stage2 fallback)
+  cascade_thresholds: [0.3]  # need stage1 score >= 0.3 to enter stage2
+  parallel_evaluations: 1    # z3 memory-heavy (up to 4 GB observed); raise carefully
