@@ -4,11 +4,28 @@ Scoring: geomean(speedup) * solved_rate^2 * efficiency^STATS_WEIGHT.
 - match baseline result: speedup = baseline_ms / elapsed_ms
 - mismatch (regression / unknown / timeout): contributes 1e-6 to geomean
 - solved_rate squared to strongly gate on correctness
-- efficiency = geomean over {decisions, propagations, conflicts, restarts}
-  of (baseline_stat / variant_stat), only on solved problems with baseline
-  stats present. Lower solver work vs baseline -> efficiency > 1.
-  Folded multiplicatively via STATS_WEIGHT exponent (default 0 = disabled,
-  preserves prior scoring). Set env OPENEVOLVE_STATS_WEIGHT=0.25 to enable.
+- efficiency = cross-problem geomean of per-problem weighted geomean over
+  SMT solver stats {conflicts, decisions, propagations}, with each ratio
+  (baseline_stat+1)/(variant_stat+1) clipped to [0.1, 10] to bound outliers.
+  Only solved problems with baseline stats present contribute. Lower solver
+  work vs baseline -> efficiency > 1. Folded multiplicatively via STATS_WEIGHT
+  exponent (default 0.333 -> stats / (speedup + stats) ~= 25% in log space;
+  recommended band 0.2-0.5). Override via env OPENEVOLVE_STATS_WEIGHT
+  (0 disables).
+
+Per-key weights reflect SMT solver signal quality:
+- conflicts (2.0): CDCL backtracks/learned clauses. Strongest predictor of
+  search difficulty; lower vs baseline = smarter navigation; robust to
+  hardware noise.
+- decisions (1.5): branching choices. Tracks search-tree size and branching
+  heuristic quality independent of conflicts.
+- propagations (0.5): BCP + theory propagation. High variance; can mean
+  early pruning (good) or theory thrashing (bad). Tiebreaker only.
+- 'mk clause' / 'restarts' intentionally excluded: learning is a feature
+  (fewer learned clauses != better), restart count alone no work signal.
+
+Two-level aggregate (per-problem then cross-problem) gives each benchmark
+an equal vote regardless of how many stat keys it reports.
 
 Why stats matter: identical elapsed_ms with far fewer conflicts/decisions is
 a sturdier improvement (less variance across machines / problems) than a raw
@@ -18,32 +35,42 @@ hit a fast path on the stage1 sample.
 import math
 import os
 
-_STATS_KEYS = ("decisions", "propagations", "conflicts", "mk clause")
+_STATS_WEIGHTS = {"conflicts": 2.0, "decisions": 1.5, "propagations": 0.5}
+_RATIO_CLIP_LO = 0.1
+_RATIO_CLIP_HI = 10.0
 
 
 def _efficiency(per_problem):
-    """Geomean of baseline/variant ratio across stat keys, solved problems only.
+    """Cross-problem geomean of per-problem weighted geomean of clipped ratios.
 
-    Returns (efficiency, num_pairs). efficiency=1.0 if no usable pairs (no
-    baseline stats yet, or no solved problems) so the multiplier is a no-op.
+    Returns (efficiency, num_problems). efficiency=1.0 if no usable problems
+    (no baseline stats yet, or no solved problems) so the multiplier is a no-op.
     """
-    ratios = []
+    per_prob_effs = []
     for p in per_problem:
         if p["result"] != p["baseline_result"]:
             continue
         bs = p.get("baseline_stats") or {}
         vs = p.get("stats") or {}
-        for k in _STATS_KEYS:
+        log_sum = 0.0
+        w_sum = 0.0
+        for k, w in _STATS_WEIGHTS.items():
             b = bs.get(k)
             v = vs.get(k)
             if b is None or v is None:
                 continue
             # +1 smoothing avoids div-by-zero and absurd ratios for tiny counts
-            ratios.append((float(b) + 1.0) / (float(v) + 1.0))
-    if not ratios:
+            r = (float(b) + 1.0) / (float(v) + 1.0)
+            # Clip so one runaway problem/key can't dominate the geomean
+            r = max(_RATIO_CLIP_LO, min(_RATIO_CLIP_HI, r))
+            log_sum += w * math.log(r)
+            w_sum += w
+        if w_sum > 0:
+            per_prob_effs.append(math.exp(log_sum / w_sum))
+    if not per_prob_effs:
         return 1.0, 0
-    log_sum = sum(math.log(r) for r in ratios)
-    return math.exp(log_sum / len(ratios)), len(ratios)
+    log_sum = sum(math.log(e) for e in per_prob_effs)
+    return math.exp(log_sum / len(per_prob_effs)), len(per_prob_effs)
 
 
 def score(per_problem):
@@ -80,9 +107,9 @@ def score(per_problem):
     geomean = math.exp(log_sum / len(speedups))
     solved_rate = solved / n
 
-    efficiency, eff_pairs = _efficiency(per_problem)
+    efficiency, eff_problems = _efficiency(per_problem)
     try:
-        stats_weight = float(os.environ.get("OPENEVOLVE_STATS_WEIGHT", "0"))
+        stats_weight = float(os.environ.get("OPENEVOLVE_STATS_WEIGHT", "0.333"))
     except ValueError:
         stats_weight = 0.0
     # Clamp to a sensible band so a runaway env var can't dominate score.
@@ -98,6 +125,6 @@ def score(per_problem):
         "solved": int(solved),
         "total": int(n),
         "efficiency": float(efficiency),
-        "efficiency_pairs": int(eff_pairs),
+        "efficiency_pairs": int(eff_problems),
         "stats_weight": float(stats_weight),
     }
