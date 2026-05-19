@@ -39,6 +39,8 @@ INTERACTIVE_MODE=true
 ENV_TYPE="dev"
 IMAGE_TAG="dev-latest"
 CONTAINER_SUFFIX=""
+PIN_CPUS=""
+ISOLATED_CGROUP_NAME="${ISOLATED_CGROUP_NAME:-isolated.slice}"
 
 # Help function
 show_help() {
@@ -52,6 +54,10 @@ show_help() {
     echo "  -d, --detached      Run in detached mode"
     echo "  -i, --interactive   Run in interactive mode (default)"
     echo "  -s, --suffix TEXT   Add suffix to default container name"
+    echo "      --pin [LIST]    Pin container to CPU cores (default: 1-6 if no LIST)."
+    echo "                      Adds --cpuset-cpus, joins isolated cgroup if present,"
+    echo "                      and wraps the entrypoint with taskset -c LIST."
+    echo "                      Pair with: sudo ./scripts/host-isolate-cores.sh start"
     echo "  -h, --help          Show this help message"
     echo ""
     echo "Examples:"
@@ -60,6 +66,8 @@ show_help() {
     echo "  $0 prod -d          # Run prod environment in detached mode"
     echo "  $0 -d               # Run dev environment in detached mode"
     echo "  $0 dev -s test      # Container: axion-cell-container-dev-\$USER-test"
+    echo "  $0 --pin            # Pin container to cores 1-6 (host isolation recommended)"
+    echo "  $0 --pin 2-7        # Pin container to cores 2-7"
     echo ""
 }
 
@@ -125,6 +133,19 @@ while [[ $# -gt 0 ]]; do
             fi
             CONTAINER_SUFFIX="$2"
             shift 2
+            ;;
+        --pin)
+            if [[ -n "${2:-}" ]] && [[ "$2" != -* ]]; then
+                PIN_CPUS="$2"
+                shift 2
+            else
+                PIN_CPUS="1-6"
+                shift
+            fi
+            ;;
+        --pin=*)
+            PIN_CPUS="${1#--pin=}"
+            shift
             ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
@@ -338,6 +359,23 @@ else
     DOCKER_RUN_OPTS+=("${CLAUDE_CLI_MOUNT_OPTS[@]}")
 fi
 
+# CPU pinning: --cpuset-cpus is the kernel-level pin; --cgroup-parent attaches
+# the container to the isolated cgroup created by scripts/host-isolate-cores.sh
+# so it can claim CPUs that were carved out of the system slices. taskset
+# inside the container is added below as belt-and-suspenders.
+JOINED_ISOLATED_CGROUP=false
+if [[ -n "$PIN_CPUS" ]]; then
+    DOCKER_RUN_OPTS+=("--cpuset-cpus=$PIN_CPUS")
+    if [[ -d "/sys/fs/cgroup/$ISOLATED_CGROUP_NAME" ]]; then
+        DOCKER_RUN_OPTS+=("--cgroup-parent=/$ISOLATED_CGROUP_NAME")
+        JOINED_ISOLATED_CGROUP=true
+    else
+        echo -e "${YELLOW}Note: /sys/fs/cgroup/$ISOLATED_CGROUP_NAME not found.${NC}"
+        echo -e "${YELLOW}      Container will use --cpuset-cpus=$PIN_CPUS only (system tasks still share those cores).${NC}"
+        echo -e "${YELLOW}      For host-side isolation, run: sudo ./scripts/host-isolate-cores.sh start${NC}"
+    fi
+fi
+
 # Add options based on execution mode
 if [ "$DETACHED_MODE" = true ]; then
     DOCKER_RUN_OPTS+=("-d")
@@ -362,6 +400,11 @@ else
         "bash" "-lc"
         "if [ -x $INIT_SCRIPT_REL ]; then $INIT_SCRIPT_REL || true; fi; exec bash"
     )
+fi
+# Wrap with taskset so the in-container shell (and everything it spawns) is
+# explicitly pinned even if the user later loosens cpuset.cpus.
+if [[ -n "$PIN_CPUS" ]]; then
+    CONTAINER_CMD=("taskset" "-c" "$PIN_CPUS" "${CONTAINER_CMD[@]}")
 fi
 DOCKER_RUN_OPTS+=("-e" "AUTO_INSTALL_CLAUDE=${AUTO_INSTALL_CLAUDE:-1}")
 
@@ -389,6 +432,12 @@ else
 fi
 if [ ${#CLAUDE_ENV_OPTS[@]} -gt 0 ]; then
     echo -e "  Forwarded env vars:$(printf ' %s' "${CLAUDE_ENV_OPTS[@]}" | sed 's/-e //g' | sed 's/=[^ ]*/=***/g')"
+fi
+if [[ -n "$PIN_CPUS" ]]; then
+    echo -e "  CPU pinning: $PIN_CPUS (taskset + --cpuset-cpus)"
+    if [ "$JOINED_ISOLATED_CGROUP" = true ]; then
+        echo -e "  Isolated cgroup: /$ISOLATED_CGROUP_NAME (joined)"
+    fi
 fi
 echo ""
 

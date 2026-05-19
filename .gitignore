@@ -57,3 +57,7 @@ htmlcov/
 secrets.yaml
 problems
 input/z3-bench/raw-data
+
+# z3-bench evolve run artifacts (locally regenerated)
+input/z3-bench/evolve/shared/local_baseline.json
+input/z3-bench/evolve/shared/phase*_best.json

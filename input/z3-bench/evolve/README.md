@@ -226,6 +226,47 @@ Detached mode에서도 init script가 background로 한 번 실행됨. `docker l
 | Rate limit | Pro/Max 5h window 소진. `OPENEVOLVE_MAX_PROBLEMS` 축소 또는 OpenAI 호환 백엔드 병행 |
 | Mac에서 host claude 마운트 시도 | Mac 바이너리는 Linux 컨테이너에서 안 돎 → docker-run.sh가 자동 skip하고 installer로 fallback |
 
+### 4.8 CPU 핀닝 / 코어 격리 (측정 안정성)
+
+z3 wall-clock을 일관되게 재기 위해 컨테이너를 특정 코어에 고정. 호스트 사이드 격리(cgroup v2 isolated partition)와 컨테이너 핀닝을 짝지어 사용한다.
+
+```bash
+# === Host (재부팅 없음) ===
+sudo ./scripts/host-isolate-cores.sh start    # cores 1-6 격리
+sudo ./scripts/host-isolate-cores.sh status   # 상태 확인
+# 끝나면
+sudo ./scripts/host-isolate-cores.sh stop     # 원복
+
+# === Docker 실행 ===
+./docker-run.sh dev -s z3evo --pin            # = --pin 1-6 (default)
+./docker-run.sh dev -s z3evo --pin 2-7        # 다른 범위
+```
+
+`--pin` 동작:
+- `--cpuset-cpus=<list>` 추가 (커널 cpuset 강제)
+- `/sys/fs/cgroup/isolated.slice` 존재 시 `--cgroup-parent=/isolated.slice`로 격리된 cgroup에 합류 (없으면 경고만)
+- 컨테이너 엔트리포인트를 `taskset -c <list> bash -lc ...`로 래핑
+
+`host-isolate-cores.sh start` 메커니즘:
+- `/sys/fs/cgroup/isolated.slice` 생성 → `cpuset.cpus=1-6`, `cpuset.cpus.partition=isolated`
+- 커널이 1-6을 system.slice/user.slice 등 다른 모든 cgroup에서 제거 + 스케줄러 load-balancing 끔
+- `/proc/irq/*/smp_affinity`를 `0,7-19`로 마스크 → 디바이스 IRQ가 격리 코어에 안 떨어짐
+- 상태/IRQ 백업은 `/var/lib/host-isolate-cores/`에 저장됨 (stop이 원복)
+
+| 변수 | 기본 | 용도 |
+|---|---|---|
+| `ISOLATED_CPUS` | `1-6` | 격리할 CPU 리스트 (`host-isolate-cores.sh`) |
+| `CGROUP_NAME` | `isolated.slice` | 격리 cgroup 이름 |
+| `ISOLATED_CGROUP_NAME` | `isolated.slice` | `docker-run.sh`가 합류할 cgroup 이름 |
+
+**한계**: 런타임 격리로는 커널 스레드(kthread)와 타이머 틱은 못 막음. 완전 격리가 필요하면 boot param을 추가하고 재부팅:
+
+```
+isolcpus=1-6 nohz_full=1-6 rcu_nocbs=1-6
+```
+
+(`host-isolate-cores.sh start` 출력 마지막에 같은 안내가 나옴.)
+
 ## 5. 환경 변수
 
 | 변수 | 기본 | 용도 |
