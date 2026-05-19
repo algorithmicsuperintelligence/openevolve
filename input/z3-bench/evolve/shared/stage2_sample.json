@@ -1,14 +1,28 @@
 {
-  "selection": "5 SAT runtime upper-half, quintile-spread by (num_hard_constraints, num_variables)",
+  "selection": "5 SAT runtime Q3+4 (middle 40%)",
   "source": "z3-bench/problems.jsonl",
   "sha256": [
+    "8a304b9c461ac8f19ce464b71010e8ef043d1ee4b857a60d871941a168fea59a",
+    "6aab51935a092a1d7f05bb431d3d05e0de50c19f5f983026a6d14e7c4b9cf240",
     "069af7891076de4d10677710b05411844fac7d5f33f40910cc41229207fcbbc3",
-    "493242c379920ed6cd98a5096fd2674877b98eaa17bbb3a758bbf1b3db38df12",
-    "03b7e129d6254e599dcef91096f13ca6289f1d6b04e7f694a174b8f4bbb6f90c",
-    "3854194b901b0b424b5199a54fa8e626506e605f0dd8cae64c75786012037c44",
-    "a7df812c620d14325d4d18dccdb4e3ae469f5727ac6f31d49331dd79d223af40"
+    "4a02d7846394cb507e7d12f4db736ab7c54c536a8097c32502ad952026dfa64a",
+    "03b7e129d6254e599dcef91096f13ca6289f1d6b04e7f694a174b8f4bbb6f90c"
   ],
   "summary": [
+    {
+      "sha": "8a304b9c461a",
+      "num_hard_constraints": 112796,
+      "num_variables": 17043,
+      "baseline_result": "Sat",
+      "baseline_ms": 3053
+    },
+    {
+      "sha": "6aab51935a09",
+      "num_hard_constraints": 113172,
+      "num_variables": 17151,
+      "baseline_result": "Sat",
+      "baseline_ms": 3681
+    },
     {
       "sha": "069af7891076",
       "num_hard_constraints": 105784,
@@ -17,11 +31,11 @@
       "baseline_ms": 13885
     },
     {
-      "sha": "493242c37992",
-      "num_hard_constraints": 106100,
-      "num_variables": 33068,
+      "sha": "4a02d7846394",
+      "num_hard_constraints": 105784,
+      "num_variables": 32912,
       "baseline_result": "Sat",
-      "baseline_ms": 14353
+      "baseline_ms": 14428
     },
     {
       "sha": "03b7e129d625",
@@ -29,20 +43,6 @@
       "num_variables": 33068,
       "baseline_result": "Sat",
       "baseline_ms": 16518
-    },
-    {
-      "sha": "3854194b901b",
-      "num_hard_constraints": 524914,
-      "num_variables": 59955,
-      "baseline_result": "Sat",
-      "baseline_ms": 66100
-    },
-    {
-      "sha": "a7df812c620d",
-      "num_hard_constraints": 696365,
-      "num_variables": 83551,
-      "baseline_result": "Sat",
-      "baseline_ms": 93445
     }
   ]
 }

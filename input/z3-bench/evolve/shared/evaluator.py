@@ -50,7 +50,7 @@ sys.path.insert(0, str(_HERE))
 from baseline_params import BASELINE, LOCKED  # noqa: E402
 from score import score  # noqa: E402
 from z3_runner import run_z3  # noqa: E402
-from runtime import parallel_solvers  # noqa: E402
+from runtime import parallel_solvers, cascade_threshold  # noqa: E402
 
 from openevolve.evaluation_result import EvaluationResult  # noqa: E402
 
@@ -60,6 +60,7 @@ _PROBLEMS_JSONL = _BENCH_DIR / "problems.jsonl"
 _STAGE1_SAMPLE = _HERE / "stage1_sample.json"
 _STAGE2_SAMPLE = _HERE / "stage2_sample.json"
 _STAGE3_SAMPLE = _HERE / "stage3_sample.json"
+_STAGE4_SAMPLE = _HERE / "stage4_sample.json"
 _LOCAL_BASELINE = _HERE / "local_baseline.json"
 
 _PYTHON_BIN = os.environ.get("OPENEVOLVE_PYTHON_BIN")  # None -> sys.executable
@@ -125,12 +126,21 @@ def _filter_stage2(problems):
 
 
 def _filter_stage3(problems):
-    # stage3_sample.json: 50 SAT+UNSAT problems, size-stratified broad
-    # coverage. raw-data may exceed 50; without this filter, stage3 cost
-    # grows unbounded as raw-data accumulates.
+    # stage3_sample.json: 5 SAT problems from runtime quintile 5 (slowest 20%).
+    # Gates entry to stage4 via internal STAGE3_TO_STAGE4_THRESHOLD.
     if not _STAGE3_SAMPLE.exists():
         return problems
     keep = set(json.loads(_STAGE3_SAMPLE.read_text())["sha256"])
+    return [p for p in problems if p["sha"] in keep]
+
+
+def _filter_stage4(problems):
+    # stage4_sample.json: 20 SAT+UNSAT broad-runtime, deduplicated vs stage1-3.
+    # Final cascade sample. Chained inside evaluate_stage3 because openevolve
+    # hardcodes 3 cascade stages.
+    if not _STAGE4_SAMPLE.exists():
+        return problems
+    keep = set(json.loads(_STAGE4_SAMPLE.read_text())["sha256"])
     return [p for p in problems if p["sha"] in keep]
 
 
@@ -399,8 +409,31 @@ def evaluate_stage2(program_path):
 
 
 def evaluate_stage3(program_path):
-    problems = _filter_stage3(_load_problems())
-    return _evaluate(program_path, problems, "stage3")
+    # openevolve cascade is hardcoded to 3 stages, so user-stage4 (20 broad
+    # problems) is folded in here. Gate threshold = config.yaml
+    # evaluator.cascade_thresholds[2] (defaults to 1.03 if absent).
+    problems3 = _filter_stage3(_load_problems())
+    r3 = _evaluate(program_path, problems3, "stage3")
+    if not isinstance(r3, EvaluationResult):
+        return r3
+    gate = cascade_threshold(2, default=1.03)
+    if r3.metrics.get("combined_score", 0.0) < gate:
+        return r3
+    problems4 = _filter_stage4(_load_problems())
+    r4 = _evaluate(program_path, problems4, "stage4")
+    if not isinstance(r4, EvaluationResult):
+        return r4
+    # Merge: stage4 metrics overlay stage3's (final combined_score = stage4's).
+    merged_metrics = {**r3.metrics, **r4.metrics}
+    merged_artifacts = {**r3.artifacts, **r4.artifacts}
+    return EvaluationResult(metrics=merged_metrics, artifacts=merged_artifacts)
+
+
+def evaluate_stage4(program_path):
+    # Standalone entry for manual / final-verify use. Not invoked by
+    # openevolve cascade — evaluate_stage3 chains here internally.
+    problems = _filter_stage4(_load_problems())
+    return _evaluate(program_path, problems, "stage4")
 
 
 def evaluate(program_path):

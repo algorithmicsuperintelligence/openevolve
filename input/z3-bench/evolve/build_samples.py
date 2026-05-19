@@ -1,5 +1,5 @@
 """
-Build problems.jsonl + stage1/2/3 sample files from raw-data.
+Build problems.jsonl + stage1/2/3/4 sample files from raw-data.
 
 Source of truth = raw-data/*.meta.jsonl. raw-data accumulates over time;
 this script rescans each run, rewrites problems.jsonl as the full aggregate,
@@ -8,20 +8,28 @@ and re-selects all stage samples.
 Sample pool cap: baseline_ms <= MAX_BASELINE_MS (5 min). problems.jsonl
 still contains the full set; only sample selection applies the cap.
 
-Stage1 (5):  SAT, runtime lower-half (fast-medium). Quintile-spread by
-             baseline_ms within the half. Drives the fast evolve loop —
-             keeps per-iteration wall-clock bounded.
-Stage2 (5):  SAT, runtime upper-half (medium-slow) capped at
-             STAGE2_MAX_MS (2 min). Quintile-spread by baseline_ms within
-             the capped pool. Catches regressions on harder instances
-             without letting stage2 wall-clock blow up.
-Stage3 (50): SAT+UNSAT, quintile-spread by size
-             (num_hard_constraints, num_variables). Broad coverage for
-             final verification / full-dataset scoring.
+Outlier filter: after the cap, problems whose baseline_ms lies beyond
+[Q1 - k*IQR, Q3 + k*IQR] (Tukey rule, k=OUTLIER_IQR_K=3.0 "far outlier") are
+dropped. k=3 instead of the textbook 1.5 because runtime is heavily right-
+skewed — k=1.5 would trim away the entire upper quartile that stage3 is
+supposed to test. k=3 only removes the genuine long-tail monsters that
+distort quintile boundaries and inflate stage3/4 wall-clock.
 
-Quintile-spread = sort by key, split into 5 equal-rank buckets, pick N/5
-from each bucket via rank-linspace within bucket. Deterministic, no
-randomness.
+Runtime quintiles (SAT-only, sorted by elapsed_ms ascending):
+  Q1 = bottom 20%, Q2 = 20-40%, ..., Q5 = top 20%.
+
+Stage1 (5):  SAT, quintiles 1+2 (fastest 40%). Quintile-spread within pool.
+             Cascade gate: geomean_speedup >= 1.03 → stage2.
+Stage2 (5):  SAT, quintiles 3+4 (middle 40-80%). Quintile-spread within pool.
+             Cascade gate: geomean_speedup >= 1.03 → stage3.
+Stage3 (5):  SAT, quintile 5 (slowest 20%). Quintile-spread within pool.
+             Cascade gate: geomean_speedup >= 1.03 → stage4.
+Stage4 (20): SAT+UNSAT, broad runtime-spread, deduplicated against
+             stage1+2+3. Final cascade gate / scoring sample.
+
+Quintile-spread = sort by key, split into N_BUCKETS equal-rank buckets,
+pick N/N_BUCKETS from each bucket via rank-linspace within bucket.
+Deterministic, no randomness.
 """
 import json
 import pathlib
@@ -33,13 +41,16 @@ _PROBLEMS = _BENCH / "problems.jsonl"
 _STAGE1 = _HERE / "shared" / "stage1_sample.json"
 _STAGE2 = _HERE / "shared" / "stage2_sample.json"
 _STAGE3 = _HERE / "shared" / "stage3_sample.json"
+_STAGE4 = _HERE / "shared" / "stage4_sample.json"
 
 STAGE1_N = 5
 STAGE2_N = 5
-STAGE3_N = 50
+STAGE3_N = 5
+STAGE4_N = 20
 N_BUCKETS = 5
 MAX_BASELINE_MS = 300_000  # 5 min cap — exclude monster problems from sample pool
-STAGE2_MAX_MS = 120_000    # 2 min cap — stage2 wall must stay bounded
+OUTLIER_IQR_K = 3.0         # linear Tukey k (k=1.5=outlier, k=3=far outlier).
+                            # k=3 drops only extreme tails (e.g. 181s, 132s vs ~13s median).
 
 
 def _scan_raw():
@@ -55,13 +66,35 @@ def _scan_raw():
     return rows
 
 
-def _size_key(d):
-    feats = d.get("features") or {}
-    return (feats.get("num_hard_constraints", 0), feats.get("num_variables", 0))
-
-
 def _runtime_key(d):
     return (d.get("z3_status") or {}).get("elapsed_ms", 0)
+
+
+def _drop_runtime_outliers(rows, k=OUTLIER_IQR_K):
+    """
+    Remove problems whose baseline_ms lies beyond [Q1 - k*IQR, Q3 + k*IQR].
+    Tukey-style linear IQR rule. k=1.5 = standard "outlier", k=3.0 = "far
+    outlier" — we use 3.0 because runtime is heavily right-skewed and 1.5
+    would trim too aggressively (the upper quartile already lives in the
+    long tail).
+    Returns (kept_rows, dropped_rows).
+    """
+    ms_sorted = sorted(_runtime_key(d) for d in rows if _runtime_key(d) > 0)
+    n = len(ms_sorted)
+    if n < 4:
+        return list(rows), []
+    q1 = ms_sorted[n // 4]
+    q3 = ms_sorted[(3 * n) // 4]
+    iqr = q3 - q1
+    lo, hi = q1 - k * iqr, q3 + k * iqr
+    kept, dropped = [], []
+    for d in rows:
+        ms = _runtime_key(d)
+        if ms <= 0 or lo <= ms <= hi:
+            kept.append(d)
+        else:
+            dropped.append(d)
+    return kept, dropped
 
 
 def _quintile_spread(sorted_rows, n_pick, n_buckets=N_BUCKETS):
@@ -108,8 +141,7 @@ def _write_sample(path, picks, label, criteria):
     path.write_text(
         json.dumps(
             {
-                "selection": f"{len(picks)} {criteria}, quintile-spread by "
-                             "(num_hard_constraints, num_variables)",
+                "selection": f"{len(picks)} {criteria}",
                 "source": str(_PROBLEMS.relative_to(_BENCH.parent)),
                 "sha256": [d["problem_sha256"] for d in picks],
                 "summary": [_summary(d) for d in picks],
@@ -140,29 +172,50 @@ def main():
     print(f"sample pool: {len(candidates)} (skipped {skipped} with "
           f"baseline_ms > {MAX_BASELINE_MS}ms)")
 
-    # Stage1/2: SAT only, split by runtime median.
+    candidates, outliers = _drop_runtime_outliers(candidates)
+    if outliers:
+        print(f"dropped {len(outliers)} runtime outliers "
+              f"(Tukey IQR k={OUTLIER_IQR_K}):")
+        for d in sorted(outliers, key=_runtime_key):
+            print(f"  {d['problem_sha256'][:12]}  "
+                  f"{_runtime_key(d):>7}ms  "
+                  f"{(d.get('z3_status') or {}).get('result', '?')}")
+
+    # SAT pool sorted by runtime — basis for stage1/2/3 quintile split.
     sat_by_rt = sorted(
         (d for d in candidates if (d.get("z3_status") or {}).get("result") == "Sat"),
         key=_runtime_key,
     )
-    half = len(sat_by_rt) // 2
-    sat_lower = sat_by_rt[:half]              # fast-medium runtime
-    sat_upper = sat_by_rt[half:]              # medium-slow runtime
-    sat_upper_capped = [d for d in sat_upper if _runtime_key(d) <= STAGE2_MAX_MS]
-    print(f"stage2 pool: {len(sat_upper_capped)} (capped at {STAGE2_MAX_MS}ms, "
-          f"dropped {len(sat_upper) - len(sat_upper_capped)} from upper-half)")
+    n_sat = len(sat_by_rt)
 
-    s1 = _quintile_spread(sat_lower, STAGE1_N, N_BUCKETS)
-    s2 = _quintile_spread(sat_upper_capped, STAGE2_N, N_BUCKETS)
+    def q_idx(i):  # rank boundary for the i-th quintile cut (i in 0..5)
+        return (i * n_sat) // 5
 
-    # Stage3: SAT+UNSAT, quintile-spread by problem size (broad coverage).
-    s3 = _quintile_spread(sorted(candidates, key=_size_key), STAGE3_N, N_BUCKETS)
+    pool_q12 = sat_by_rt[q_idx(0):q_idx(2)]   # quintiles 1+2 (fastest 40%)
+    pool_q34 = sat_by_rt[q_idx(2):q_idx(4)]   # quintiles 3+4 (middle 40%)
+    pool_q5  = sat_by_rt[q_idx(4):q_idx(5)]   # quintile 5 (slowest 20%)
+    print(f"SAT runtime pool: {n_sat} | Q1+2={len(pool_q12)} | "
+          f"Q3+4={len(pool_q34)} | Q5={len(pool_q5)}")
 
-    _write_sample(_STAGE1, s1, "stage1", "SAT runtime lower-half")
-    _write_sample(_STAGE2, s2, "stage2", "SAT runtime upper-half")
-    _write_sample(_STAGE3, s3, "stage3", "SAT+UNSAT broad-size")
+    s1 = _quintile_spread(pool_q12, STAGE1_N, N_BUCKETS)
+    s2 = _quintile_spread(pool_q34, STAGE2_N, N_BUCKETS)
+    s3 = _quintile_spread(pool_q5,  STAGE3_N, N_BUCKETS)
 
-    for label, picks in (("stage1", s1), ("stage2", s2), ("stage3", s3)):
+    # Stage4: SAT+UNSAT, broad runtime-spread, exclude SHAs already in stage1+2+3.
+    used = {d["problem_sha256"] for d in (s1 + s2 + s3)}
+    broad = sorted(
+        (d for d in candidates if d["problem_sha256"] not in used),
+        key=_runtime_key,
+    )
+    s4 = _quintile_spread(broad, STAGE4_N, N_BUCKETS)
+
+    _write_sample(_STAGE1, s1, "stage1", "SAT runtime Q1+2 (fastest 40%)")
+    _write_sample(_STAGE2, s2, "stage2", "SAT runtime Q3+4 (middle 40%)")
+    _write_sample(_STAGE3, s3, "stage3", "SAT runtime Q5 (slowest 20%)")
+    _write_sample(_STAGE4, s4, "stage4", "SAT+UNSAT broad, dedup vs stage1-3")
+
+    for label, picks in (("stage1", s1), ("stage2", s2),
+                         ("stage3", s3), ("stage4", s4)):
         print(f"\n{label}:")
         for d in picks:
             f_ = d.get("features") or {}

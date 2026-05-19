@@ -47,3 +47,20 @@ def parallel_solvers(default=1):
         return max(1, int(val))
     except (ValueError, TypeError):
         return default
+
+
+def cascade_threshold(index, default):
+    """
+    Read evaluator.cascade_thresholds[index] from config.yaml.
+    Used by evaluator.evaluate_stage3 for the internal stage3→stage4 gate
+    (openevolve's cascade hardcodes only 3 stage slots, so stage4 is chained
+    inside evaluate_stage3 using thresholds[2]).
+    """
+    cfg = _load().get("evaluator") or {}
+    thresholds = cfg.get("cascade_thresholds") or []
+    if index < len(thresholds):
+        try:
+            return float(thresholds[index])
+        except (ValueError, TypeError):
+            pass
+    return default

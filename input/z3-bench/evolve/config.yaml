@@ -81,12 +81,16 @@ database:
 
 evaluator:
   timeout: 600                  # 10 min cap per variant (stage3 worst-case ≈ 4 min wall)
-  cascade_evaluation: true      # stage1 → stage2 → stage3 escalation per variant
-  cascade_thresholds: [1.0, 1.1]
-  # threshold[0] = stage1 combined_score gate to enter stage2 (>=1.0 = baseline-or-better)
-  # threshold[1] = stage2 merged combined_score gate to enter stage3 (>=1.1 = 10% gain)
-  # combined_score uses geomean_speedup * solved_rate^2 (+ efficiency^STATS_WEIGHT).
-  # Initial baseline-equivalent variant scores ≈1.0 — passes stage1 gate, fails stage3.
+  cascade_evaluation: true      # stage1 → stage2 → stage3 (→ stage4 inside) per variant
+  cascade_thresholds: [1.03, 1.03, 1.03]
+  # threshold[0] = stage1 combined_score gate to enter stage2 (>=1.03 = ≥3% gain)
+  # threshold[1] = merged combined_score gate to enter stage3 (>=1.03 = ≥3% gain)
+  # threshold[2] = stage3 combined_score gate to enter stage4 (>=1.03 = ≥3% gain)
+  # threshold[2] is read by evaluator.evaluate_stage3 via runtime.cascade_threshold()
+  # because openevolve cascade only exposes 3 stage slots — stage4 is chained
+  # inside evaluate_stage3.
+  # combined_score = geomean_speedup * solved_rate^2 (+ efficiency^STATS_WEIGHT).
+  # Initial baseline-equivalent variant scores ≈1.0 — fails stage1 gate (good — skips downstream).
   parallel_evaluations: 1    # FIXED 1 — variant pool kept serial. All z3 concurrency
                              # is controlled by env OPENEVOLVE_PARALLEL_SOLVERS (inner
                              # ThreadPool that runs N stage-problems concurrently per

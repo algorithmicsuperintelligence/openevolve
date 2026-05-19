@@ -1,17 +1,19 @@
 """
 Init-phase rebaseline: measure BASELINE elapsed_ms on the union of
-stage1_sample.json + stage2_sample.json (10 SHAs total) and write
+stage1 + stage2 + stage3 + stage4 sample files and write
 shared/local_baseline.json.
 
 Wall-clock varies by hardware / z3 version. Raw-data baseline_ms was recorded
 on a different machine, so comparing against it gives misleading speedup.
 evaluator._load_problems overlays this local file onto raw data so that
-speedup = local_baseline_ms / variant_elapsed_ms.
+speedup = local_baseline_ms / variant_elapsed_ms and per-problem timeout
+= baseline_ms * 1.3 is calibrated for the local box.
 
-Stage1+stage2 are rebaselined — both feed the evolve loop (stage1 fast
-triage, stage2 medium-slow regression check). Stage3 (50 SHAs, broad
-size-distribution) is NOT rebaselined here because final_verify.py
-re-measures baseline on the fly per problem.
+All three stages feed the evolve loop (cascade_evaluation: true). Without
+rebaselining stage3 (50 SHAs), 45/50 problems would fall back to raw_ms
+recorded elsewhere and timeout/speedup calculations would drift.
+final_verify.py re-measures baseline on the fly per problem anyway, but
+the evolve-loop stage3 invocation needs trustworthy local baselines up front.
 
 Per-problem: 1 run, timeout = REBASELINE_TIMEOUT_S (1 hr safety floor — a
 truncated baseline measurement is worse than a slow one). MISMATCH-by-timeout
@@ -37,6 +39,8 @@ _RAW_DIR = _BENCH_DIR / "raw-data"
 _PROBLEMS_JSONL = _BENCH_DIR / "problems.jsonl"
 _STAGE1_SAMPLE = _HERE / "shared" / "stage1_sample.json"
 _STAGE2_SAMPLE = _HERE / "shared" / "stage2_sample.json"
+_STAGE3_SAMPLE = _HERE / "shared" / "stage3_sample.json"
+_STAGE4_SAMPLE = _HERE / "shared" / "stage4_sample.json"
 _OUT = _HERE / "shared" / "local_baseline.json"
 
 # Baseline measurement must never be truncated — let z3 finish naturally.
@@ -59,24 +63,32 @@ def _load_problem_index():
 
 
 def _load_target_shas():
-    # Rebaseline stage1 + stage2 (10 SHAs total). Stage3 (50) is skipped —
-    # final_verify.py rebaselines on the fly per-problem and the cost of
-    # rebaselining 50 with multi-min runtimes is too high for routine setup.
+    # Rebaseline the union of stage1 + stage2 + stage3 samples. With cascade
+    # evaluation enabled all three stages run in the evolve loop, so accurate
+    # local baseline is required for per-problem timeout = baseline_ms * 1.3
+    # to be machine-correct. Without rebaselining stage3, 45/50 problems fall
+    # back to raw_ms recorded on a different machine and timeout calibration
+    # drifts.
     if not _STAGE1_SAMPLE.exists():
         print(f"ERROR: {_STAGE1_SAMPLE} missing — run build_samples.py first",
               file=sys.stderr)
         sys.exit(2)
-    shas = list(json.loads(_STAGE1_SAMPLE.read_text())["sha256"])
-    if _STAGE2_SAMPLE.exists():
-        s2 = json.loads(_STAGE2_SAMPLE.read_text())["sha256"]
-        seen = set(shas)
-        for sha in s2:
+    shas = []
+    seen = set()
+    for sample_path, label in (
+        (_STAGE1_SAMPLE, "stage1"),
+        (_STAGE2_SAMPLE, "stage2"),
+        (_STAGE3_SAMPLE, "stage3"),
+        (_STAGE4_SAMPLE, "stage4"),
+    ):
+        if not sample_path.exists():
+            print(f"WARN: {sample_path.name} missing — skipping {label}",
+                  file=sys.stderr)
+            continue
+        for sha in json.loads(sample_path.read_text())["sha256"]:
             if sha not in seen:
                 shas.append(sha)
                 seen.add(sha)
-    else:
-        print(f"WARN: {_STAGE2_SAMPLE} missing — rebaselining stage1 only",
-              file=sys.stderr)
     return shas
 
 
@@ -98,8 +110,8 @@ def main():
 
     import queue as _queue
     n_parallel = min(parallel_solvers(default=1), len(tasks))
-    print(f"rebaselining stage1+stage2 evolution samples: {len(tasks)} problems "
-          f"(union of stage1_sample.json + stage2_sample.json)")
+    print(f"rebaselining stage1+stage2+stage3+stage4 samples: {len(tasks)} problems "
+          f"(union of stage{{1,2,3,4}}_sample.json)")
     print(f"timeout per problem = {REBASELINE_TIMEOUT_S}s (effectively unbounded "
           f"— never cut a baseline run short), parallel={n_parallel} (taskset core pin)")
     print()
