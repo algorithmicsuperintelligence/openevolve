@@ -51,7 +51,7 @@ def _load_problem_index():
 
 def _load_stage1_shas():
     if not _STAGE1_SAMPLE.exists():
-        print(f"ERROR: {_STAGE1_SAMPLE} missing — run build_stage1_sample.py first",
+        print(f"ERROR: {_STAGE1_SAMPLE} missing — run build_samples.py first",
               file=sys.stderr)
         sys.exit(2)
     return list(json.loads(_STAGE1_SAMPLE.read_text())["sha256"])

@@ -1,9 +1,15 @@
 """
 OpenEvolve evaluator for Z3 parameter tuning.
 
-Cascade:
-  stage1: 5 stratified problems (stage1_sample.json), per-problem 15s
-  stage2: full 50 problems, per-problem 120s
+Sample selection (built by build_samples.py):
+  stage1: stage1_sample.json (5 SAT, quintile-spread by problem size)
+  stage2: stage2_sample.json (50 SAT+UNSAT, quintile-spread by problem size)
+
+Per-problem timeout = max(MIN_TIMEOUT_S, ceil(baseline_ms * TIMEOUT_FACTOR / 1000)).
+Adaptive: small problems get tight cap, huge problems get proportional headroom.
+Constants TIMEOUT_FACTOR=1.3, MIN_TIMEOUT_S=5 (z3 startup overhead floor).
+Baseline_ms reflects local rebaseline (rebaseline_local.py) when SHA is in
+local_baseline.json, else raw_ms from problems.jsonl.
 
 Score: geomean(speedup) * solved_rate^2 * efficiency^OPENEVOLVE_STATS_WEIGHT.
        efficiency = geomean over {decisions, propagations, conflicts, mk clause}
@@ -17,8 +23,6 @@ must not deviate from baseline_params.LOCKED — violation => combined_score=0.
 
 Environment overrides:
   OPENEVOLVE_MAX_PROBLEMS      int — cap stage2 problem count
-  OPENEVOLVE_STAGE1_TIMEOUT    int sec — per-problem timeout in stage1 (default 24)
-  OPENEVOLVE_STAGE2_TIMEOUT    int sec — per-problem timeout in stage2 (default 120)
   OPENEVOLVE_PARALLEL_SOLVERS  int — SINGLE knob for total z3 concurrency
                                (default 1). Spawns N z3 worker subprocesses
                                concurrently per stage; each pinned to a
@@ -31,10 +35,14 @@ Environment overrides:
 """
 import importlib.util
 import json
+import math
 import os
 import pathlib
 import sys
 import traceback
+
+TIMEOUT_FACTOR = 1.3
+MIN_TIMEOUT_S = 5
 
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
@@ -50,6 +58,7 @@ _BENCH_DIR = _HERE.parent.parent          # input/z3-bench/
 _RAW_DIR = _BENCH_DIR / "raw-data"
 _PROBLEMS_JSONL = _BENCH_DIR / "problems.jsonl"
 _STAGE1_SAMPLE = _HERE / "stage1_sample.json"
+_STAGE2_SAMPLE = _HERE / "stage2_sample.json"
 _LOCAL_BASELINE = _HERE / "local_baseline.json"
 
 _PYTHON_BIN = os.environ.get("OPENEVOLVE_PYTHON_BIN")  # None -> sys.executable
@@ -64,14 +73,12 @@ def _load_program(path):
 
 
 def _load_problems():
-    # If rebaseline_local.py has been run, restrict stage2 to that SHA subset
-    # (20 stratified). Reasons:
-    #   - non-rebaselined problems would use raw_ms recorded on a different
-    #     machine, skewing speedup
-    #   - smaller stage2 = faster iterations
-    # Local elapsed_ms used only when local result matches raw, else fall
-    # back to raw_ms for that SHA to avoid speedup distortion from a bad
-    # local run (timeout, mismatch).
+    # Always returns the full problems.jsonl set (50 problems).
+    # local_baseline.json (if present) overlays per-SHA local timing so that
+    # speedup uses on-machine wall-clock for rebaselined SHAs; non-rebaselined
+    # SHAs fall back to raw_ms recorded in problems.jsonl. Local elapsed_ms is
+    # only trusted when local result matches raw — otherwise raw_ms wins to
+    # avoid speedup distortion from a bad local run (timeout, mismatch).
     local = {}
     if _LOCAL_BASELINE.exists():
         local = json.loads(_LOCAL_BASELINE.read_text())
@@ -81,8 +88,6 @@ def _load_problems():
         for line in f:
             d = json.loads(line)
             sha = d["problem_sha256"]
-            if local and sha not in local:
-                continue
             baseline_ms = d["z3_status"]["elapsed_ms"]
             baseline_result = d["z3_status"]["result"]
             baseline_stats = {}
@@ -109,6 +114,17 @@ def _filter_stage1(problems):
     return [p for p in problems if p["sha"] in keep]
 
 
+def _filter_stage2(problems):
+    # stage2_sample.json pins a deterministic 50-problem subset built by
+    # build_samples.py (quintile-spread by num_hard_constraints, num_variables).
+    # raw-data may exceed 50; without this filter, stage2 cost grows
+    # unbounded as raw-data accumulates.
+    if not _STAGE2_SAMPLE.exists():
+        return problems
+    keep = set(json.loads(_STAGE2_SAMPLE.read_text())["sha256"])
+    return [p for p in problems if p["sha"] in keep]
+
+
 def _err_result(metrics_extra, artifacts):
     metrics = {
         "combined_score": 0.0,
@@ -122,7 +138,7 @@ def _err_result(metrics_extra, artifacts):
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
 
-def _evaluate(program_path, problems, per_problem_timeout_s, stage_name):
+def _evaluate(program_path, problems, stage_name):
     try:
         program = _load_program(program_path)
     except Exception as e:
@@ -199,13 +215,14 @@ def _evaluate(program_path, problems, per_problem_timeout_s, stage_name):
     def _solve(idx_p):
         idx, p = idx_p
         smt2_path = _RAW_DIR / p["smt2"]
+        timeout_s = max(MIN_TIMEOUT_S, math.ceil(p["baseline_ms"] * TIMEOUT_FACTOR / 1000))
         core = _core_pool.get()
         try:
-            r = run_z3(smt2_path, params, per_problem_timeout_s,
+            r = run_z3(smt2_path, params, timeout_s,
                        python_bin=_PYTHON_BIN, cpu_core=core)
         finally:
             _core_pool.put(core)
-        return idx, p, r, core
+        return idx, p, r, core, timeout_s
 
     def _is_regression(p, r):
         # Correctness regression: baseline gave a definitive answer (Sat/Unsat)
@@ -257,9 +274,9 @@ def _evaluate(program_path, problems, per_problem_timeout_s, stage_name):
     if n_parallel == 1:
         # Sequential: short-circuit immediately on invalid or regression.
         for pair in enumerate(problems):
-            idx, p, r, core = _solve(pair)
+            idx, p, r, core, timeout_s = _solve(pair)
             print(f"  [{stage_name}] {idx+1}/{len(problems)} {p['sha'][:10]} "
-                  f"{r.get('result')} {r.get('elapsed_ms')}ms "
+                  f"{r.get('result')} {r.get('elapsed_ms')}ms / {timeout_s}s "
                   f"(core={core})", flush=True)
             if "invalid_param" in r:
                 return _invalid_err(r)
@@ -270,17 +287,18 @@ def _evaluate(program_path, problems, per_problem_timeout_s, stage_name):
             by_idx[idx] = (p, r)
     else:
         # Parallel: cancel pending futures on first failure. In-flight tasks
-        # keep running until subprocess timeout (with __exit__ waits for them);
-        # acceptable for stage1 (timeout ~24s).
+        # keep running until subprocess timeout (with __exit__ waits for them).
+        # Per-problem timeout is now baseline_ms * 1.3 (adaptive), so worst-case
+        # drain depends on the slowest in-flight problem rather than a fixed cap.
         from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=n_parallel) as ex:
             futures = [ex.submit(_solve, pair) for pair in enumerate(problems)]
             for fut in as_completed(futures):
                 if abort is not None:
                     continue
-                idx, p, r, core = fut.result()
+                idx, p, r, core, timeout_s = fut.result()
                 print(f"  [{stage_name}] {idx+1}/{len(problems)} {p['sha'][:10]} "
-                      f"{r.get('result')} {r.get('elapsed_ms')}ms "
+                      f"{r.get('result')} {r.get('elapsed_ms')}ms / {timeout_s}s "
                       f"(core={core})", flush=True)
                 if "invalid_param" in r:
                     abort = ("invalid", p, r)
@@ -353,21 +371,20 @@ def _evaluate(program_path, problems, per_problem_timeout_s, stage_name):
 
 
 def evaluate_stage1(program_path):
-    # Default 24s per problem → 5 problems = 60-120s wall-clock budget
-    # (60s lower bound on baseline-like variants, 120s upper bound on all-timeout).
-    timeout = int(os.environ.get("OPENEVOLVE_STAGE1_TIMEOUT", "24"))
+    # Per-problem timeout = baseline_ms * TIMEOUT_FACTOR (computed in _solve).
+    # Stage1 wall-clock budget ≈ TIMEOUT_FACTOR * sum(baseline_ms) over 5 sample
+    # problems (parallel mode divides by n_parallel).
     problems = _filter_stage1(_load_problems())
-    return _evaluate(program_path, problems, timeout, "stage1")
+    return _evaluate(program_path, problems, "stage1")
 
 
 def evaluate_stage2(program_path):
-    timeout = int(os.environ.get("OPENEVOLVE_STAGE2_TIMEOUT", "120"))
-    problems = _load_problems()
-    return _evaluate(program_path, problems, timeout, "stage2")
+    problems = _filter_stage2(_load_problems())
+    return _evaluate(program_path, problems, "stage2")
 
 
 def evaluate(program_path):
     # Evolution uses stage1 (5 sampled problems) only — fast iteration loop.
-    # Stage2 (20 problems) is reserved for final verification via
+    # Stage2 (full 50 problems) is reserved for final verification via
     # final_verify.py on the best-program, not the per-variant search loop.
     return evaluate_stage1(program_path)

@@ -70,7 +70,7 @@ def _self_test():
     stage1_sample = here / "stage1_sample.json"
 
     if not stage1_sample.exists():
-        print(f"ERROR: {stage1_sample} missing. run build_stage1_sample.py first.",
+        print(f"ERROR: {stage1_sample} missing. run build_samples.py first.",
               file=sys.stderr)
         return 2
 

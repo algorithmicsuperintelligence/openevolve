@@ -59,9 +59,9 @@ if [ ! -f "$RUNNER" ]; then
     exit 1
 fi
 
-if [ ! -f "$ROOT/shared/stage1_sample.json" ]; then
-    echo "stage1_sample.json missing — running build_stage1_sample.py first..."
-    python "$ROOT/build_stage1_sample.py"
+if [ ! -f "$ROOT/shared/stage1_sample.json" ] || [ ! -f "$ROOT/shared/stage2_sample.json" ]; then
+    echo "sample json missing — running build_samples.py first..."
+    python "$ROOT/build_samples.py"
 fi
 
 if [ "${SKIP_REBASELINE:-0}" = "1" ] && [ -f "$ROOT/shared/local_baseline.json" ]; then
