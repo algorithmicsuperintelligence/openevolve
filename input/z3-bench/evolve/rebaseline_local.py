@@ -13,11 +13,13 @@ triage, stage2 medium-slow regression check). Stage3 (50 SHAs, broad
 size-distribution) is NOT rebaselined here because final_verify.py
 re-measures baseline on the fly per problem.
 
-Per-problem: 1 run, timeout = max(60s, raw_baseline_ms * 2 / 1000).
+Per-problem: 1 run, timeout = REBASELINE_TIMEOUT_S (1 hr safety floor — a
+truncated baseline measurement is worse than a slow one). MISMATCH-by-timeout
+that the old multiplier produced would poison local_baseline. Big problems
+under parallel contention may run ~2x raw; let them finish.
 Concurrency = config parallel_solvers (env OPENEVOLVE_PARALLEL_SOLVERS override).
 """
 import json
-import math
 import pathlib
 import sys
 import time
@@ -36,6 +38,10 @@ _PROBLEMS_JSONL = _BENCH_DIR / "problems.jsonl"
 _STAGE1_SAMPLE = _HERE / "shared" / "stage1_sample.json"
 _STAGE2_SAMPLE = _HERE / "shared" / "stage2_sample.json"
 _OUT = _HERE / "shared" / "local_baseline.json"
+
+# Baseline measurement must never be truncated — let z3 finish naturally.
+# 1 hour cap is just a safety against true infinite loops; not expected to trigger.
+REBASELINE_TIMEOUT_S = 3600
 
 
 def _load_problem_index():
@@ -94,8 +100,8 @@ def main():
     n_parallel = min(parallel_solvers(default=1), len(tasks))
     print(f"rebaselining stage1+stage2 evolution samples: {len(tasks)} problems "
           f"(union of stage1_sample.json + stage2_sample.json)")
-    print(f"timeout per problem = max(60s, raw_ms * 2), parallel={n_parallel} "
-          f"(taskset core pin)")
+    print(f"timeout per problem = {REBASELINE_TIMEOUT_S}s (effectively unbounded "
+          f"— never cut a baseline run short), parallel={n_parallel} (taskset core pin)")
     print()
 
     # Cores leased from a queue so each in-flight task holds a unique slot.
@@ -107,10 +113,9 @@ def main():
 
     def _solve(task):
         i, meta, smt2_path = task
-        timeout_s = max(60, math.ceil(meta["raw_ms"] * 2 / 1000))
         core = _core_pool.get()
         try:
-            res = run_z3(smt2_path, BASELINE, timeout_s, cpu_core=core)
+            res = run_z3(smt2_path, BASELINE, REBASELINE_TIMEOUT_S, cpu_core=core)
         finally:
             _core_pool.put(core)
         return i, meta, res, core
