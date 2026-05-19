@@ -45,12 +45,12 @@ def main():
     par = {sha: [] for _, sha, _ in tasks}
     for rep in range(3):
         with ThreadPoolExecutor(max_workers=5) as ex:
-            futs = [ex.submit(solve, i, sha, smt2, i % 5) for i, sha, smt2 in tasks]
+            futs = [ex.submit(solve, i, sha, smt2, (i % 5) + 1) for i, sha, smt2 in tasks]
             for fut in futs:
                 i, sha, r = fut.result()
                 par[sha].append((r.get("result"), r["elapsed_ms"]))
                 print(f"  rep{rep} [{i+1}/5] {sha[:10]} {r.get('result')} "
-                      f"z3={r['elapsed_ms']}ms core={i % 5}")
+                      f"z3={r['elapsed_ms']}ms core={(i % 5) + 1}")
 
     # --- summary ---
     print("\n=== SUMMARY (z3 elapsed_ms) ===")

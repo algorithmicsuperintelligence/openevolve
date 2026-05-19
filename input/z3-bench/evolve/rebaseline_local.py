@@ -105,10 +105,12 @@ def main():
     print()
 
     # Cores leased from a queue so each in-flight task holds a unique slot.
-    # Serial mode also leases core 0 (symmetric with parallel) — keeps the
-    # baseline measurement under the same pin envelope variants will see.
+    # Cores 1..n_parallel — core 0 reserved for kernel interrupts / housekeeping
+    # (avoids tail-latency spikes). Serial mode also leases core 1, symmetric
+    # with parallel so baseline measurement matches the pin envelope variants
+    # will see during evolve.
     _core_pool = _queue.Queue()
-    for _c in range(n_parallel):
+    for _c in range(1, n_parallel + 1):
         _core_pool.put(_c)
 
     def _solve(task):

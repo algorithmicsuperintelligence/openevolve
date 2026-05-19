@@ -107,7 +107,8 @@ def _self_test():
         i, sha, meta, smt2 = t
         # Generous timeout: 2x baseline_ms (matches the [0.5, 2.0] tolerance band).
         timeout_s = max(30, math.ceil(meta["baseline_ms"] * 2 / 1000))
-        core = i % n_parallel
+        # Skip core 0 — pin to cores 1..n_parallel.
+        core = (i % n_parallel) + 1
         r = run_z3(smt2, BASELINE, timeout_s, cpu_core=core)
         return i, sha, meta, r
 
@@ -146,7 +147,7 @@ def _self_test():
             status = "OK"
         print(f"{sha[:12]:<14}{meta['baseline_result']:<10}{got_result:<10}"
               f"{meta['baseline_ms']:>10}{got_ms:>10}{ratio:>7.2f}x  "
-              f"{i % n_parallel:>4}  {status}")
+              f"{(i % n_parallel) + 1:>4}  {status}")
 
     seq_estimate = sum_got_ms / 1000
     print()

@@ -210,15 +210,16 @@ def _evaluate(program_path, problems, stage_name):
     # z3 worker subprocesses run concurrently for the stage's problem list.
     # Worker count is capped at len(problems) (no point spawning idle threads).
     # Cores are leased from a queue.Queue so each in-flight task holds a
-    # unique core slot. This is correct even when len(problems) > n_parallel
-    # (idx % n_parallel would collide across workers). Serial mode also
-    # leases core 0 — symmetric with parallel so baseline / variant share
-    # the same pin envelope (no parallel=1-unpinned vs parallel=N-pinned
-    # bias). Default 1 = sequential, single slot.
+    # unique core slot. Correct even when len(problems) > n_parallel
+    # (idx % n_parallel would collide across workers).
+    # Core pool = cores 1..n_parallel — core 0 reserved for kernel interrupts
+    # / housekeeping (avoids tail-latency spikes). Serial mode also leases
+    # core 1, symmetric with parallel so baseline / variant share the same
+    # pin envelope (no unpinned-vs-pinned bias).
     import queue as _queue
     n_parallel = min(parallel_solvers(default=1), len(problems))
     _core_pool = _queue.Queue()
-    for _c in range(n_parallel):
+    for _c in range(1, n_parallel + 1):
         _core_pool.put(_c)
 
     def _solve(idx_p):

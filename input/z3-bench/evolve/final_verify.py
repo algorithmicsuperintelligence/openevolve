@@ -123,7 +123,8 @@ def main():
 
     def _measure(idx_meta):
         i, meta, smt2 = idx_meta
-        core = (i % n_parallel) if n_parallel > 1 else None
+        # Skip core 0 — pin baseline + variant to cores 1..n_parallel.
+        core = ((i % n_parallel) + 1) if n_parallel > 1 else None
         # Baseline first, then variant — back-to-back so system noise affects
         # both equally and speedup ratio cancels it out.
         b = run_z3(smt2, BASELINE, TIMEOUT_S, cpu_core=core)
