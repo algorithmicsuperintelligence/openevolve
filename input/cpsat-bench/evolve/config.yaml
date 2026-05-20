@@ -1,0 +1,139 @@
+# Single config for cpsat-bench. Read by openevolve (dacite, ignores unknown
+# top-level keys like `bench` / `parallel_solvers`) AND by input/run_phase.sh
+# (via _lib/load_bench_config.py) for shell-side phase orchestration.
+#
+# === bench: section ===
+# Consumed by input/run_phase.sh. phases[].iters can be null/omitted → uses
+# max_iterations below.
+bench:
+  phases:
+    - dir: phase1_search
+      iters: 60
+    - dir: phase2_presolve
+      iters: 100
+    - dir: phase3_lp_cuts
+      iters: 80
+    - dir: phase4_unified
+      iters: 40
+  unified_prepare_script: prepare_phase_unified.py
+  solver_check_cmd: 'python -c "from ortools.sat.python import cp_model"'
+  solver_install_hint: "install: pip install ortools"
+  # optional script-name overrides (defaults shown):
+  # rebaseline_script: rebaseline_local.py
+  # extract_best_script: extract_best.py
+  # build_samples_script: build_samples.py
+
+# === Custom cpsat-bench knobs (silently ignored by openevolve dacite) ===
+# parallel_solvers: total concurrent CP-SAT worker subprocesses per stage.
+#   - Read by shared/evaluator.py, rebaseline_local.py, baseline_params self-test.
+#   - Each pinned to a dedicated core via taskset (Linux).
+#   - Capped at len(problems_in_stage) at runtime.
+#   - Env OPENEVOLVE_PARALLEL_SOLVERS overrides this value.
+#   - CP-SAT itself uses num_search_workers=8 internally (locked), so total
+#     core demand ≈ parallel_solvers × 8. Size accordingly.
+parallel_solvers: 1
+
+max_iterations: 60
+checkpoint_interval: 10
+log_level: "INFO"
+random_seed: 42
+
+diff_based_evolution: true
+max_code_length: 20000
+
+early_stopping_patience: null
+convergence_threshold: 0.001
+early_stopping_metric: "combined_score"
+
+llm:
+  models:
+    - name: "claude-sonnet-4-6"
+      provider: "claude_code"
+      weight: 0.8
+      timeout: 180
+      retries: 2
+      retry_delay: 10
+      reasoning_effort: "medium"
+    - name: "claude-haiku-4-5"
+      provider: "claude_code"
+      weight: 0.2
+      timeout: 120
+
+prompt:
+  system_message: |
+    You tune OR-tools CP-SAT (ortools.sat.python.cp_model) solver parameters for a
+    workload of 85 OPTIMAL-objective instances stored as serialized CpModelProto
+    (problem.cpsat.pb). Median baseline runtime ≈ 4.6s, max ≈ 107s.
+
+    The initial_program.py exposes an EVOLVE-BLOCK dict (per phase:
+    search/subsolvers, presolve, lp/cuts, or unified). Your job is to mutate
+    this dict to MAXIMIZE combined_score = geomean(cost_ratio * time_ratio)
+    * solved_rate^2 * efficiency^STATS_WEIGHT.
+
+    Score mode = cost: variant must reach OPTIMAL or FEASIBLE on every baseline
+    OPTIMAL problem, otherwise the per-problem ratio is 1e-6 (large penalty,
+    geomean punishes one regression heavily). All baselines are OPTIMAL, so a
+    variant that bails to FEASIBLE with a worse objective_value scores below 1.0.
+
+    Hard rules:
+      - Do NOT modify locked keys: random_seed, num_search_workers, timeout_sec.
+        (evaluator returns combined_score=0 + locked_violated artifact on violation.)
+      - Use only valid CpSolverParameters proto field names. Unknown keys
+        cause AttributeError → evaluator returns 0 + surfaces invalid_param.
+      - Respect types: bool true/false, int, float, list of strings (subsolver names).
+      - Repeated proto fields (extra_subsolvers, ignore_subsolvers, etc.) accept
+        Python lists; the worker handles del+extend internally.
+
+    Common CP-SAT knobs worth exploring (non-exhaustive):
+      search/subsolvers:
+        extra_subsolvers, ignore_subsolvers — subsolver names include
+          "default_lp", "no_lp", "max_lp", "core", "quick_restart",
+          "reduced_costs", "lb_tree_search", "probing_search", "objective_lb_search",
+          "objective_shaving_search_no_lp", "pseudo_costs", "fixed",
+          "feasibility_pump", "feasibility_jump"
+        interleave_search: bool
+        use_feasibility_jump, use_feasibility_pump: bool
+        diversify_lns_params: bool
+        repair_hint: bool
+      presolve/probing:
+        cp_model_probing_level: 0..3
+        cp_model_presolve: bool
+        presolve_use_bva: bool
+        presolve_bve_threshold: int
+        symmetry_level: 0..3
+        tuned: bool (preset bundle — usually leave true)
+      lp/cuts:
+        linearization_level: 0..2
+        cut_level: 0..2
+        max_num_cuts: int (1000-10000 typical)
+        add_mir_cuts, add_zero_half_cuts, add_clique_cuts: bool
+        new_constraints_batch_size: int
+        mip_max_bound, mip_var_scaling, mip_check_precision, mip_drop_tolerance: numeric
+
+    Per-round artifacts show speedup, regression, base_obj vs obj for each problem.
+    Read them: which knob change helped the long Q5 problems vs the fast Q1 ones?
+    Watch num_conflicts and num_branches — a 2x speedup with same conflict count
+    is hardware noise; a 2x with 10x fewer conflicts is a real find.
+
+database:
+  population_size: 50
+  archive_size: 20
+  num_islands: 3
+  elite_selection_ratio: 0.2
+  exploitation_ratio: 0.7
+  similarity_threshold: 0.95
+
+evaluator:
+  timeout: 1800                 # 30 min wall cap per variant — stage4 worst case
+                                # ≈ 20 problems × 120s × 1.3 / parallel_solvers.
+  cascade_evaluation: true      # stage1 → stage2 → stage3 (chains to stage4 inside)
+  cascade_thresholds: [1.03, 1.03, 1.03]
+  # threshold[0] = stage1 combined_score gate → stage2 (≥3% gain)
+  # threshold[1] = stage2 gate → stage3
+  # threshold[2] = stage3 gate → stage4 (read by evaluator.evaluate_stage3
+  #               via runtime.cascade_threshold — openevolve cascade exposes
+  #               only 3 stage slots, so stage4 is chained inside stage3).
+  parallel_evaluations: 1       # FIXED 1. All solver concurrency via
+                                # OPENEVOLVE_PARALLEL_SOLVERS (inner threadpool).
+                                # parallel_evaluations × parallel_solvers ×
+                                # num_search_workers=8 RAM/CPU blowup otherwise.

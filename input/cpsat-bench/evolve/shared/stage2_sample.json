@@ -1,0 +1,38 @@
+{
+  "selection": "5 decisive Q3+4 (middle 40%)",
+  "source": "cpsat-bench/problems.jsonl",
+  "sha256": [
+    "66754667bf567d1f18152078c6781cbd453cccac416c9d06db5087e6a10c51f0",
+    "47888d1b56a42fa20c5c9457a9527199b1d09ec2b5528820a793234e19f5328e",
+    "ed8349c414d687ac9dd6fc5f0f2406149f5e340dbddbb010a78b646aa1dff047",
+    "9f330e3d7528eea46bbfbd640e4dc0f7d732bf1fdc1dd9e39c323406b9cede01",
+    "a27f90201b577988626385f9254e8b786910326e6e8fb7b6cb1544a744743db8"
+  ],
+  "summary": [
+    {
+      "sha": "66754667bf56",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3208.92
+    },
+    {
+      "sha": "47888d1b56a4",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3264.07
+    },
+    {
+      "sha": "ed8349c414d6",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3318.12
+    },
+    {
+      "sha": "9f330e3d7528",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3351.44
+    },
+    {
+      "sha": "a27f90201b57",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3366.15
+    }
+  ]
+}

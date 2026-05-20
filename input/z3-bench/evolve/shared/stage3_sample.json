@@ -6,7 +6,7 @@
     "3854194b901b0b424b5199a54fa8e626506e605f0dd8cae64c75786012037c44",
     "5250d459bef23286b67be03e7abec394ceb5d337f40885df8ac4e76eb48d33f8",
     "86efb0762e6d99d9ade8f6718be01a366a53704b6ee199bf0e91af310c68d6f3",
-    "76bcc496430708686148bd23c53bb24a2b4e9a6d1f28adb8b2e072b47871b3ea"
+    "a7df812c620d14325d4d18dccdb4e3ae469f5727ac6f31d49331dd79d223af40"
   ],
   "summary": [
     {
@@ -38,11 +38,11 @@
       "baseline_ms": 80512
     },
     {
-      "sha": "76bcc4964307",
-      "num_hard_constraints": 696736,
-      "num_variables": 83621,
+      "sha": "a7df812c620d",
+      "num_hard_constraints": 696365,
+      "num_variables": 83551,
       "baseline_result": "Sat",
-      "baseline_ms": 112662
+      "baseline_ms": 93445
     }
   ]
 }

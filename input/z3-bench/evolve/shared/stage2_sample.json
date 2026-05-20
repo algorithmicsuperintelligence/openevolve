@@ -2,26 +2,26 @@
   "selection": "5 SAT runtime Q3+4 (middle 40%)",
   "source": "z3-bench/problems.jsonl",
   "sha256": [
-    "8a304b9c461ac8f19ce464b71010e8ef043d1ee4b857a60d871941a168fea59a",
     "6aab51935a092a1d7f05bb431d3d05e0de50c19f5f983026a6d14e7c4b9cf240",
+    "75ee534dbc926b1e245277f82a9f102ccba7718fa1f7cd6e4ed60fec3db0c4d8",
     "069af7891076de4d10677710b05411844fac7d5f33f40910cc41229207fcbbc3",
-    "4a02d7846394cb507e7d12f4db736ab7c54c536a8097c32502ad952026dfa64a",
-    "03b7e129d6254e599dcef91096f13ca6289f1d6b04e7f694a174b8f4bbb6f90c"
+    "318bc251e0bd49f3b67bc85aa2e58b370e8b7ed5228e059d06bf58748284e4e4",
+    "493242c379920ed6cd98a5096fd2674877b98eaa17bbb3a758bbf1b3db38df12"
   ],
   "summary": [
-    {
-      "sha": "8a304b9c461a",
-      "num_hard_constraints": 112796,
-      "num_variables": 17043,
-      "baseline_result": "Sat",
-      "baseline_ms": 3053
-    },
     {
       "sha": "6aab51935a09",
       "num_hard_constraints": 113172,
       "num_variables": 17151,
       "baseline_result": "Sat",
       "baseline_ms": 3681
+    },
+    {
+      "sha": "75ee534dbc92",
+      "num_hard_constraints": 105784,
+      "num_variables": 32912,
+      "baseline_result": "Sat",
+      "baseline_ms": 13086
     },
     {
       "sha": "069af7891076",
@@ -31,18 +31,18 @@
       "baseline_ms": 13885
     },
     {
-      "sha": "4a02d7846394",
-      "num_hard_constraints": 105784,
-      "num_variables": 32912,
-      "baseline_result": "Sat",
-      "baseline_ms": 14428
-    },
-    {
-      "sha": "03b7e129d625",
+      "sha": "318bc251e0bd",
       "num_hard_constraints": 106100,
       "num_variables": 33068,
       "baseline_result": "Sat",
-      "baseline_ms": 16518
+      "baseline_ms": 14232
+    },
+    {
+      "sha": "493242c37992",
+      "num_hard_constraints": 106100,
+      "num_variables": 33068,
+      "baseline_result": "Sat",
+      "baseline_ms": 14353
     }
   ]
 }

@@ -1,6 +1,20 @@
-# Shared OpenEvolve config for all Z3 tuning phases.
-# Per-phase iteration count is set in run_phase.sh.
+# Single config for z3-bench. Read by openevolve (dacite, ignores unknown
+# top-level keys like `bench` / `parallel_solvers`) AND by input/run_phase.sh
+# (via _lib/load_bench_config.py) for shell-side phase orchestration.
 #
+# === bench: section ===
+# Consumed by input/run_phase.sh. phases[].iters omitted → uses
+# max_iterations below (same for all phases).
+bench:
+  phases:
+    - dir: phase1_opt_sls
+    - dir: phase2_sat
+    - dir: phase3_smt
+    - dir: phase4_unified
+  unified_prepare_script: prepare_phase4.py
+  solver_check_cmd: "command -v z3"
+  solver_install_hint: "install: apt-get install -y z3  or  pip install z3-solver"
+
 # === Custom z3-bench knobs (silently ignored by openevolve dacite parser) ===
 # parallel_solvers: total concurrent z3 worker subprocesses per stage.
 #   - Read by shared/evaluator.py, rebaseline_local.py, baseline_params self-test.

@@ -1,5 +1,5 @@
 """
-Thin wrapper: calls _lib.extract_best.main with z3-bench phase map.
+Thin wrapper: calls _lib.extract_best.main with cpsat-bench phase map.
 """
 import pathlib
 import sys
@@ -14,9 +14,9 @@ if str(_INPUT_DIR) not in sys.path:
 from _lib.extract_best import main  # noqa: E402
 
 PHASE_DIRS = {
-    1: "phase1_opt_sls",
-    2: "phase2_sat",
-    3: "phase3_smt",
+    1: "phase1_search",
+    2: "phase2_presolve",
+    3: "phase3_lp_cuts",
 }
 
 if __name__ == "__main__":

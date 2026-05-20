@@ -5,23 +5,23 @@
     "fac53f0ffed255416c5d6c6cec93f2aaa8144b18ebfac4d4cf5a973f941ef8d3",
     "fe3a23ba2a11867b3e3498c501502f51befc6e98b7117d10773441d2838f093b",
     "e57b3cf2bc7e5d44864063485fcf0b98d6123bfacb936933dab8a49fec33c078",
+    "505a2e36055c971b7ff50c806430e09386fbd2fac5645d1480df806c1fdfbf2e",
     "4fb703b1212783821a005b7e69b3b6f6bd668f15c2877bef52c6fe2fb10fabac",
-    "17cc4d349ce3ebeba20934b5f0c14c6716bd918a6bcf47bad7a684c2d1162f9a",
     "133383a624eff676bc61f99b5a18375904aaba4fe865cd2d4afc76d5f00f948f",
-    "872cbdb83f738a59db803c6c998facb249d5e4a7b082adda9c16997cd3b19e22",
+    "aeec9f77b092fb1f9c13c7b1cd4914bf6f31a8c3e4e34b97556ee942431f9d1c",
     "0f6f9aa28440a0a26cc61b28f0a52d2a5f5b83061b46651c0741ffac1bb4d678",
     "21069961e8dc3386828e2608f2ece27db08b11be6e2da9ebadbc40675687e1fb",
+    "8a304b9c461ac8f19ce464b71010e8ef043d1ee4b857a60d871941a168fea59a",
     "d8d5ffa7d82453487927cb6588bf547b89fa3149bb1b8865bac16dcc2516af84",
-    "42bc61a62698412bbad582db74dd0c9d92710d69f358348ae993deaf2e8d2c08",
-    "75ee534dbc926b1e245277f82a9f102ccba7718fa1f7cd6e4ed60fec3db0c4d8",
+    "29efe6d38d7b8fcf41ed69b73f5a0bb370f782ab61ffe564fbe41512ea75ce5f",
     "65444d69388120f98e21ea06a1cf388e621dbc77318828bd673832e90963c568",
-    "318bc251e0bd49f3b67bc85aa2e58b370e8b7ed5228e059d06bf58748284e4e4",
-    "7ac5a84f68bc6e1488f9c6074a42505a6c95fa8df4f615c4a0ae54359dd3b416",
+    "4a02d7846394cb507e7d12f4db736ab7c54c536a8097c32502ad952026dfa64a",
+    "86468fd861ffa391b567ca57dc57c9b95b8577942d3fd2587e244073bdee43ef",
     "f54dba052fbf975e36b4f6dae5b47802965275f27cc276cd8a6199f763a7b8a4",
     "3b58bd47434b81258f5d6b182dde28df64a155b70a2aa790c4d608ec8f11ab65",
     "c5d46b1e315a5c5e6cf895acac137541641d31b9bc77909ede85575c6876b0db",
     "be1c308d797798dce2f3663ad9790822ce632331f6d9c7309a738ab8e438804e",
-    "a7df812c620d14325d4d18dccdb4e3ae469f5727ac6f31d49331dd79d223af40"
+    "76bcc496430708686148bd23c53bb24a2b4e9a6d1f28adb8b2e072b47871b3ea"
   ],
   "summary": [
     {
@@ -46,18 +46,18 @@
       "baseline_ms": 268
     },
     {
+      "sha": "505a2e36055c",
+      "num_hard_constraints": 24937,
+      "num_variables": 5752,
+      "baseline_result": "Sat",
+      "baseline_ms": 307
+    },
+    {
       "sha": "4fb703b12127",
       "num_hard_constraints": 15034,
       "num_variables": 3842,
       "baseline_result": "Unsat",
       "baseline_ms": 311
-    },
-    {
-      "sha": "17cc4d349ce3",
-      "num_hard_constraints": 15243,
-      "num_variables": 3932,
-      "baseline_result": "Sat",
-      "baseline_ms": 366
     },
     {
       "sha": "133383a624ef",
@@ -67,11 +67,11 @@
       "baseline_ms": 480
     },
     {
-      "sha": "872cbdb83f73",
-      "num_hard_constraints": 59387,
-      "num_variables": 10244,
+      "sha": "aeec9f77b092",
+      "num_hard_constraints": 112978,
+      "num_variables": 17097,
       "baseline_result": "Sat",
-      "baseline_ms": 1298
+      "baseline_ms": 2193
     },
     {
       "sha": "0f6f9aa28440",
@@ -88,6 +88,13 @@
       "baseline_ms": 2900
     },
     {
+      "sha": "8a304b9c461a",
+      "num_hard_constraints": 112796,
+      "num_variables": 17043,
+      "baseline_result": "Sat",
+      "baseline_ms": 3053
+    },
+    {
       "sha": "d8d5ffa7d824",
       "num_hard_constraints": 112812,
       "num_variables": 17043,
@@ -95,18 +102,11 @@
       "baseline_ms": 3350
     },
     {
-      "sha": "42bc61a62698",
+      "sha": "29efe6d38d7b",
       "num_hard_constraints": 105784,
       "num_variables": 32912,
       "baseline_result": "Unsat",
-      "baseline_ms": 12692
-    },
-    {
-      "sha": "75ee534dbc92",
-      "num_hard_constraints": 105784,
-      "num_variables": 32912,
-      "baseline_result": "Sat",
-      "baseline_ms": 13086
+      "baseline_ms": 12712
     },
     {
       "sha": "65444d693881",
@@ -116,18 +116,18 @@
       "baseline_ms": 13089
     },
     {
-      "sha": "318bc251e0bd",
+      "sha": "4a02d7846394",
+      "num_hard_constraints": 105784,
+      "num_variables": 32912,
+      "baseline_result": "Sat",
+      "baseline_ms": 14428
+    },
+    {
+      "sha": "86468fd861ff",
       "num_hard_constraints": 106100,
       "num_variables": 33068,
       "baseline_result": "Sat",
-      "baseline_ms": 14232
-    },
-    {
-      "sha": "7ac5a84f68bc",
-      "num_hard_constraints": 105784,
-      "num_variables": 32912,
-      "baseline_result": "Unsat",
-      "baseline_ms": 14992
+      "baseline_ms": 15671
     },
     {
       "sha": "f54dba052fbf",
@@ -158,11 +158,11 @@
       "baseline_ms": 33752
     },
     {
-      "sha": "a7df812c620d",
-      "num_hard_constraints": 696365,
-      "num_variables": 83551,
+      "sha": "76bcc4964307",
+      "num_hard_constraints": 696736,
+      "num_variables": 83621,
       "baseline_result": "Sat",
-      "baseline_ms": 93445
+      "baseline_ms": 112662
     }
   ]
 }

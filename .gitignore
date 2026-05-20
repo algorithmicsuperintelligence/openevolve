@@ -1,7 +1,6 @@
 results/
 examples/lm_eval/prompts/system_message.txt
 examples/lm_eval/prompts/evaluator_system_message.txt
-
 # Python
 __pycache__/
 *.py[cod]
@@ -52,11 +51,13 @@ htmlcov/
 # Misc
 .DS_Store
 .venv
+.claude
 
 # For SR
 secrets.yaml
 problems
 input/z3-bench/raw-data
+input/cpsat-bench/raw-data
 
 # z3-bench evolve run artifacts (locally regenerated)
 input/z3-bench/evolve/shared/local_baseline.json

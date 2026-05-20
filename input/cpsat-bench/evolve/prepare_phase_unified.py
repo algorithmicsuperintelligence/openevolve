@@ -1,5 +1,5 @@
 """
-Thin wrapper: calls _lib.prepare_phase.main with z3-bench phase config.
+Thin wrapper: calls _lib.prepare_phase.main with cpsat-bench phase config.
 Materializes phase4_unified/initial_program.py from phase{1,2,3}_best.json.
 """
 import pathlib

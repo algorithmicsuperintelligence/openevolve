@@ -1,0 +1,140 @@
+# cpsat-bench Parameter Tuning via OpenEvolve
+
+Tune OR-tools CP-SAT (`ortools.sat.python.cp_model`) parameters by
+evolutionary search on the `input/cpsat-bench/raw-data` dataset (85 OPTIMAL
+instances stored as binary `CpModelProto`). Goal: minimize wall-clock vs
+baseline while preserving feasibility / objective.
+
+> OpenEvolve concept primer: see `input/z3-bench/evolve/OPENEVOLVE_INTRO.md` —
+> z3-bench is the canonical reference impl; the pattern here is identical
+> (cost-mode scoring instead of decision-mode is the only difference).
+
+## Layout
+
+```
+input/cpsat-bench/
+├── raw-data/                          # flat layout (mirrors z3-bench)
+│   ├── load_script.sh                 # gitlab pkg 71 downloader
+│   ├── <sha>.cpsat.pb                 # binary CpModelProto
+│   └── <sha>__<applied_hash>__seed0.meta.jsonl
+├── problems.jsonl                     # built by build_samples.py
+└── evolve/
+    ├── README.md                      # this file
+    ├── config.yaml                    # OpenEvolve config + custom knobs
+    ├── run_phase.sh                   # phase runner (chmod +x)
+    ├── build_samples.py               # stage{1..4} sample selection
+    ├── extract_best.py                # per-phase winner extraction
+    ├── prepare_phase_unified.py       # materializes phase4 EVOLVE-BLOCK
+    ├── rebaseline_local.py            # measure baseline on local box
+    ├── shared/
+    │   ├── baseline_params.py         # BASELINE + LOCKED
+    │   ├── score.py                   # cost mode
+    │   ├── runtime.py                 # config.yaml passthrough
+    │   ├── evaluator.py               # cascade stages
+    │   ├── cpsat_runner.py            # subprocess solver invoker
+    │   ├── _cpsat_solve_worker.py
+    │   ├── stage{1..4}_sample.json    # built by build_samples.py
+    │   └── local_baseline.json        # built by rebaseline_local.py
+    └── phase{1..4}_<name>/
+        └── initial_program.py         # EVOLVE-BLOCK
+```
+
+## Evaluation flow (cascade)
+
+```
+LLM-mutated initial_program.py
+    ↓
+evaluator.py:
+    1. get_params() → dict
+    2. LOCKED-violation check (random_seed, num_search_workers, timeout_sec)
+    3. stage1 (5 problems, runtime Q1+Q2):
+        per-problem solver run, invalid_param triggers early 0
+        score → gate (cascade_thresholds[0]) → stage2
+    4. stage2 (5 problems, runtime Q3+Q4):
+        same, gate → stage3
+    5. stage3 (5 problems, runtime Q5):
+        same, gate (cascade_thresholds[2]) → stage4 (chained inside stage3)
+    6. stage4 (20 broad-runtime problems):
+        final metrics + per-problem artifacts (top 20 entries surfaced)
+```
+
+## Quick start
+
+```bash
+# 0) populate raw-data from gitlab package 71 (first time only)
+cd input/cpsat-bench/raw-data && bash load_script.sh && cd -
+
+# 1) build sample files (re-run any time raw-data changes)
+python input/cpsat-bench/evolve/build_samples.py
+
+# 2) sanity-check: does the runner reproduce baseline timings?
+python input/cpsat-bench/evolve/shared/baseline_params.py
+
+# 3) optional: measure baseline on local box (captures objective_value
+#    for cost-mode scoring — first run picks it up automatically too)
+python input/cpsat-bench/evolve/rebaseline_local.py
+
+# 4) run phases sequentially
+./input/cpsat-bench/evolve/run_phase.sh 1
+./input/cpsat-bench/evolve/run_phase.sh 2
+./input/cpsat-bench/evolve/run_phase.sh 3
+./input/cpsat-bench/evolve/run_phase.sh 4
+```
+
+After each non-final phase, `run_phase.sh` calls `extract_best.py` to write
+`shared/phaseN_best.json`, which the next phase's `initial_program.py` loads.
+
+## Resume from checkpoint
+
+```bash
+cd input/cpsat-bench/evolve/phase2_presolve/
+python /app/openevolve-run.py \
+    initial_program.py \
+    ../shared/evaluator.py \
+    --config ../config.yaml \
+    --checkpoint openevolve_output/checkpoints/checkpoint_50 \
+    --iterations 100
+```
+
+## Environment variables
+
+| variable | default | use |
+|---|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` / `OPENAI_API_KEY` | — | LLM credential (claude_code provider) |
+| `OPENEVOLVE_PARALLEL_SOLVERS` | 1 | concurrent solver subprocesses per stage (taskset-pinned on Linux to cores 1..N). Each CP-SAT uses num_search_workers=8 internally — size accordingly. |
+| `OPENEVOLVE_CORE_RANGE` | unset | explicit taskset core range `N-M` (overrides PARALLEL_SOLVERS for pinning; concurrency = range size). e.g. `2-7` → 6 workers on cores 2..7. `run_phase.sh --pin 2-7` is sugar for this. |
+| `OPENEVOLVE_MAX_PROBLEMS` | unlimited | cap stage problem count (testing) |
+| `OPENEVOLVE_STATS_WEIGHT` | 0.333 | exponent on efficiency factor (0 disables) |
+| `OPENEVOLVE_COST_WEIGHT` | 1.0 | exponent on cost_ratio in cost-mode score (0 disables cost factor) |
+| `OPENEVOLVE_PYTHON_BIN` | `sys.executable` | python used by solver worker |
+| `SKIP_REBASELINE` | 0 | skip per-host baseline remeasurement (reuse existing local_baseline.json) |
+
+## CPU pinning (Linux)
+
+For stable wall-clock measurement, isolate cores via
+`scripts/host-isolate-cores.sh start` (from the openevolve repo root) and
+run the docker container with `./docker-run.sh dev -s cpsat --pin 1-6`.
+The runner already pins each worker subprocess with `taskset -c <core>`.
+
+## Score formula (cost mode)
+
+```
+combined_score = geomean( (b_obj/v_obj)^COST_W  *  (b_ms/v_ms) )
+                 * solved_rate^2
+                 * efficiency^STATS_WEIGHT
+```
+
+- All 85 baselines are OPTIMAL, so if the variant also reaches OPTIMAL, the
+  cost ratio collapses to 1.0 and score reduces to geomean(time speedup).
+- Variants that bail to FEASIBLE-but-worse-objective are penalized via the
+  cost ratio; variants that bail to UNKNOWN/INFEASIBLE contribute 1e-6 to
+  the geomean (~60× penalty across stage1's 5 problems).
+- Efficiency factor multiplies based on `num_conflicts` (weight 2.0) and
+  `num_branches` (weight 1.5) ratios vs baseline.
+
+## Locked params
+
+`random_seed=0`, `num_search_workers=8`, `timeout_sec=-1`.
+
+Modifying any locked key in `get_params()` returns `combined_score=0` plus a
+`locked_violated` artifact identifying the offending key.

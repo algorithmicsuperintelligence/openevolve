@@ -1,0 +1,128 @@
+{
+  "selection": "20 broad runtime spread, dedup vs stage1-3",
+  "source": "cpsat-bench/problems.jsonl",
+  "sha256": [
+    "5976726485c23db055e872eabd8a172c73609854b8c228b47ccf42422bf7c8b5",
+    "bcaed7c25140d0d5731f397b188a271512394f14fabe67b495076b23436e1d57",
+    "3e2b36379a2919afebb3b79a5e34bd8fd946fbc28059edd6a832ad467f412fc3",
+    "f9e4e9cdb24462a34649e1e803328a7ce8332623aa743a6197d0c69af13b02d2",
+    "2d527c24410310a430c63e56560a9f6346660fde96829775a284645f63c86f17",
+    "395b9abdb72014e256f558ea722b7df71fedf88a40e4bf0f70b34ed75d3e7ce1",
+    "8f41589af6050547301acab498a4f5b7894920b712156a7e2fac1664966dd04e",
+    "8073c7c85295abafcc3ca9dde8e50e775e59175274e1b7d3eec04570581b4469",
+    "d7df934f3b3ba0e8254473ce06758550361bdc3f1491b9f8d9053d63822f60cf",
+    "3b522f278d5967449cb3fc8dcdcf198cc3ecd7bd5f5c03cec433b4bb332433c0",
+    "cf629228e69ab5f293c8c30459175cccac150e85ec84539bfd8d5dc27540cf1a",
+    "674b484eb726690bc9d4878cb217bc6b22f30eac4f8d512be6e2713a303545dd",
+    "4e4bc1ad622d2addafb58df0886f20fabf9c872e18cba83057410255a6e2f356",
+    "321b859ee1b2e3f9874968cf86a89765dcc94f1daa4f4081f8ad231b50911dd7",
+    "c6a6b2aab48ad0047d3e14c25d630fb1e22e3844608af935b5e481c1965a8010",
+    "12e68b0b5089d173f44977d0bc3a9a85c4639b3691b74fce9d76d473e3231d38",
+    "62c6e2f566388ddc13097f1369c9ad4569c1b4f54f888066e8ab2bfe96d3a0b4",
+    "14ea5ccece18b8bffb5947b963c7d0f9e5a2f1c56d1ccd70e1493be39380ba78",
+    "bef168aea12ee9d5a0b12880cb3c69ebc80ff968b9f2500a907c5f3f16f0d369",
+    "a49d307cfcf3ca9dff031a54cca31086a1882b7c0e65c1da60de651a8c9a79b8"
+  ],
+  "summary": [
+    {
+      "sha": "5976726485c2",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 105.102
+    },
+    {
+      "sha": "bcaed7c25140",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 502.374
+    },
+    {
+      "sha": "3e2b36379a29",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 626.761
+    },
+    {
+      "sha": "f9e4e9cdb244",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 668.915
+    },
+    {
+      "sha": "2d527c244103",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 695.523
+    },
+    {
+      "sha": "395b9abdb720",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1394.5
+    },
+    {
+      "sha": "8f41589af605",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1599.16
+    },
+    {
+      "sha": "8073c7c85295",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1649.08
+    },
+    {
+      "sha": "d7df934f3b3b",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1764.03
+    },
+    {
+      "sha": "3b522f278d59",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 2334.59
+    },
+    {
+      "sha": "cf629228e69a",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 2972.04
+    },
+    {
+      "sha": "674b484eb726",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3104.21
+    },
+    {
+      "sha": "4e4bc1ad622d",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3107.88
+    },
+    {
+      "sha": "321b859ee1b2",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3472.19
+    },
+    {
+      "sha": "c6a6b2aab48a",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 3883.39
+    },
+    {
+      "sha": "12e68b0b5089",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 4031.48
+    },
+    {
+      "sha": "62c6e2f56638",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 4069.74
+    },
+    {
+      "sha": "14ea5ccece18",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 4358.96
+    },
+    {
+      "sha": "bef168aea12e",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 7530.89
+    },
+    {
+      "sha": "a49d307cfcf3",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 10574.9
+    }
+  ]
+}
