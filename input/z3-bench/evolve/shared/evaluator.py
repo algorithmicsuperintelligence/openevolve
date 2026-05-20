@@ -50,7 +50,7 @@ sys.path.insert(0, str(_HERE))
 from baseline_params import BASELINE, LOCKED  # noqa: E402
 from score import score  # noqa: E402
 from z3_runner import run_z3  # noqa: E402
-from runtime import parallel_solvers, cascade_threshold  # noqa: E402
+from runtime import parallel_solvers, cascade_threshold, core_range  # noqa: E402
 
 from openevolve.evaluation_result import EvaluationResult  # noqa: E402
 
@@ -218,18 +218,18 @@ def _evaluate(program_path, problems, stage_name):
 
     # Parallel dispatch — `OPENEVOLVE_PARALLEL_SOLVERS` controls how many
     # z3 worker subprocesses run concurrently for the stage's problem list.
-    # Worker count is capped at len(problems) (no point spawning idle threads).
-    # Cores are leased from a queue.Queue so each in-flight task holds a
-    # unique core slot. Correct even when len(problems) > n_parallel
-    # (idx % n_parallel would collide across workers).
-    # Core pool = cores 1..n_parallel — core 0 reserved for kernel interrupts
-    # / housekeeping (avoids tail-latency spikes). Serial mode also leases
-    # core 1, symmetric with parallel so baseline / variant share the same
-    # pin envelope (no unpinned-vs-pinned bias).
+    # Cores leased from a queue.Queue so each in-flight task holds a unique
+    # slot (idx % n_parallel would collide when len(problems) > n_parallel).
+    # OPENEVOLVE_CORE_RANGE (e.g. "1-5") overrides; else cores
+    # 1..parallel_solvers() (core 0 reserved for kernel housekeeping).
     import queue as _queue
-    n_parallel = min(parallel_solvers(default=1), len(problems))
+    _cores = core_range()
+    if _cores is None:
+        _cores = list(range(1, parallel_solvers(default=1) + 1))
+    n_parallel = min(len(_cores), len(problems))
+    _cores = _cores[:n_parallel]
     _core_pool = _queue.Queue()
-    for _c in range(1, n_parallel + 1):
+    for _c in _cores:
         _core_pool.put(_c)
 
     def _solve(idx_p):

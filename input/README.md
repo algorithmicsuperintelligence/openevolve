@@ -9,21 +9,22 @@ boilerplate parts).
 
 ```
 input/
-├── run_phase.sh                # single entry: ./run_phase.sh <bench> <phase> [flags]
+├── run_phase.sh                # single entry: ./run_phase.sh <bench> [<phase>] [flags]
 ├── _lib/                       # shared library (importable as `_lib.*`)
 │   ├── runtime.py              # parallel_solvers / cascade_threshold / core_range
 │   ├── subprocess_runner.py    # run_solver(worker, problem, params, timeout, ...)
 │   ├── extract_best.py         # main(root, shared, phase_dirs) — CLI core
-│   └── prepare_phase.py        # main(root, shared, prior_phases, unified_file)
+│   ├── prepare_phase.py        # main(root, shared, prior_phases, unified_file)
+│   └── load_bench_config.py    # parse `bench:` section of config.yaml → bash exports
 ├── z3-bench/
 │   ├── raw-data/               # <sha>.smt2 + <sha>__<hash>__seed0.meta.jsonl
 │   └── evolve/
-│       ├── bench.env           # config sourced by ../../run_phase.sh
+│       ├── config.yaml         # openevolve + `bench:` (phases / scripts / solver check)
 │       └── ...                 # baseline_params, evaluator, phases, etc.
 └── cpsat-bench/
     ├── raw-data/               # <sha>.cpsat.pb + <sha>__<hash>__seed0.meta.jsonl
     └── evolve/
-        ├── bench.env
+        ├── config.yaml         # same
         └── ...
 ```
 
@@ -35,7 +36,7 @@ input/
 | `_lib/subprocess_runner.py` | spawn worker subprocess, taskset pin, timeout grace, parse stdout JSON | `<bench>/evolve/shared/<solver>_runner.py` (binds WORKER path, names `run_<solver>`) |
 | `_lib/extract_best.py` | argparse + load best_program.py + write `phaseN_best.json` | `<bench>/evolve/extract_best.py` (passes `PHASE_DIRS` dict) |
 | `_lib/prepare_phase.py` | merge `phaseN_best.json` files, rewrite unified phase's EVOLVE-BLOCK | `<bench>/evolve/prepare_phase_unified.py` (passes `PRIOR_PHASES` list) |
-| `input/run_phase.sh` | single user-facing entry: `./run_phase.sh <bench> <phase> [--pin] [--extract-only] [--iterations]`. Resolves bench, sources `<bench>/evolve/bench.env`, runs flow. | `<bench>/evolve/bench.env` (5-line config: `PHASE_DIRS`, `PHASE_ITERS`, `UNIFIED_PREPARE_SCRIPT`, `SOLVER_CHECK_CMD`, `SOLVER_INSTALL_HINT`) |
+| `input/run_phase.sh` | single user-facing entry: `./run_phase.sh <bench> [<phase>] [--pin] [--extract-only] [--iterations]`. Phase optional → runs ALL phases sequentially. Reads `bench:` section of `<bench>/evolve/config.yaml` via `_lib/load_bench_config.py`. | `<bench>/evolve/config.yaml` — `bench:` key with `phases[].dir/iters`, `unified_prepare_script`, `solver_check_cmd`, `solver_install_hint` |
 
 ## Per-bench files NOT shared
 
@@ -102,6 +103,11 @@ Same pattern for `<solver>_runner.py`, `extract_best.py`, `prepare_phase_unified
 bash input/cpsat-bench/raw-data/load_script.sh              # populate raw-data
 python input/cpsat-bench/evolve/build_samples.py            # stage{1..4}_sample.json
 python input/cpsat-bench/evolve/shared/baseline_params.py   # sanity self-test
+
+# Run all phases (1..N) with one command:
+./input/run_phase.sh cpsat-bench --pin 2-7
+
+# Or step phase-by-phase:
 ./input/run_phase.sh cpsat-bench 1 --pin 2-7
 ./input/run_phase.sh cpsat-bench 2 --pin 2-7
 ./input/run_phase.sh cpsat-bench 3 --pin 2-7

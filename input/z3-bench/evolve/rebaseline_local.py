@@ -32,7 +32,7 @@ sys.path.insert(0, str(_HERE / "shared"))
 
 from baseline_params import BASELINE  # noqa: E402
 from z3_runner import run_z3  # noqa: E402
-from runtime import parallel_solvers  # noqa: E402
+from runtime import parallel_solvers, core_range  # noqa: E402
 
 _BENCH_DIR = _HERE.parent
 _RAW_DIR = _BENCH_DIR / "raw-data"
@@ -109,20 +109,22 @@ def main():
         tasks.append((i, meta, smt2_path))
 
     import queue as _queue
-    n_parallel = min(parallel_solvers(default=1), len(tasks))
+    # Cores leased from a queue so each in-flight task holds a unique slot.
+    # OPENEVOLVE_CORE_RANGE (e.g. "1-5") overrides; else cores 1..N from
+    # parallel_solvers (core 0 reserved for kernel housekeeping).
+    cores = core_range()
+    if cores is None:
+        cores = list(range(1, parallel_solvers(default=1) + 1))
+    n_parallel = min(len(cores), len(tasks))
+    cores = cores[:n_parallel]
     print(f"rebaselining stage1+stage2+stage3+stage4 samples: {len(tasks)} problems "
           f"(union of stage{{1,2,3,4}}_sample.json)")
     print(f"timeout per problem = {REBASELINE_TIMEOUT_S}s (effectively unbounded "
-          f"— never cut a baseline run short), parallel={n_parallel} (taskset core pin)")
+          f"— never cut a baseline run short), parallel={n_parallel} cores={cores}")
     print()
 
-    # Cores leased from a queue so each in-flight task holds a unique slot.
-    # Cores 1..n_parallel — core 0 reserved for kernel interrupts / housekeeping
-    # (avoids tail-latency spikes). Serial mode also leases core 1, symmetric
-    # with parallel so baseline measurement matches the pin envelope variants
-    # will see during evolve.
     _core_pool = _queue.Queue()
-    for _c in range(1, n_parallel + 1):
+    for _c in cores:
         _core_pool.put(_c)
 
     def _solve(task):

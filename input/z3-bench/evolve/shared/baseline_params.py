@@ -62,7 +62,7 @@ def _self_test():
     here = pathlib.Path(__file__).resolve().parent
     sys.path.insert(0, str(here))
     from z3_runner import run_z3  # noqa: E402
-    from runtime import parallel_solvers  # noqa: E402
+    from runtime import parallel_solvers, core_range  # noqa: E402
 
     bench = here.parent.parent           # input/z3-bench/
     raw_dir = bench / "raw-data"
@@ -97,18 +97,21 @@ def _self_test():
             return 2
         tasks.append((i, sha, meta, smt2))
 
-    n_parallel = min(parallel_solvers(default=5), len(tasks))
+    cores = core_range()
+    if cores is None:
+        cores = list(range(1, parallel_solvers(default=5) + 1))
+    n_parallel = min(len(cores), len(tasks))
+    cores = cores[:n_parallel]
 
-    print(f"BASELINE self-test: {len(tasks)} stage1 problems, parallel={n_parallel}, "
-          f"taskset core pin")
+    print(f"BASELINE self-test: {len(tasks)} stage1 problems, parallel={n_parallel} "
+          f"cores={cores}")
     print()
 
     def solve(t):
         i, sha, meta, smt2 = t
         # Generous timeout: 2x baseline_ms (matches the [0.5, 2.0] tolerance band).
         timeout_s = max(30, math.ceil(meta["baseline_ms"] * 2 / 1000))
-        # Skip core 0 — pin to cores 1..n_parallel.
-        core = (i % n_parallel) + 1
+        core = cores[i % n_parallel]
         r = run_z3(smt2, BASELINE, timeout_s, cpu_core=core)
         return i, sha, meta, r
 
@@ -147,7 +150,7 @@ def _self_test():
             status = "OK"
         print(f"{sha[:12]:<14}{meta['baseline_result']:<10}{got_result:<10}"
               f"{meta['baseline_ms']:>10}{got_ms:>10}{ratio:>7.2f}x  "
-              f"{(i % n_parallel) + 1:>4}  {status}")
+              f"{cores[i % n_parallel]:>4}  {status}")
 
     seq_estimate = sum_got_ms / 1000
     print()

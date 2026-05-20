@@ -192,6 +192,7 @@ fi
 
 run_one_phase() {
     local phase="$1"
+    shift
     local dir="${_DIRS[$((phase - 1))]}"
     local iter=""
     if [ "${#_ITERS[@]}" -ge "$phase" ]; then
