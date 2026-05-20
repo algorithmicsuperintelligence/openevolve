@@ -1,8 +1,11 @@
 """
-Scoring: geomean(speedup) * solved_rate^2 * efficiency^STATS_WEIGHT.
+Scoring: weighted_geomean(speedup) * solved_rate^2 * efficiency^STATS_WEIGHT.
 
 - match baseline result: speedup = baseline_ms / elapsed_ms
 - mismatch (regression / unknown / timeout): contributes 1e-6 to geomean
+- per-problem weight = baseline_ms so absolute time savings on long-running
+  problems dominate; small-runtime wins barely move the needle, and a
+  regression on a slow problem is penalized far more than on a fast one
 - solved_rate squared to strongly gate on correctness
 - efficiency = cross-problem geomean of per-problem weighted geomean over
   SMT solver stats {conflicts, decisions, propagations}, with each ratio
@@ -89,11 +92,14 @@ def score(per_problem):
         }
 
     speedups = []
+    weights = []
     solved = 0
     regressions = 0
     for p in per_problem:
         baseline_decided = p["baseline_result"] in ("Sat", "Unsat")
         match = p["result"] == p["baseline_result"]
+        w = max(float(p["baseline_ms"]), 1.0)
+        weights.append(w)
         if match:
             solved += 1
             sp = p["baseline_ms"] / max(p["elapsed_ms"], 1)
@@ -103,8 +109,9 @@ def score(per_problem):
             if baseline_decided and p["result"] in ("Sat", "Unsat"):
                 regressions += 1
 
-    log_sum = sum(math.log(s) for s in speedups)
-    geomean = math.exp(log_sum / len(speedups))
+    w_total = sum(weights)
+    log_sum = sum(w * math.log(s) for s, w in zip(speedups, weights))
+    geomean = math.exp(log_sum / w_total)
     solved_rate = solved / n
 
     efficiency, eff_problems = _efficiency(per_problem)
