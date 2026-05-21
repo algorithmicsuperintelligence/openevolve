@@ -161,16 +161,27 @@ def main():
         var_obj = v.get("objective")
         var_invalid = v.get("invalid_param")
 
+        speedup = base_ms_local / max(var_ms, 1)
         if var_invalid:
-            flag = f"  invalid={var_invalid}"
+            flag = f"  INVALID_PARAM={var_invalid}"
             speedup = 0.0
             cost_ratio = 0.0
-        elif var_result not in _DECISIVE or base_result not in _DECISIVE:
-            flag = f"  STATUS_MISMATCH (base={base_result} variant={var_result})"
+        elif base_result not in _DECISIVE and var_result not in _DECISIVE:
+            # Both failed to reach decisive status — uncomparable, NOT a regression.
+            # score.py skips this from geomean.
+            flag = f"  BOTH_NONDECISIVE ({base_result}=base, {var_result}=variant) — skipped from score"
+            cost_ratio = 0.0
+        elif base_result in _DECISIVE and var_result not in _DECISIVE:
+            # Baseline solved, variant didn't → real regression.
+            flag = f"  REGRESSION (base={base_result} variant={var_result})"
             speedup = 0.0
+            cost_ratio = 0.0
+        elif base_result not in _DECISIVE and var_result in _DECISIVE:
+            # Variant solved a problem baseline couldn't — bonus, but cost mode
+            # can't ratio it. Show but don't score.
+            flag = f"  VARIANT_WIN_UNCOMPARABLE (base={base_result})"
             cost_ratio = 0.0
         else:
-            speedup = base_ms_local / max(var_ms, 1)
             if base_obj is not None and var_obj is not None:
                 cost_ratio = (float(base_obj) + 1e-9) / (float(var_obj) + 1e-9)
             else:
@@ -204,10 +215,16 @@ def main():
     metrics = score(results)
     print()
     print("== summary (cost-mode, vs fresh LOCAL baseline) ==")
-    print(f"  solved          : {metrics['solved']}/{metrics['total']}")
-    print(f"  regressions     : {metrics['regressions']}")
+    print(f"  total problems  : {metrics['total']}")
+    print(f"  comparable      : {metrics['comparable']}  "
+          f"(baseline reached decisive status; geomean computed over this subset)")
+    print(f"  uncomparable    : {metrics['uncomparable']}  "
+          f"(baseline non-decisive; skipped from score)")
+    print(f"  solved          : {metrics['solved']}/{metrics['comparable']}")
+    print(f"  regressions     : {metrics['regressions']}  "
+          f"(baseline OK, variant failed)")
     print(f"  geomean (cost×time) : {metrics['geomean_speedup']:.3f}")
-    print(f"  solved_rate     : {metrics['solved_rate']:.3f}")
+    print(f"  solved_rate     : {metrics['solved_rate']:.3f}  (over comparable)")
     print(f"  efficiency      : {metrics.get('efficiency', 1.0):.3f}")
     print(f"  combined_score  : {metrics['combined_score']:.3f}")
     print(f"  wall-clock      : {elapsed:.1f}s")

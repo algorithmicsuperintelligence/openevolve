@@ -69,18 +69,35 @@ def _efficiency(per_problem):
 
 
 def _score_cost(per_problem):
+    """
+    Cost mode scoring rules:
+      - baseline NOT decisive → uncomparable; skip from geomean entirely.
+        (Baseline never reached OPTIMAL/FEASIBLE within timeout → variant has
+         no target to beat. Counting it as 1e-6 unfairly tanks the geomean.)
+      - baseline decisive + variant decisive → ratio = cost_ratio^W * time_ratio
+        (or just time_ratio if either objective_value is unknown).
+      - baseline decisive + variant NOT decisive → 1e-6 + regression++ (real loss).
+
+    Returns: (geomean, solved_rate, solved, regressions, comparable)
+      comparable = problems where baseline was decisive (i.e. counted in geomean).
+      solved_rate is over `comparable` (not the total input list).
+    """
     cost_weight = float(os.environ.get("OPENEVOLVE_COST_WEIGHT", "1.0"))
     cost_weight = max(0.0, min(cost_weight, 2.0))
     ratios = []
     solved = 0
     regressions = 0
+    comparable = 0
     for p in per_problem:
         b_ok = p["baseline_result"] in _DECISIVE
+        if not b_ok:
+            continue        # uncomparable
+        comparable += 1
         v_ok = p["result"] in _DECISIVE
         b_cost = p.get("baseline_objective")
         v_cost = p.get("objective")
         time_r = p["baseline_ms"] / max(p["elapsed_ms"], 1)
-        if b_ok and v_ok:
+        if v_ok:
             solved += 1
             if b_cost is not None and v_cost is not None:
                 cost_r = (float(b_cost) + _COST_EPS) / (float(v_cost) + _COST_EPS)
@@ -90,11 +107,12 @@ def _score_cost(per_problem):
                 ratios.append(time_r)
         else:
             ratios.append(1e-6)
-            if b_ok and not v_ok:
-                regressions += 1
+            regressions += 1
+    if not ratios:
+        return 1.0, 0.0, 0, 0, 0
     geomean = math.exp(sum(math.log(r) for r in ratios) / len(ratios))
-    solved_rate = solved / len(per_problem)
-    return geomean, solved_rate, solved, regressions
+    solved_rate = solved / comparable
+    return geomean, solved_rate, solved, regressions, comparable
 
 
 def score(per_problem):
@@ -106,13 +124,15 @@ def score(per_problem):
             "solved_rate": 0.0,
             "regressions": 0,
             "solved": 0,
+            "comparable": 0,
             "total": 0,
+            "uncomparable": 0,
             "efficiency": 1.0,
             "efficiency_pairs": 0,
             "stats_weight": 0.0,
         }
 
-    geomean, solved_rate, solved, regressions = _score_cost(per_problem)
+    geomean, solved_rate, solved, regressions, comparable = _score_cost(per_problem)
 
     efficiency, eff_pairs = _efficiency(per_problem)
     try:
@@ -129,7 +149,9 @@ def score(per_problem):
         "solved_rate": float(solved_rate),
         "regressions": int(regressions),
         "solved": int(solved),
+        "comparable": int(comparable),
         "total": int(n),
+        "uncomparable": int(n - comparable),
         "efficiency": float(efficiency),
         "efficiency_pairs": int(eff_pairs),
         "stats_weight": float(stats_weight),
