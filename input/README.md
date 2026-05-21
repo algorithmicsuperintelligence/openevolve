@@ -112,4 +112,9 @@ python input/cpsat-bench/evolve/shared/baseline_params.py   # sanity self-test
 ./input/run_phase.sh cpsat-bench 2 --pin 2-7
 ./input/run_phase.sh cpsat-bench 3 --pin 2-7
 ./input/run_phase.sh cpsat-bench 4 --pin 2-7
+
+# Final verify on the unified winner (fresh LOCAL baseline per problem):
+python input/cpsat-bench/evolve/final_verify.py \
+    input/cpsat-bench/evolve/phase4_unified/openevolve_output/best/best_program.py
+# (writes final_verify.json next to best_program.py)
 ```
