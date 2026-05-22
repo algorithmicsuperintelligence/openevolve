@@ -1,13 +1,23 @@
 """
-Phase 3: tune CP-SAT LP / cuts / MIP-bridge knobs.
+Phase 3: tune CP-SAT LP / cuts / MIP-bridge AND subsolver-mix knobs.
+
+Worker count is RAISED to PHASE3_WORKERS (default 8) for this phase: many
+subsolvers (max_lp, no_lp, core, quick_restart, reduced_costs, lb_tree_search,
+probing_search, …) only activate when num_search_workers is large enough.
+Phase 3's job is to find the best subsolver combination + LP/cuts tuning that
+works at parallel-search scale.
 
 Targeted namespace:
-  max_num_cuts, cut_level,
-  mip_max_bound, mip_var_scaling, mip_check_precision, mip_drop_tolerance
-(LLM may explore other linearization_level, *_cuts toggles.)
+  max_num_cuts, cut_level, linearization_level,
+  mip_max_bound, mip_var_scaling, mip_check_precision, mip_drop_tolerance,
+  extra_subsolvers, ignore_subsolvers, diversify_lns_params, repair_hint
+(LLM may explore other *_cuts toggles and subsolver list contents.)
 
-Inherits phase1+phase2 winners.
-Do NOT modify locked keys.
+Inherits phase1+phase2 winners, but num_search_workers is re-pinned to
+PHASE3_WORKERS at the end of get_params() — phases 1/2 ran at workers=1 so
+their wins still need to be re-validated at workers=PHASE3_WORKERS here.
+
+Do NOT modify locked keys (random_seed, num_search_workers).
 """
 import json
 import pathlib
@@ -17,6 +27,14 @@ _SHARED = pathlib.Path(__file__).resolve().parent.parent / "shared"
 sys.path.insert(0, str(_SHARED))
 
 from baseline_params import BASELINE  # noqa: E402
+
+
+PHASE3_WORKERS = 8
+
+PHASE_LOCKED = {
+    "random_seed": 0,
+    "num_search_workers": PHASE3_WORKERS,
+}
 
 
 def _load_prev(name):
@@ -47,6 +65,7 @@ def get_params():
     p.update(_PHASE1)
     p.update(_PHASE2)
     p.update(LP_CUTS_OVERRIDES)
+    p.update(PHASE_LOCKED)  # pin workers=PHASE3_WORKERS for this phase
     return p
 
 

@@ -15,6 +15,7 @@ if str(_INPUT_DIR) not in sys.path:
 from _lib import runtime as _rt  # noqa: E402
 
 core_range = _rt.core_range
+alloc_core_blocks = _rt.alloc_core_blocks
 
 
 def parallel_solvers(default=1):

@@ -9,17 +9,27 @@ interleave_search, tuned. `timeout_sec` and `tuned` are wrapper-level
 (scheduler) — NOT real CpSolverParameters proto fields. Including them
 would make every variant fail with invalid_param. Dropped from BASELINE
 and from LOCKED; the worker also has both in its _DROP set as belt+braces.
+
+Worker-count policy (2026-05 revision):
+  - BASELINE.num_search_workers = 1 (minimum) so phases 1+2 isolate other
+    knobs from parallel-search noise.
+  - Each phase declares its own PHASE_LOCKED in its initial_program.py,
+    pinning num_search_workers to the phase-specific value. Phase 3 raises
+    it (typically 8) to let the LLM explore subsolver variations that only
+    activate with multi-worker search.
+  - Global LOCKED only enforces random_seed; worker count is enforced per-phase.
 """
 
 BASELINE = {
-    "num_search_workers": 8,
+    "num_search_workers": 1,
     "random_seed": 0,
     "interleave_search": True,
 }
 
+# Global locks enforced for all phases. Per-phase locks (incl. num_search_workers)
+# live in each phase's initial_program.py as PHASE_LOCKED.
 LOCKED = {
     "random_seed": 0,
-    "num_search_workers": 8,
 }
 
 

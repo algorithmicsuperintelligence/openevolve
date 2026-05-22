@@ -40,7 +40,7 @@ sys.path.insert(0, str(_HERE / "shared"))
 from baseline_params import BASELINE, LOCKED  # noqa: E402
 from score import score  # noqa: E402
 from cpsat_runner import run_cpsat  # noqa: E402
-from runtime import parallel_solvers, core_range  # noqa: E402
+from runtime import parallel_solvers, core_range, alloc_core_blocks  # noqa: E402
 
 _BENCH_DIR = _HERE.parent
 _RAW_DIR = _BENCH_DIR / "raw-data"
@@ -51,14 +51,14 @@ TIMEOUT_S = 300
 _DECISIVE = ("OPTIMAL", "FEASIBLE")
 
 
-def _load_get_params(program_path):
+def _load_program(program_path):
     spec = importlib.util.spec_from_file_location("program", program_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not hasattr(module, "get_params"):
         print(f"ERROR: {program_path} missing get_params()", file=sys.stderr)
         sys.exit(2)
-    return module.get_params()
+    return module
 
 
 def _load_problem_index():
@@ -106,9 +106,14 @@ def main():
         print(f"ERROR: {program_path} not found", file=sys.stderr)
         return 2
 
-    variant_params = _load_get_params(program_path)
-    violations = {k: variant_params.get(k) for k in LOCKED
-                  if variant_params.get(k) != LOCKED[k]}
+    program = _load_program(program_path)
+    variant_params = program.get_params()
+    # Use the program's PHASE_LOCKED if it exposes one (later phases typically
+    # lock num_search_workers higher than baseline); fall back to global LOCKED.
+    _phase_locked = getattr(program, "PHASE_LOCKED", None)
+    _lock = _phase_locked if isinstance(_phase_locked, dict) else LOCKED
+    violations = {k: variant_params.get(k) for k in _lock
+                  if variant_params.get(k) != _lock[k]}
     if violations:
         print(f"ERROR: locked params violated: {violations}", file=sys.stderr)
         return 2
@@ -119,22 +124,32 @@ def main():
     cores = core_range()
     if cores is None:
         cores = list(range(1, parallel_solvers(default=1) + 1))
-    n_parallel = min(len(cores), len(metas))
-    cores = cores[:n_parallel]
+    workers_per_solve = int(variant_params.get("num_search_workers", 1) or 1)
+    blocks = alloc_core_blocks(cores, workers_per_solve)
+    if not blocks:
+        blocks = [list(cores)] if cores else [None]
+    n_parallel = min(len(blocks), len(metas))
+    blocks = blocks[:n_parallel]
+    # Baseline run still uses workers=1 (single core). Give it the first core
+    # of each block so it's pinned within the same NUMA neighborhood as the
+    # variant for fair comparison.
+    baseline_cores = [(b[0] if isinstance(b, (list, tuple)) and b else b) for b in blocks]
 
     print(f"final verify: {program_path}")
     print(f"  sample : {source}")
     print(f"  params : {len(variant_params)} keys, "
           f"{sum(1 for k, v in variant_params.items() if BASELINE.get(k) != v)} differ from BASELINE")
-    print(f"  parallel solvers : {n_parallel} cores={cores}")
+    print(f"  parallel solvers : {n_parallel} variant_workers={workers_per_solve} blocks={blocks}")
     print(f"  per-problem timeout : {TIMEOUT_S}s × 2 (baseline + variant)")
     print()
 
     def _measure(idx_meta):
         i, meta, pb = idx_meta
-        core = cores[i % n_parallel] if n_parallel > 0 else None
-        b = run_cpsat(pb, BASELINE, TIMEOUT_S, cpu_core=core)
-        v = run_cpsat(pb, variant_params, TIMEOUT_S, cpu_core=core)
+        slot = i % n_parallel if n_parallel > 0 else 0
+        v_core = blocks[slot] if n_parallel > 0 else None
+        b_core = baseline_cores[slot] if n_parallel > 0 else None
+        b = run_cpsat(pb, BASELINE, TIMEOUT_S, cpu_core=b_core)
+        v = run_cpsat(pb, variant_params, TIMEOUT_S, cpu_core=v_core)
         return i, meta, b, v
 
     tasks = [(i, meta, pb) for i, (meta, pb) in enumerate(metas)]

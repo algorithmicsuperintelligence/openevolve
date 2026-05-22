@@ -6,8 +6,12 @@ Targeted namespace (LLM may add/remove/modify keys in the EVOLVE-BLOCK):
   use_feasibility_jump, use_feasibility_pump
 
 Other params stay at BASELINE.
-Do NOT modify locked keys (see baseline_params.LOCKED):
-  random_seed, num_search_workers, timeout_sec
+This phase pins num_search_workers=1 (single-worker search) so other knobs
+are evaluated without multi-thread / multi-subsolver noise. Phase 3 raises
+the worker count to explore subsolver-mix effects.
+
+Do NOT modify locked keys (see PHASE_LOCKED below + baseline_params.LOCKED):
+  random_seed, num_search_workers
 Invalid solver keys cause evaluator to return 0 and surface the offending key.
 """
 import pathlib
@@ -17,6 +21,12 @@ _SHARED = pathlib.Path(__file__).resolve().parent.parent / "shared"
 sys.path.insert(0, str(_SHARED))
 
 from baseline_params import BASELINE  # noqa: E402
+
+
+PHASE_LOCKED = {
+    "random_seed": 0,
+    "num_search_workers": 1,
+}
 
 
 # EVOLVE-BLOCK-START
@@ -33,6 +43,7 @@ SEARCH_OVERRIDES = {
 def get_params():
     p = dict(BASELINE)
     p.update(SEARCH_OVERRIDES)
+    p.update(PHASE_LOCKED)  # re-enforce phase lock last
     return p
 
 

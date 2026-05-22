@@ -38,7 +38,7 @@ sys.path.insert(0, str(_HERE / "shared"))
 
 from baseline_params import BASELINE, LOCKED  # noqa: E402
 from cpsat_runner import run_cpsat  # noqa: E402
-from runtime import parallel_solvers, core_range  # noqa: E402
+from runtime import parallel_solvers, core_range, alloc_core_blocks  # noqa: E402
 
 _BENCH_DIR = _HERE.parent
 _RAW_DIR = _BENCH_DIR / "raw-data"
@@ -50,14 +50,14 @@ _DEFAULT_TIMEOUT_S = 300
 _DECISIVE = ("OPTIMAL", "FEASIBLE")
 
 
-def _load_get_params(program_path):
+def _load_program(program_path):
     spec = importlib.util.spec_from_file_location("program", program_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not hasattr(module, "get_params"):
         print(f"ERROR: {program_path} missing get_params()", file=sys.stderr)
         sys.exit(2)
-    return module.get_params()
+    return module
 
 
 def _load_problem_index():
@@ -153,9 +153,12 @@ def main():
         print(f"ERROR: {program_path} not found", file=sys.stderr)
         return 2
 
-    variant_params = _load_get_params(program_path)
-    violations = {k: variant_params.get(k) for k in LOCKED
-                  if variant_params.get(k) != LOCKED[k]}
+    program = _load_program(program_path)
+    variant_params = program.get_params()
+    _phase_locked = getattr(program, "PHASE_LOCKED", None)
+    _lock = _phase_locked if isinstance(_phase_locked, dict) else LOCKED
+    violations = {k: variant_params.get(k) for k in _lock
+                  if variant_params.get(k) != _lock[k]}
     if violations:
         print(f"ERROR: locked params violated: {violations}", file=sys.stderr)
         return 2
@@ -166,8 +169,13 @@ def main():
     cores = core_range()
     if cores is None:
         cores = list(range(1, parallel_solvers(default=1) + 1))
-    n_parallel = min(len(cores), len(metas))
-    cores = cores[:n_parallel]
+    workers_per_solve = int(variant_params.get("num_search_workers", 1) or 1)
+    blocks = alloc_core_blocks(cores, workers_per_solve)
+    if not blocks:
+        blocks = [list(cores)] if cores else [None]
+    n_parallel = min(len(blocks), len(metas))
+    blocks = blocks[:n_parallel]
+    baseline_cores = [(b[0] if isinstance(b, (list, tuple)) and b else b) for b in blocks]
 
     n_iters = args.iters
     timeout_s = args.timeout
@@ -178,18 +186,20 @@ def main():
     print(f"  iters per case  : {n_iters} baseline + {n_iters} variant = {n_iters * 2}")
     print(f"  total runs      : {len(metas)} problems × {n_iters * 2} = {n_total_runs}")
     print(f"  per-run timeout : {timeout_s}s")
-    print(f"  parallel solvers: {n_parallel} cores={cores}")
+    print(f"  parallel solvers: {n_parallel} variant_workers={workers_per_solve} blocks={blocks}")
     print(f"  params diff     : {sum(1 for k, v in variant_params.items() if BASELINE.get(k) != v)} keys differ from BASELINE")
     print()
 
     def _worker(idx_meta):
         i, meta, pb = idx_meta
-        core = cores[i % n_parallel]
+        slot = i % n_parallel
+        v_core = blocks[slot]
+        b_core = baseline_cores[slot]
         t0 = time.monotonic()
-        baseline_runs = _run_repeat(pb, BASELINE, n_iters, timeout_s, core, "baseline")
-        variant_runs = _run_repeat(pb, variant_params, n_iters, timeout_s, core, "variant")
+        baseline_runs = _run_repeat(pb, BASELINE, n_iters, timeout_s, b_core, "baseline")
+        variant_runs = _run_repeat(pb, variant_params, n_iters, timeout_s, v_core, "variant")
         dt = time.monotonic() - t0
-        return i, meta, baseline_runs, variant_runs, core, dt
+        return i, meta, baseline_runs, variant_runs, v_core, dt
 
     tasks = [(i, meta, pb) for i, (meta, pb) in enumerate(metas)]
     t_start = time.monotonic()

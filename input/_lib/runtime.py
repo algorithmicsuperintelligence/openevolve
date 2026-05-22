@@ -77,6 +77,29 @@ def core_range():
         return None
 
 
+def alloc_core_blocks(cores, workers_per_solve):
+    """Floor-chunk a core list into blocks of `workers_per_solve` cores each.
+
+    Used when a single solver subprocess must be pinned to W cores (e.g. CP-SAT
+    with num_search_workers=W). Leftover cores at the tail are dropped — this
+    keeps every concurrent solve identical in CPU budget so benchmark timings
+    stay comparable.
+
+    Examples:
+        alloc_core_blocks([1,2,3,4,5,6], 1) -> [[1],[2],[3],[4],[5],[6]]
+        alloc_core_blocks([1,2,3,4,5,6], 4) -> [[1,2,3,4]]            # 5,6 dropped
+        alloc_core_blocks([1,2,3,4,5,6], 6) -> [[1,2,3,4,5,6]]
+        alloc_core_blocks([1,2,3], 4)       -> []                     # not enough
+    """
+    cores = list(cores)
+    try:
+        w = max(1, int(workers_per_solve))
+    except (TypeError, ValueError):
+        w = 1
+    n = len(cores) // w
+    return [cores[i * w:(i + 1) * w] for i in range(n)]
+
+
 def cascade_threshold(config_path, index, default):
     """
     Read evaluator.cascade_thresholds[index] from config.yaml.

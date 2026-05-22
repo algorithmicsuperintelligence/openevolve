@@ -26,12 +26,13 @@ bench:
 # === Custom cpsat-bench knobs (silently ignored by openevolve dacite) ===
 # parallel_solvers: total concurrent CP-SAT worker subprocesses per stage.
 #   - Read by shared/evaluator.py, rebaseline_local.py, baseline_params self-test.
-#   - Each pinned to a dedicated core via taskset (Linux).
-#   - Capped at len(problems_in_stage) at runtime.
+#   - Sets the FALLBACK core-pool size when OPENEVOLVE_CORE_RANGE is unset
+#     (cores 1..parallel_solvers; core 0 reserved for kernel housekeeping).
+#   - Effective concurrency = len(core_pool) // num_search_workers (floor).
+#     A solve with workers=8 on a 6-core pool runs sequentially (1 block);
+#     a phase with workers=1 on a 6-core pool runs 6-way parallel.
 #   - Env OPENEVOLVE_PARALLEL_SOLVERS overrides this value.
-#   - CP-SAT itself uses num_search_workers=8 internally (locked), so total
-#     core demand ≈ parallel_solvers × 8. Size accordingly.
-parallel_solvers: 1
+parallel_solvers: 8
 
 max_iterations: 60
 checkpoint_interval: 10
@@ -78,11 +79,19 @@ prompt:
     Hard rules:
       - Do NOT modify locked keys: random_seed, num_search_workers, timeout_sec.
         (evaluator returns combined_score=0 + locked_violated artifact on violation.)
+        num_search_workers is pinned PER PHASE by the phase's PHASE_LOCKED:
+          phase1/2: num_search_workers=1 (single-worker, no subsolver mix)
+          phase3/4: num_search_workers=8 (multi-worker, subsolver mix engaged)
+        get_params() re-applies PHASE_LOCKED last so phase1/2 inherited dicts
+        don't leak a higher worker count into a lower-worker phase.
       - Use only valid CpSolverParameters proto field names. Unknown keys
         cause AttributeError → evaluator returns 0 + surfaces invalid_param.
       - Respect types: bool true/false, int, float, list of strings (subsolver names).
       - Repeated proto fields (extra_subsolvers, ignore_subsolvers, etc.) accept
         Python lists; the worker handles del+extend internally.
+      - Subsolver-mix keys (extra_subsolvers, ignore_subsolvers, diversify_lns_params,
+        repair_hint, use_feasibility_jump/pump) only meaningfully fire when
+        num_search_workers > 1 — they are most impactful in phase 3 and beyond.
 
     Common CP-SAT knobs worth exploring (non-exhaustive):
       search/subsolvers:

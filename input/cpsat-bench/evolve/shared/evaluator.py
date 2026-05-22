@@ -28,7 +28,9 @@ sys.path.insert(0, str(_HERE))
 from baseline_params import BASELINE, LOCKED  # noqa: E402
 from score import score  # noqa: E402
 from cpsat_runner import run_cpsat  # noqa: E402
-from runtime import parallel_solvers, cascade_threshold, core_range  # noqa: E402
+from runtime import (  # noqa: E402
+    parallel_solvers, cascade_threshold, core_range, alloc_core_blocks,
+)
 
 from openevolve.evaluation_result import EvaluationResult  # noqa: E402
 
@@ -153,13 +155,17 @@ def _evaluate(program_path, problems, stage_name):
              "full_traceback": traceback.format_exc()[-2000:], "stage": stage_name},
         )
 
-    violations = {k: params.get(k) for k in LOCKED if params.get(k) != LOCKED[k]}
+    # Per-phase lock (worker count varies by phase) overrides the global lock.
+    phase_locked = getattr(program, "PHASE_LOCKED", None)
+    locked = phase_locked if isinstance(phase_locked, dict) else LOCKED
+    violations = {k: params.get(k) for k in locked if params.get(k) != locked[k]}
     if violations:
         return _err_result(
             {"error": "locked params violated"},
-            {"locked_violated": violations, "locked_expected": LOCKED,
+            {"locked_violated": violations, "locked_expected": locked,
              "stage": stage_name,
-             "suggestion": "Do not modify locked keys (see baseline_params.LOCKED)."},
+             "suggestion": "Do not modify locked keys (see PHASE_LOCKED in "
+                           "this phase's initial_program.py)."},
         )
 
     if "OPENEVOLVE_MAX_PROBLEMS" in os.environ:
@@ -176,14 +182,25 @@ def _evaluate(program_path, problems, stage_name):
     import queue as _queue
     # Core pool: OPENEVOLVE_CORE_RANGE (e.g. "2-7") overrides; else
     # cores 1..parallel_solvers() (core 0 reserved for kernel housekeeping).
+    #
+    # When params["num_search_workers"] = W > 1, each variant solve needs W
+    # cores. We floor-chunk the core list into W-sized blocks; concurrency =
+    # number of blocks. Leftover cores at the tail are dropped to keep every
+    # solve's CPU budget identical (comparable timings).
     _cores = core_range()
     if _cores is None:
         _cores = list(range(1, parallel_solvers(default=1) + 1))
-    n_parallel = min(len(_cores), len(problems))
-    _cores = _cores[:n_parallel]
+    workers_per_solve = int(params.get("num_search_workers", 1) or 1)
+    _blocks = alloc_core_blocks(_cores, workers_per_solve)
+    if not _blocks:
+        # Not enough cores for even one block at workers_per_solve. Fall back
+        # to a single block of all available cores (still respect taskset pin).
+        _blocks = [list(_cores)] if _cores else [None]
+    n_parallel = min(len(_blocks), len(problems))
+    _blocks = _blocks[:n_parallel]
     _core_pool = _queue.Queue()
-    for _c in _cores:
-        _core_pool.put(_c)
+    for _b in _blocks:
+        _core_pool.put(_b)
 
     def _solve(idx_p):
         idx, p = idx_p
@@ -231,6 +248,16 @@ def _evaluate(program_path, problems, stage_name):
             },
         )
 
+    def _fmt_core(c):
+        if c is None:
+            return "-"
+        if isinstance(c, (list, tuple)):
+            return ",".join(str(x) for x in c) if c else "-"
+        return str(c)
+
+    print(f"  [{stage_name}] workers/solve={workers_per_solve} "
+          f"core_blocks={[_fmt_core(b) for b in _blocks]}", flush=True)
+
     by_idx = {}
     abort = None
     if n_parallel == 1:
@@ -238,7 +265,7 @@ def _evaluate(program_path, problems, stage_name):
             idx, p, r, core, timeout_s = _solve(pair)
             print(f"  [{stage_name}] {idx+1}/{len(problems)} {p['sha'][:10]} "
                   f"{r.get('result')} {r.get('elapsed_ms')}ms / {timeout_s}s "
-                  f"(core={core})", flush=True)
+                  f"(core={_fmt_core(core)})", flush=True)
             if "invalid_param" in r:
                 return _invalid_err(r)
             if _is_regression(p, r):
@@ -257,7 +284,7 @@ def _evaluate(program_path, problems, stage_name):
                 idx, p, r, core, timeout_s = fut.result()
                 print(f"  [{stage_name}] {idx+1}/{len(problems)} {p['sha'][:10]} "
                       f"{r.get('result')} {r.get('elapsed_ms')}ms / {timeout_s}s "
-                      f"(core={core})", flush=True)
+                      f"(core={_fmt_core(core)})", flush=True)
                 if "invalid_param" in r:
                     abort = ("invalid", p, r)
                 elif _is_regression(p, r):

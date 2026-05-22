@@ -7,7 +7,10 @@ Targeted namespace:
 (LLM may explore other presolve_* / probing_* keys.)
 
 Inherits phase1 winners (loaded from shared/phase1_best.json if present).
-Do NOT modify locked keys.
+Like phase1, num_search_workers stays at 1 — presolve effects must be measured
+without multi-worker search masking them.
+
+Do NOT modify locked keys (random_seed, num_search_workers).
 """
 import json
 import pathlib
@@ -17,6 +20,12 @@ _SHARED = pathlib.Path(__file__).resolve().parent.parent / "shared"
 sys.path.insert(0, str(_SHARED))
 
 from baseline_params import BASELINE  # noqa: E402
+
+
+PHASE_LOCKED = {
+    "random_seed": 0,
+    "num_search_workers": 1,
+}
 
 
 def _load_prev(name):
@@ -40,6 +49,7 @@ def get_params():
     p = dict(BASELINE)
     p.update(_PHASE1)
     p.update(PRESOLVE_OVERRIDES)
+    p.update(PHASE_LOCKED)  # phase1 may have stored workers; re-pin to 1
     return p
 
 

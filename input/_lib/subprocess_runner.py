@@ -39,14 +39,28 @@ def run_solver(worker_path, problem_path, params, timeout_s,
     """
     See module docstring for the contract.
 
-    cpu_core: optional Linux taskset pin. Ignored on macOS / no util-linux.
+    cpu_core: optional Linux taskset pin. Accepts:
+      - int                  → pin to one core (e.g. 3 → "taskset -c 3")
+      - Sequence[int] / str  → pin to a set of cores (e.g. [2,3,4,5] or
+                               "2-5,7" → "taskset -c 2,3,4,5" / "2-5,7").
+      Ignored on macOS / no util-linux.
     grace_s: subprocess timeout = timeout_s + grace_s.
     """
     py = python_bin or sys.executable
     args = [py, str(worker_path), json.dumps(params),
             str(problem_path), str(int(timeout_s))]
     if cpu_core is not None and _TASKSET:
-        args = [_TASKSET, "-c", str(int(cpu_core))] + args
+        if isinstance(cpu_core, str):
+            cpu_arg = cpu_core
+        elif isinstance(cpu_core, (list, tuple)):
+            if not cpu_core:
+                cpu_arg = None
+            else:
+                cpu_arg = ",".join(str(int(c)) for c in cpu_core)
+        else:
+            cpu_arg = str(int(cpu_core))
+        if cpu_arg:
+            args = [_TASKSET, "-c", cpu_arg] + args
 
     t0 = time.monotonic()
     try:
