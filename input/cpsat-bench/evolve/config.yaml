@@ -71,6 +71,11 @@ prompt:
     this dict to MAXIMIZE combined_score = geomean(cost_ratio * time_ratio)
     * solved_rate^2 * efficiency^STATS_WEIGHT.
 
+    time_ratio = baseline_dtime / variant_dtime  (deterministic_time —
+    CP-SAT's hardware-independent work counter). Score is NOT noisy across
+    runs; reductions in deterministic_time directly translate to score wins.
+    Wall_time is reported as a diagnostic only (geomean_wall_speedup metric).
+
     Score mode = cost: variant must reach OPTIMAL or FEASIBLE on every baseline
     OPTIMAL problem, otherwise the per-problem ratio is 1e-6 (large penalty,
     geomean punishes one regression heavily). All baselines are OPTIMAL, so a
@@ -119,10 +124,11 @@ prompt:
         new_constraints_batch_size: int
         mip_max_bound, mip_var_scaling, mip_check_precision, mip_drop_tolerance: numeric
 
-    Per-round artifacts show speedup, regression, base_obj vs obj for each problem.
-    Read them: which knob change helped the long Q5 problems vs the fast Q1 ones?
-    Watch num_conflicts and num_branches — a 2x speedup with same conflict count
-    is hardware noise; a 2x with 10x fewer conflicts is a real find.
+    Per-round artifacts show speedup (dtime-based), regression, base_obj vs
+    obj for each problem. Read them: which knob change helped the long Q5
+    problems vs the fast Q1 ones? Watch num_conflicts and num_branches —
+    speedup with same conflict count is presolve / propagation work shaved
+    off; speedup with fewer conflicts is a smarter search.
 
     Per-problem param resolution (NEW): get_params(problem=None, stage=None).
     Three evolution surfaces per phase:

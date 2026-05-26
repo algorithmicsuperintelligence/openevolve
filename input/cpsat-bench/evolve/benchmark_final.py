@@ -136,11 +136,14 @@ def _resolve_sample(idx):
 
 
 def _aggregate(runs):
-    """runs = list of dicts {elapsed_ms, result, objective?, timeout, ...}.
+    """runs = list of dicts {elapsed_ms, result, objective?, timeout, stats?}.
     Returns aggregate stats over only the decisive runs (others as 'failed').
-    """
+    Tracks both wall (elapsed_ms) and deterministic_time aggregates."""
     decisive = [r for r in runs if r["result"] in _DECISIVE]
     ms_list = [r["elapsed_ms"] for r in decisive]
+    dt_list = [(r.get("stats") or {}).get("deterministic_time")
+               for r in decisive]
+    dt_list = [d for d in dt_list if d is not None and d > 0]
     obj_list = [r["objective"] for r in decisive
                 if r.get("objective") is not None]
     agg = {
@@ -156,6 +159,13 @@ def _aggregate(runs):
         agg["stddev_ms"] = statistics.stdev(ms_list) if len(ms_list) > 1 else 0.0
     else:
         agg.update({"mean_ms": 0, "median_ms": 0, "min_ms": 0, "max_ms": 0, "stddev_ms": 0.0})
+    if dt_list:
+        agg["mean_dt"] = statistics.mean(dt_list)
+        agg["median_dt"] = statistics.median(dt_list)
+        agg["stddev_dt"] = statistics.stdev(dt_list) if len(dt_list) > 1 else 0.0
+        agg["n_dt"] = len(dt_list)
+    else:
+        agg.update({"mean_dt": 0, "median_dt": 0, "stddev_dt": 0.0, "n_dt": 0})
     if obj_list:
         agg["mean_obj"] = statistics.mean(obj_list)
         agg["min_obj"] = min(obj_list)
@@ -175,6 +185,7 @@ def _run_repeat(problem_path, params, n, timeout_s, core, tag):
             "timeout": bool(r.get("timeout")),
             "invalid_param": r.get("invalid_param"),
             "error": r.get("error"),
+            "stats": r.get("stats") or {},
         })
     return runs
 
@@ -260,11 +271,13 @@ def main():
             i, meta, b_runs, v_runs, core, dt = completed[-1]
             b_agg = _aggregate(b_runs)
             v_agg = _aggregate(v_runs)
-            sp = (b_agg["mean_ms"] / max(v_agg["mean_ms"], 1)) if v_agg["mean_ms"] else 0
+            sp_w = (b_agg["mean_ms"] / max(v_agg["mean_ms"], 1)) if v_agg["mean_ms"] else 0
+            sp_d = (b_agg["mean_dt"] / max(v_agg["mean_dt"], 1)) if v_agg["mean_dt"] else 0
+            sp_main = sp_d if sp_d else sp_w
             print(f"  [{i+1:>2}/{len(metas)}] {meta['sha'][:10]} core={core} "
                   f"base_mean={b_agg['mean_ms']:>7.0f}ms (n_ok={b_agg['n_decisive']}/{n_iters})  "
                   f"variant_mean={v_agg['mean_ms']:>7.0f}ms (n_ok={v_agg['n_decisive']}/{n_iters})  "
-                  f"speedup={sp:.2f}x  (took {dt:.1f}s)",
+                  f"speedup={sp_main:.2f}x[{'dt' if sp_d else 'wall'}] wall={sp_w:.2f}x  (took {dt:.1f}s)",
                   flush=True)
     else:
         with ThreadPoolExecutor(max_workers=n_parallel) as ex:
@@ -312,8 +325,10 @@ def main():
     for _, meta, b_runs, v_runs, _, _ in completed:
         b_agg = _aggregate(b_runs)
         v_agg = _aggregate(v_runs)
-        mean_sp = (b_agg["mean_ms"] / max(v_agg["mean_ms"], 1)) if v_agg["mean_ms"] else 0
-        med_sp = (b_agg["median_ms"] / max(v_agg["median_ms"], 1)) if v_agg["median_ms"] else 0
+        mean_sp_w = (b_agg["mean_ms"] / max(v_agg["mean_ms"], 1)) if v_agg["mean_ms"] else 0
+        med_sp_w = (b_agg["median_ms"] / max(v_agg["median_ms"], 1)) if v_agg["median_ms"] else 0
+        mean_sp_d = (b_agg["mean_dt"] / max(v_agg["mean_dt"], 1)) if v_agg["mean_dt"] else 0
+        med_sp_d = (b_agg["median_dt"] / max(v_agg["median_dt"], 1)) if v_agg["median_dt"] else 0
         summary_rows.append({
             "sha": meta["sha"],
             "n_iters": n_iters,
@@ -323,14 +338,22 @@ def main():
             "baseline_min_ms": round(b_agg["min_ms"], 1),
             "baseline_max_ms": round(b_agg["max_ms"], 1),
             "baseline_stddev_ms": round(b_agg["stddev_ms"], 1),
+            "baseline_mean_dt": round(b_agg["mean_dt"], 3),
+            "baseline_median_dt": round(b_agg["median_dt"], 3),
+            "baseline_n_dt": b_agg["n_dt"],
             "variant_n_decisive": v_agg["n_decisive"],
             "variant_mean_ms": round(v_agg["mean_ms"], 1),
             "variant_median_ms": round(v_agg["median_ms"], 1),
             "variant_min_ms": round(v_agg["min_ms"], 1),
             "variant_max_ms": round(v_agg["max_ms"], 1),
             "variant_stddev_ms": round(v_agg["stddev_ms"], 1),
-            "mean_speedup": round(mean_sp, 3),
-            "median_speedup": round(med_sp, 3),
+            "variant_mean_dt": round(v_agg["mean_dt"], 3),
+            "variant_median_dt": round(v_agg["median_dt"], 3),
+            "variant_n_dt": v_agg["n_dt"],
+            "mean_speedup": round(mean_sp_w, 3),       # wall (legacy)
+            "median_speedup": round(med_sp_w, 3),      # wall (legacy)
+            "mean_dt_speedup": round(mean_sp_d, 3),    # deterministic (primary)
+            "median_dt_speedup": round(med_sp_d, 3),
         })
 
     with open(summary_csv, "w", newline="") as f:
@@ -339,17 +362,28 @@ def main():
         w.writerows(summary_rows)
 
     # ----- overall aggregate -----
-    # speedup geomean over problems with both means valid
+    # speedup geomean over problems with both means valid. Compute both wall
+    # and deterministic-time geomeans; dt is preferred when populated for both
+    # baseline + variant on every (problem, iter) pair.
     import math
     valid = [r for r in summary_rows
              if r["baseline_mean_ms"] > 0 and r["variant_mean_ms"] > 0
              and r["baseline_n_decisive"] > 0 and r["variant_n_decisive"] > 0]
+    valid_dt = [r for r in valid
+                if r["mean_dt_speedup"] > 0 and r["median_dt_speedup"] > 0]
     if valid:
         geo_mean = math.exp(sum(math.log(r["mean_speedup"]) for r in valid) / len(valid))
         geo_med = math.exp(sum(math.log(r["median_speedup"]) for r in valid) / len(valid))
         arith_mean = sum(r["mean_speedup"] for r in valid) / len(valid)
     else:
         geo_mean = geo_med = arith_mean = 0.0
+    if valid_dt:
+        geo_mean_dt = math.exp(sum(math.log(r["mean_dt_speedup"])
+                                   for r in valid_dt) / len(valid_dt))
+        geo_med_dt = math.exp(sum(math.log(r["median_dt_speedup"])
+                                  for r in valid_dt) / len(valid_dt))
+    else:
+        geo_mean_dt = geo_med_dt = 0.0
 
     n_baseline_failed = sum(r["baseline_n_decisive"] < n_iters for r in summary_rows)
     n_variant_failed = sum(r["variant_n_decisive"] < n_iters for r in summary_rows)
@@ -366,10 +400,13 @@ def main():
         "wall_clock_s": round(wall, 1),
         "n_problems": len(metas),
         "summary": {
-            "geomean_speedup_mean": round(geo_mean, 3),
-            "geomean_speedup_median": round(geo_med, 3),
-            "arith_mean_speedup": round(arith_mean, 3),
+            "geomean_dt_speedup_mean": round(geo_mean_dt, 3),    # primary
+            "geomean_dt_speedup_median": round(geo_med_dt, 3),
+            "geomean_wall_speedup_mean": round(geo_mean, 3),     # diagnostic
+            "geomean_wall_speedup_median": round(geo_med, 3),
+            "arith_mean_wall_speedup": round(arith_mean, 3),
             "n_problems_with_valid_speedup": len(valid),
+            "n_problems_with_valid_dt_speedup": len(valid_dt),
             "n_baseline_partial_fail": n_baseline_failed,
             "n_baseline_total_fail": n_baseline_all_failed,
             "n_variant_partial_fail": n_variant_failed,
@@ -380,10 +417,12 @@ def main():
 
     print()
     print("== overall (mean-of-means across problems) ==")
-    print(f"  problems with valid speedup : {len(valid)}/{len(metas)}")
-    print(f"  geomean mean-speedup        : {geo_mean:.3f}x")
-    print(f"  geomean median-speedup      : {geo_med:.3f}x")
-    print(f"  arith mean-speedup          : {arith_mean:.3f}x")
+    print(f"  problems with valid speedup : wall={len(valid)}/{len(metas)} dt={len(valid_dt)}/{len(metas)}")
+    print(f"  geomean dt-speedup (mean)   : {geo_mean_dt:.3f}x  (primary, hardware-independent)")
+    print(f"  geomean dt-speedup (median) : {geo_med_dt:.3f}x")
+    print(f"  geomean wall-speedup (mean) : {geo_mean:.3f}x  (diagnostic)")
+    print(f"  geomean wall-speedup (med)  : {geo_med:.3f}x")
+    print(f"  arith mean wall-speedup     : {arith_mean:.3f}x")
     print(f"  baseline partial-fail cases : {n_baseline_failed}  (≥1 of {n_iters} runs non-decisive)")
     print(f"  baseline total-fail cases   : {n_baseline_all_failed}  (all {n_iters} runs non-decisive)")
     print(f"  variant partial-fail cases  : {n_variant_failed}")

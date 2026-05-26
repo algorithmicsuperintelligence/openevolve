@@ -153,6 +153,18 @@ def main():
         except Exception:
             pass
 
+    # deterministic_time: hardware-independent work measure exposed only via
+    # the response proto, not as a solver method. Critical for fair speedup
+    # comparison across HW / system load — score.py uses it as the primary
+    # time_ratio with wall_time as fallback.
+    try:
+        resp = solver.ResponseProto()
+        dt = float(resp.deterministic_time)
+        if dt > 0:
+            stats["deterministic_time"] = dt
+    except Exception:
+        pass
+
     obj = None
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         try:

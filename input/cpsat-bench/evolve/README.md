@@ -149,16 +149,28 @@ The runner already pins each worker subprocess with `taskset -c <core>`.
 ## Score formula (cost mode)
 
 ```
-combined_score = geomean( (b_obj/v_obj)^COST_W  *  (b_ms/v_ms) )
+combined_score = geomean( (b_obj/v_obj)^COST_W  *  time_ratio )
                  * solved_rate^2
                  * efficiency^STATS_WEIGHT
+
+time_ratio = baseline_dtime / variant_dtime    (primary)
+           = baseline_ms    / variant_ms       (fallback when dtime missing)
 ```
 
+- **Deterministic_time** (CP-SAT's hardware-independent work measure) is the
+  primary time metric. Wall-clock varies with CPU load / NUMA / thermal
+  state — using dtime removes that noise from the score so genuine knob
+  improvements are visible. `geomean_speedup` in the metrics dict is the
+  dtime ratio; `geomean_wall_speedup` is reported alongside as a
+  diagnostic. Override with `OPENEVOLVE_TIME_METRIC=wall` if needed.
+- Fallback to wall when either side lacks `deterministic_time` in `stats`
+  (e.g. older local_baseline.json from before this change — rerun
+  `rebaseline_local.py` to refresh).
 - All 85 baselines are OPTIMAL, so if the variant also reaches OPTIMAL, the
   cost ratio collapses to 1.0 and score reduces to geomean(time speedup).
 - Variants that bail to FEASIBLE-but-worse-objective are penalized via the
   cost ratio; variants that bail to UNKNOWN/INFEASIBLE contribute 1e-6 to
-  the geomean (~60× penalty across stage1's 5 problems).
+  the geomean (~60× penalty across stage1's 10 problems).
 - Efficiency factor multiplies based on `num_conflicts` (weight 2.0) and
   `num_branches` (weight 1.5) ratios vs baseline.
 

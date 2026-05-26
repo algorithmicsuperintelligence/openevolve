@@ -72,7 +72,8 @@ def _load_outlier_shas():
 
 _PYTHON_BIN = os.environ.get("OPENEVOLVE_PYTHON_BIN")
 
-_KEY_STATS = ("num_branches", "num_conflicts", "num_booleans", "wall_time", "user_time")
+_KEY_STATS = ("num_branches", "num_conflicts", "num_booleans",
+              "wall_time", "user_time", "deterministic_time")
 _DECISIVE = ("OPTIMAL", "FEASIBLE")
 
 
@@ -444,7 +445,10 @@ def _evaluate(program_path, problems, stage_name):
         "summary": (
             f"solved={metrics['solved']}/{metrics['total']} "
             f"regressions={metrics['regressions']} "
-            f"geomean_speedup={metrics['geomean_speedup']:.3f} "
+            f"geomean_dtime={metrics['geomean_speedup']:.3f} "
+            f"geomean_wall={metrics.get('geomean_wall_speedup', 0.0):.3f} "
+            f"dtime_used={metrics.get('dtime_used', 0)}/"
+            f"{metrics.get('dtime_used', 0) + metrics.get('dtime_fallback', 0)} "
             f"efficiency={metrics.get('efficiency', 1.0):.3f} "
             f"score={metrics['combined_score']:.3f}"
         ),

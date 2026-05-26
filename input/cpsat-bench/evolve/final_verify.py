@@ -223,8 +223,17 @@ def main():
         var_result = v.get("result", "Unknown")
         var_obj = v.get("objective")
         var_invalid = v.get("invalid_param")
+        b_dt = (b.get("stats") or {}).get("deterministic_time")
+        v_dt = (v.get("stats") or {}).get("deterministic_time")
 
-        speedup = base_ms_local / max(var_ms, 1)
+        wall_speedup = base_ms_local / max(var_ms, 1)
+        if b_dt and v_dt and b_dt > 0 and v_dt > 0:
+            dtime_speedup = float(b_dt) / float(v_dt)
+            speedup = dtime_speedup
+            speedup_src = "dt"
+        else:
+            speedup = wall_speedup
+            speedup_src = "wall"
         if var_invalid:
             flag = f"  INVALID_PARAM={var_invalid}"
             speedup = 0.0
@@ -257,7 +266,8 @@ def main():
             f"{('/obj=' + format(base_obj, '.3g')) if base_obj is not None else ''}  "
             f"variant={var_result:<10}/{var_ms:>7}ms"
             f"{('/obj=' + format(var_obj, '.3g')) if var_obj is not None else ''}  "
-            f"speedup={speedup:.2f}x  cost_ratio={cost_ratio:.3f}{flag}",
+            f"speedup={speedup:.2f}x[{speedup_src}] "
+            f"wall={wall_speedup:.2f}x  cost_ratio={cost_ratio:.3f}{flag}",
             flush=True,
         )
         results.append({
@@ -286,7 +296,11 @@ def main():
     print(f"  solved          : {metrics['solved']}/{metrics['comparable']}")
     print(f"  regressions     : {metrics['regressions']}  "
           f"(baseline OK, variant failed)")
-    print(f"  geomean (cost×time) : {metrics['geomean_speedup']:.3f}")
+    print(f"  geomean (cost×dtime): {metrics['geomean_speedup']:.3f}  "
+          f"(dtime_used={metrics.get('dtime_used', 0)}/"
+          f"{metrics.get('dtime_used', 0) + metrics.get('dtime_fallback', 0)})")
+    print(f"  geomean (cost×wall) : {metrics.get('geomean_wall_speedup', 0.0):.3f}  "
+          f"(diagnostic)")
     print(f"  solved_rate     : {metrics['solved_rate']:.3f}  (over comparable)")
     print(f"  efficiency      : {metrics.get('efficiency', 1.0):.3f}")
     print(f"  combined_score  : {metrics['combined_score']:.3f}")
