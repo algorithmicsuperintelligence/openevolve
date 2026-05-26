@@ -137,9 +137,15 @@ prompt:
                            candidate before stage3 ever runs).
 
     Stage layout in cascade:
-      stage1 (5)  fast cluster centers       — must not regress
-      stage2 (5)  mid  cluster centers       — must not regress
-      stage3 (5)  OUTLIER problems only      — STAGE3_OVERRIDES active here
+      stage1 (10) fast cluster centers       — must not regress
+      stage2 (10) mid  cluster centers       — must not regress
+      stage3 (5)  OUTLIER problems only      — STAGE3_OVERRIDES active here.
+                                                Stratified small/mid/large
+                                                from outliers_top.csv,
+                                                cap=1.5M ms baseline.
+                                                PHASE1/2 (W=1) SKIP THIS
+                                                stage and go direct to stage4.
+                                                PHASE3/4 (W=8) run it.
       stage4 (20) broad spread               — final score
 
     Outliers (~30 of 430 problems) have ~80x more conflicts, ~13x more branches

@@ -3,24 +3,24 @@
   "source": "cpsat-bench/problems.jsonl",
   "sha256": [
     "5976726485c23db055e872eabd8a172c73609854b8c228b47ccf42422bf7c8b5",
-    "3e2b36379a2919afebb3b79a5e34bd8fd946fbc28059edd6a832ad467f412fc3",
-    "d28acbdfd6c0f8dc93e215ce1a2fc55b369d63cd6b94efdbfaad6045b6f882ea",
-    "1a1c06a66af7443f6136b4ba851fd267ab7fff909953005391a5e81fc0a57af0",
-    "a4dbf4239260ca8770d6c3f876a98ba92dd42102400396cf211e7f9696e4776c",
-    "6c64b95d90a6caf1573da836e471273a2845a145a3ce07ccc4124cf7654bc226",
-    "87106998551ed8b22ec13067c8b3a05d47ccb12637e779a1040a9def4e9765b6",
-    "9c801bcf5dc6a4fa11be76710e268871e68ba55da83399f00fb9e0390f675962",
+    "1da421e660098ad22f7cf645e4955a7d621856372d3d89ace5722c48699b9b5d",
+    "568cb19ecec5f12612462493e54e7af582f6b43606359e934281a90751fda3c7",
+    "915f8918d0b3d7d39a423af66871046decda0ae1e8230bbdeb43f12a08e79fc7",
+    "c867ab59144791c88799ce95599bbd25090dec398595de1c1e35d01b8a7f06ec",
+    "2abe830de840839cc8700da827e94f67e8231e6dbc5fdba2042dc0a5cfc022ff",
+    "37f84b16de74e01a63c4bdcf999c82d18ebf6d0e03406bd9ee65adb21ae54b71",
     "ca043f0850c14f2d99c0a48b1a959387505b2facf3551fa053ddb9c68bfa58b5",
-    "9f330e3d7528eea46bbfbd640e4dc0f7d732bf1fdc1dd9e39c323406b9cede01",
-    "4dc032eadf8f2c84d493c917a5356a18eb9633a34763a134563923b85548d7ba",
-    "c640cc60784b5f00e395f07384f65c540c7f59d3766fc098f1c34f8645b0e4ae",
-    "55194630a32dfef1e51e9adc4cd97e19a58f98d99e9d0668428a70b57f0539e5",
-    "d1b2c9992efda91256f54b5da850272632e2cd7a46cab2a4e81f74cedf156620",
-    "f38c4b16a01010ad99c30db049af26efc7fa7366d244e2d8b09c59fb44bc51f6",
-    "e5c9e667fbee60ca8a589904e1a7afc30c81394efd58e388a9f63470fa4ea406",
-    "8a3a0575a6af4727c9e27c2e63a5da1f147282a3478b1278fd9bc8069e8110b1",
-    "9b68c85c1a117037be6720b3f7a9f0c2b040b41c9b725525fb162df7f3a2910c",
-    "e272c0e4899bd231855a0205e36e42663a9208b44d081e1149dc37bdafe3a33d",
+    "674b484eb726690bc9d4878cb217bc6b22f30eac4f8d512be6e2713a303545dd",
+    "57b759f315f04cd49b38987b95a953459c7c29e4f53de8dd7a16f65c5057c92b",
+    "5978abbd9b38469692be7af1f78c5fd15d0736c6192c38ba083c6ca4778659a5",
+    "4b5c183b293875eb4e0b73aabd4581cbd17ba882b436d0dd49299632ccbbc661",
+    "57b21c3f6c8f3ceb646f5ce6950949114d86bc1a225d6db5437e6f654821a6c6",
+    "1cbb4fb20584a2df3ff85a980e992daccf8381fb6da66657c08a35a9f6f61fe3",
+    "6c7a1a5ce29490757a4fd01319c3af2f090f1488a9bd158edeb09a45ef95d8e0",
+    "a0cd1b349e85c374dac7fd4570d5dc90928422dea74e38afe67defa14d8a13a5",
+    "643f0a85b4d3d3c13ef9cfbbbc20b1dc8f9d837a181ad2ebb84c6823e91829b5",
+    "e70a9ef2b4f8aaa2b009cfae1b6ce00546089bbb5aa32842f75da342b97b5c62",
+    "0a65b64b80dcebb76c352dc449f577b4714d5ecc4a7ab1636d9e5af952bea067",
     "5b8c61f99d31fed9077ef475613e5be6648f55f2a47bcc92c0e5d0e3b41ecb94"
   ],
   "summary": [
@@ -30,39 +30,34 @@
       "baseline_ms": 105.102
     },
     {
-      "sha": "3e2b36379a29",
+      "sha": "1da421e66009",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 626.761
+      "baseline_ms": 623.536
     },
     {
-      "sha": "d28acbdfd6c0",
+      "sha": "568cb19ecec5",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 974.173
+      "baseline_ms": 969.978
     },
     {
-      "sha": "1a1c06a66af7",
+      "sha": "915f8918d0b3",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1500.26
+      "baseline_ms": 1537.86
     },
     {
-      "sha": "a4dbf4239260",
+      "sha": "c867ab591447",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1500.8
+      "baseline_ms": 1564.42
     },
     {
-      "sha": "6c64b95d90a6",
+      "sha": "2abe830de840",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1883.75
+      "baseline_ms": 1961.23
     },
     {
-      "sha": "87106998551e",
+      "sha": "37f84b16de74",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 2555.9
-    },
-    {
-      "sha": "9c801bcf5dc6",
-      "baseline_result": "OPTIMAL",
-      "baseline_ms": 3098.94
+      "baseline_ms": 2603.74
     },
     {
       "sha": "ca043f0850c1",
@@ -70,54 +65,59 @@
       "baseline_ms": 3101.11
     },
     {
-      "sha": "9f330e3d7528",
+      "sha": "674b484eb726",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3351.44
+      "baseline_ms": 3104.21
     },
     {
-      "sha": "4dc032eadf8f",
+      "sha": "57b759f315f0",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3844.03
+      "baseline_ms": 3337.57
     },
     {
-      "sha": "c640cc60784b",
+      "sha": "5978abbd9b38",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 4313.07
+      "baseline_ms": 3841.35
     },
     {
-      "sha": "55194630a32d",
+      "sha": "4b5c183b2938",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 4354.72
+      "baseline_ms": 4210.68
     },
     {
-      "sha": "d1b2c9992efd",
+      "sha": "57b21c3f6c8f",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 5355.17
+      "baseline_ms": 4231.64
     },
     {
-      "sha": "f38c4b16a010",
+      "sha": "1cbb4fb20584",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 6043.44
+      "baseline_ms": 5391.62
     },
     {
-      "sha": "e5c9e667fbee",
+      "sha": "6c7a1a5ce294",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 6608.39
+      "baseline_ms": 6126.11
     },
     {
-      "sha": "8a3a0575a6af",
+      "sha": "a0cd1b349e85",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 6624.34
+      "baseline_ms": 6657.63
     },
     {
-      "sha": "9b68c85c1a11",
+      "sha": "643f0a85b4d3",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 7909.24
+      "baseline_ms": 6785.44
     },
     {
-      "sha": "e272c0e4899b",
+      "sha": "e70a9ef2b4f8",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 11336.5
+      "baseline_ms": 7970.52
+    },
+    {
+      "sha": "0a65b64b80dc",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 11540.4
     },
     {
       "sha": "5b8c61f99d31",

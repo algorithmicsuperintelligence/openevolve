@@ -1,14 +1,34 @@
 {
-  "selection": "5 decisive runtime clusters c1+c2 (fast group)",
+  "selection": "10 decisive runtime clusters c1+c2 (fast group)",
   "source": "cpsat-bench/problems.jsonl",
   "sha256": [
+    "daa215241452279f6bd5d569a96d188cea9dd668a82c7db3f1463c7b4122bf78",
+    "ba0b9ea5e8f2328cb61bd31c0d61dafaec59744031371bbf7d594553e5b1c8c0",
+    "aec821f70ed62b536c07791cb8cb7cc48661194d53fe27e8b65b139c13aec39a",
     "90e1185ded530d8fbb2b773076a2fdbdfbb9a725f2fc07b4d8b8280e93069b54",
     "2c283b1f086ec33a86a8cf25694b14acb56c62c180fb239dd3813e63d7c3a137",
     "fa619c63ddf9ad9612bc3a615ca437be781fa0014734de2b854bf496453301ac",
     "27a639ae4f3c7b232b758f7a4b7a8193bbdf2375bc6ad9f0ed832df3259ed18c",
-    "eef410430ef1cdcadce5480be841daef9bd294a8d1a7a1912d559e62eee37fb3"
+    "eef410430ef1cdcadce5480be841daef9bd294a8d1a7a1912d559e62eee37fb3",
+    "3e69d6f5b7856ea1d07e24a00ad14594b6ba146d0685bdb57e54a8483065b9d0",
+    "395b9abdb72014e256f558ea722b7df71fedf88a40e4bf0f70b34ed75d3e7ce1"
   ],
   "summary": [
+    {
+      "sha": "daa215241452",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1287.87
+    },
+    {
+      "sha": "ba0b9ea5e8f2",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1315.97
+    },
+    {
+      "sha": "aec821f70ed6",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1317.35
+    },
     {
       "sha": "90e1185ded53",
       "baseline_result": "OPTIMAL",
@@ -33,6 +53,16 @@
       "sha": "eef410430ef1",
       "baseline_result": "OPTIMAL",
       "baseline_ms": 1380.36
+    },
+    {
+      "sha": "3e69d6f5b785",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1384.5
+    },
+    {
+      "sha": "395b9abdb720",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 1394.5
     }
   ]
 }

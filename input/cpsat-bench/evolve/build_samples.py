@@ -18,8 +18,9 @@ Stages (decisive = OPTIMAL or FEASIBLE; this dataset is all OPTIMAL):
   stage1 (5)  center pick from clusters c1+c2 (fast group)   — default-param sanity
   stage2 (5)  center pick from clusters c3+c4 (mid group)    — default-param sanity
   stage3 (5)  outliers from Statistics/outliers_top.csv      — per-problem tune target
-              (top residual, capped at MAX_BASELINE_MS so a single tune
-              iteration stays in time budget)
+              (top residual, capped at STAGE3_MAX_BASELINE_MS — higher than
+              MAX_BASELINE_MS so genuinely slow outliers enter the tune set;
+              still bounded so a single evolve iteration finishes)
   stage4 (20) quintile-spread broad sample, dedup vs stage1-3
 
 Stage3 sample also writes shared/outliers.json (sha -> {residual, baseline_ms,
@@ -52,11 +53,30 @@ STAGE2_N = 10
 STAGE3_N = 5
 STAGE4_N = 20
 N_BUCKETS = 5
-MAX_BASELINE_MS = 120_000   # cap — exclude > 2 min monsters from sample pool
-OUTLIER_IQR_K = float('inf')
+# Global cap for stage1/2/4 sample pool. Anything slower than 2 min skews
+# the quintile clustering.
+MAX_BASELINE_MS = 120_000
+# Stage3 (outlier-only) gets a higher cap so genuinely slow outliers can
+# enter the tune set. 25 min ≈ what one stage3 problem can chew through
+# under W=8 (raw-data times are W=8-equivalent). Variant timeout =
+# baseline_ms * 1.3 in evaluator.
+STAGE3_MAX_BASELINE_MS = 1_500_000
+# Stratified stage3 pick — outliers cluster in two size regimes (small
+# SAT-like and large LP-heavy). Picking only by residual order biases to
+# small ones (they pass the cap easier). Bands:
+#   small  : elapsed_ms <  10_000          (≤10s, vars≈1700-2000)
+#   mid    : 10_000  ≤ ms <   500_000      (10s-500s, vars≈17000)
+#   large  : 500_000 ≤ ms ≤ STAGE3_MAX     (500s-1500s, vars≈20000)
+# Within each band pick top-N by residual.
+STAGE3_SMALL_MS = 10_000
+STAGE3_MID_MS = 500_000
+STAGE3_PICK_SMALL = 2
+STAGE3_PICK_MID = 2
+STAGE3_PICK_LARGE = 1
+OUTLIER_IQR_K = 3.0
 
-STAGE1_STRATEGY = "spread"
-STAGE2_STRATEGY = "spread"
+STAGE1_STRATEGY = "center"
+STAGE2_STRATEGY = "center"
 STAGE3_STRATEGY = "outliers"   # was "center" — now picks outliers_top.csv
 STAGE4_STRATEGY = "spread"
 
@@ -149,45 +169,96 @@ def _load_outliers_top(csv_path):
     return rows
 
 
-def _pick_outliers(rows_by_sha, csv_path, n_pick, max_baseline_ms):
-    """Pick top-N residual outliers from outliers_top.csv whose baseline_ms is
-    ≤ max_baseline_ms (so a single tune iteration fits time budget).
+def _pick_outliers(rows_by_sha, csv_path):
+    """Stratified outlier pick: bucket csv rows by elapsed_ms into
+    small/mid/large, then within each bucket pick top-N by residual.
 
-    Falls back to slowest-cluster center pick (legacy stage3 logic) if csv is
-    missing or yields < n_pick eligible entries."""
+    Returns (picks, csv_rows). picks is in [small..., mid..., large...] order.
+    csv_rows is the full csv (for outliers.json metadata).
+
+    Falls back to (None, []) if csv missing — caller uses legacy slow-cluster
+    center pick then."""
     if csv_path is None:
         print("warning: outliers_top.csv not found — falling back to "
               "slow-cluster center pick for stage3", file=sys.stderr)
         return None, []
 
     csv_rows = _load_outliers_top(csv_path)
+
+    def _band(ms):
+        if ms <= 0 or ms > STAGE3_MAX_BASELINE_MS:
+            return None
+        if ms < STAGE3_SMALL_MS:
+            return "small"
+        if ms < STAGE3_MID_MS:
+            return "mid"
+        return "large"
+
+    by_band = {"small": [], "mid": [], "large": []}
+    for c in csv_rows:
+        if c["sha"] not in rows_by_sha:
+            continue
+        band = _band(c["elapsed_ms"])
+        if band is None:
+            continue
+        by_band[band].append(c)
+    # csv_rows already sorted by descending residual → by_band lists inherit.
+
+    band_targets = {
+        "small": STAGE3_PICK_SMALL,
+        "mid": STAGE3_PICK_MID,
+        "large": STAGE3_PICK_LARGE,
+    }
+
     picks = []
     used = set()
     diag = []
-    for c in csv_rows:
-        if len(picks) >= n_pick:
-            break
-        if c["elapsed_ms"] > max_baseline_ms:
-            diag.append((c["sha"][:12], c["elapsed_ms"],
-                         "skip: > MAX_BASELINE_MS"))
-            continue
-        d = rows_by_sha.get(c["sha"])
-        if d is None:
-            diag.append((c["sha"][:12], c["elapsed_ms"],
-                         "skip: not in problems.jsonl"))
-            continue
-        if c["sha"] in used:
-            continue
-        picks.append(d)
-        used.add(c["sha"])
-        diag.append((c["sha"][:12], c["elapsed_ms"],
-                     f"pick (residual={c['residual']:.3f}, "
-                     f"n_cons={c['n_cons']})"))
+    for band in ("small", "mid", "large"):
+        target = band_targets[band]
+        taken = 0
+        for c in by_band[band]:
+            if taken >= target:
+                break
+            if c["sha"] in used:
+                continue
+            d = rows_by_sha[c["sha"]]
+            picks.append(d)
+            used.add(c["sha"])
+            taken += 1
+            diag.append((band, c["sha"][:12], c["elapsed_ms"],
+                         f"pick (residual={c['residual']:.3f}, "
+                         f"n_cons={c['n_cons']})"))
+        # Backfill: if a band can't fill its quota, try next band's pool.
+        for c in by_band[band][taken:]:
+            diag.append((band, c["sha"][:12], c["elapsed_ms"],
+                         f"available (residual={c['residual']:.3f})"))
 
+    # If any band underfilled, top off from remaining bands by residual.
+    n_target_total = sum(band_targets.values())
+    if len(picks) < n_target_total:
+        leftover = [c for band in ("large", "mid", "small")
+                    for c in by_band[band] if c["sha"] not in used]
+        leftover.sort(key=lambda c: -c["residual"])
+        for c in leftover:
+            if len(picks) >= n_target_total:
+                break
+            d = rows_by_sha[c["sha"]]
+            picks.append(d)
+            used.add(c["sha"])
+            diag.append(("backfill", c["sha"][:12], c["elapsed_ms"],
+                         f"backfill (residual={c['residual']:.3f})"))
+
+    n_small = sum(1 for b, *_ in diag if b == "small" and "pick" in _[-1])
+    n_mid = sum(1 for b, *_ in diag if b == "mid" and "pick" in _[-1])
+    n_large = sum(1 for b, *_ in diag if b == "large" and "pick" in _[-1])
     print(f"outliers stage3: from {csv_path.relative_to(_BENCH.parent)}, "
-          f"picked {len(picks)}/{n_pick} under MAX_BASELINE_MS={max_baseline_ms}ms")
-    for sha12, ms, note in diag:
-        print(f"  {sha12}  {int(ms):>10}ms  {note}")
+          f"stratified pick (cap={STAGE3_MAX_BASELINE_MS}ms) "
+          f"→ {len(picks)} total "
+          f"[small={n_small}/{STAGE3_PICK_SMALL} "
+          f"mid={n_mid}/{STAGE3_PICK_MID} "
+          f"large={n_large}/{STAGE3_PICK_LARGE}]")
+    for band, sha12, ms, note in diag:
+        print(f"  [{band:<8}] {sha12}  {int(ms):>10}ms  {note}")
 
     return picks, csv_rows
 
@@ -367,19 +438,24 @@ def main():
     s1 = _pick(STAGE1_STRATEGY, pool_c12, STAGE1_N)
     s2 = _pick(STAGE2_STRATEGY, pool_c34, STAGE2_N)
 
-    # Stage3: outliers from Statistics/outliers_top.csv (top residual, capped
-    # at MAX_BASELINE_MS). Fallback to slow-cluster center pick if csv missing
-    # or yields nothing usable.
+    # Stage3: stratified outlier pick from Statistics/outliers_top.csv
+    # (small/mid/large by elapsed_ms, top-residual within each band). cap =
+    # STAGE3_MAX_BASELINE_MS (higher than stage1/2/4's MAX_BASELINE_MS so
+    # genuinely slow outliers enter the tune set). Fallback to slow-cluster
+    # center pick if csv missing.
     rows_by_sha = {_id_key(d): d for d in rows}
     outliers_csv = _find_outliers_csv()
-    s3_outliers, csv_all = _pick_outliers(rows_by_sha, outliers_csv,
-                                          STAGE3_N, MAX_BASELINE_MS) \
+    s3_outliers, csv_all = _pick_outliers(rows_by_sha, outliers_csv) \
         if outliers_csv else (None, [])
     if s3_outliers:
         s3 = s3_outliers
-        stage3_criteria = (f"top-{STAGE3_N} residual outliers from "
-                           f"{outliers_csv.name}, capped @ "
-                           f"{MAX_BASELINE_MS}ms baseline")
+        stage3_criteria = (f"stratified outliers from {outliers_csv.name} "
+                           f"(small≤{STAGE3_SMALL_MS}ms / "
+                           f"mid<{STAGE3_MID_MS}ms / "
+                           f"large≤{STAGE3_MAX_BASELINE_MS}ms; "
+                           f"top-residual within band; "
+                           f"target {STAGE3_PICK_SMALL}+{STAGE3_PICK_MID}+"
+                           f"{STAGE3_PICK_LARGE})")
     else:
         s3 = _center_pick(pool_c5, STAGE3_N)
         stage3_criteria = ("FALLBACK: decisive runtime cluster c5 "

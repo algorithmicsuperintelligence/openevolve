@@ -1,12 +1,12 @@
 {
-  "selection": "5 top-5 residual outliers from outliers_top.csv, capped @ 120000ms baseline",
+  "selection": "5 stratified outliers from outliers_top.csv (small\u226410000ms / mid<500000ms / large\u22641500000ms; top-residual within band; target 2+2+1)",
   "source": "cpsat-bench/problems.jsonl",
   "sha256": [
     "5f84583fd6d8cd9e732ba4f0c0922ce8935d1ef2820ebbd9fe01a87ec3121746",
     "303a6733c9ec03beaf7942544bf89ce2ecba38c65ae2e6a93e248b36e6b7fc2a",
-    "d8130c88625b627297a53f53c8e762e3364a3a80df8f3c156308af5f39bfd89d",
-    "e2b2952cbec18758e829524bf6dbc3429f6a22fa6d02d67a9a769b04e568acda",
-    "471adab20a3091cc680bb5711324febc0100c3a3ef98bc2c30d1f5812cff17ce"
+    "c0bbae62f14d03166e20cbff5fabab7917480464a9baf804ec42409b26e0d32c",
+    "073ef8ba3455034f551b19285f0e25708263e1fbe2bbb1bbcdeb5bc650889151",
+    "7e5aa4016ad68c0efd86e36186d0de0f5d8c69fc9d27fdd2b3976e26905325de"
   ],
   "summary": [
     {
@@ -20,19 +20,19 @@
       "baseline_ms": 3530.81
     },
     {
-      "sha": "d8130c88625b",
+      "sha": "c0bbae62f14d",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3748.33
+      "baseline_ms": 400652
     },
     {
-      "sha": "e2b2952cbec1",
+      "sha": "073ef8ba3455",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 2894.64
+      "baseline_ms": 1496560.0
     },
     {
-      "sha": "471adab20a30",
+      "sha": "7e5aa4016ad6",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3311.66
+      "baseline_ms": 1482010.0
     }
   ]
 }

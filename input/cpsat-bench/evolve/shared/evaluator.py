@@ -489,7 +489,23 @@ def evaluate_stage2(program_path):
 def evaluate_stage3(program_path):
     # openevolve cascade hardcodes 3 stages, so user-stage4 (broad runtime
     # sample) is chained inside stage3 via the runtime cascade_threshold gate.
+    #
+    # Phase1/2 (W=1) policy: SKIP stage3 entirely. Stage3 holds outlier
+    # problems whose baseline is W=8-equivalent (raw-data was recorded with
+    # workers=8); running them at W=1 takes ≥10× longer with no signal —
+    # phase1/2 tune knobs that are irrelevant at W=1 anyway (subsolver mix,
+    # cuts). For W=1 phases, skip stage3 and go straight to stage4 as the
+    # final cascade step.
     w = _peek_workers(program_path)
+    if w == 1:
+        problems4 = _filter_stage4(_load_problems(w))
+        r4 = _evaluate(program_path, problems4, "stage4")
+        if isinstance(r4, EvaluationResult):
+            r4.artifacts["stage3_policy"] = (
+                "skipped: phase has num_search_workers=1 — outlier stage3 "
+                "is W=8-only (see evaluator.evaluate_stage3 docstring)")
+        return r4
+
     problems3 = _filter_stage3(_load_problems(w))
     r3 = _evaluate(program_path, problems3, "stage3")
     if not isinstance(r3, EvaluationResult):

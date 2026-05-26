@@ -15,6 +15,13 @@ MULTI-WORKER BASELINES (2026-05 revision):
   Auto-discovery: walks sibling phase*_*/initial_program.py and unions every
   PHASE_LOCKED["num_search_workers"]. Override with --workers 1,8 if needed.
 
+STAGE3 OUTLIER POLICY (2026-05 revision):
+  Stage3 holds outlier problems with W=8-equivalent baselines from raw-data,
+  some > 1500s. Measuring those at W=1 would either timeout or take ~10×
+  longer with no value (evaluator skips stage3 for W=1 phases anyway — see
+  evaluate_stage3). To save rebaseline wall-clock, this script EXCLUDES stage3
+  shas from the W=1 task list and measures stage3 only at W>=2.
+
 Output schema (shared/local_baseline.json):
   {
     "<sha>": {
@@ -83,19 +90,23 @@ def _load_problem_index():
     return idx
 
 
-def _load_target_shas():
+def _load_target_shas(include_stage3=True):
+    """Union of stage sample SHAs (dedup, ordered by first appearance).
+    include_stage3=False → drop stage3 sample (used for W=1 task list)."""
     if not _STAGE1_SAMPLE.exists():
         print(f"ERROR: {_STAGE1_SAMPLE} missing — run build_samples.py first",
               file=sys.stderr)
         sys.exit(2)
-    ids = []
-    seen = set()
-    for sample_path, label in (
+    samples = [
         (_STAGE1_SAMPLE, "stage1"),
         (_STAGE2_SAMPLE, "stage2"),
-        (_STAGE3_SAMPLE, "stage3"),
         (_STAGE4_SAMPLE, "stage4"),
-    ):
+    ]
+    if include_stage3:
+        samples.insert(2, (_STAGE3_SAMPLE, "stage3"))
+    ids = []
+    seen = set()
+    for sample_path, label in samples:
         if not sample_path.exists():
             print(f"WARN: {sample_path.name} missing — skipping {label}", file=sys.stderr)
             continue
@@ -213,34 +224,46 @@ def main():
         worker_counts = _discover_phase_workers()
         print(f"[rebaseline] worker counts (auto-discovered): {worker_counts}")
 
-    shas = _load_target_shas()
+    # Build BOTH task lists: full (W>=2) and stage3-excluded (W=1).
     idx = _load_problem_index()
 
-    tasks = []
-    for i, sha in enumerate(shas):
-        meta = idx.get(sha)
-        if meta is None:
-            print(f"ERROR: {sha[:12]} not in problems.jsonl", file=sys.stderr)
-            return 2
-        path = _RAW_DIR / meta["problem_filename"]
-        if not path.exists():
-            print(f"ERROR: input not found: {path}", file=sys.stderr)
-            return 2
-        tasks.append((i, meta, path))
+    def _build_tasks(shas):
+        out = []
+        for i, sha in enumerate(shas):
+            meta = idx.get(sha)
+            if meta is None:
+                print(f"ERROR: {sha[:12]} not in problems.jsonl",
+                      file=sys.stderr)
+                sys.exit(2)
+            path = _RAW_DIR / meta["problem_filename"]
+            if not path.exists():
+                print(f"ERROR: input not found: {path}", file=sys.stderr)
+                sys.exit(2)
+            out.append((i, meta, path))
+        return out
+
+    shas_full = _load_target_shas(include_stage3=True)
+    shas_no_stage3 = _load_target_shas(include_stage3=False)
+    tasks_full = _build_tasks(shas_full)
+    tasks_no_stage3 = _build_tasks(shas_no_stage3)
+    n_stage3_only = len(shas_full) - len(shas_no_stage3)
 
     cores = core_range()
     if cores is None:
         cores = list(range(1, parallel_solvers(default=1) + 1))
 
-    print(f"rebaselining union of stage{{1,2,3,4}}_sample.json: "
-          f"{len(tasks)} problems × {len(worker_counts)} worker counts")
+    print(f"rebaselining stage{{1,2,3,4}}_sample.json: "
+          f"{len(tasks_full)} problems total, {n_stage3_only} stage3-only")
+    print(f"  W=1 skips stage3 ({len(tasks_no_stage3)} problems)")
+    print(f"  W>=2 measures all   ({len(tasks_full)} problems)")
+    print(f"  worker counts: {worker_counts}")
     print(f"  per-problem timeout = {REBASELINE_TIMEOUT_S}s (never cut short), "
           f"core pool = {cores}")
     print()
 
     # results[sha]["by_workers"][str(w)] = {...}
     results = {}
-    for meta in (m for _, m, _ in tasks):
+    for meta in (m for _, m, _ in tasks_full):
         results[meta["sha"]] = {
             "raw_result": meta["raw_result"],
             "raw_elapsed_ms": meta["raw_ms"],
@@ -250,6 +273,9 @@ def main():
     t_start = time.monotonic()
     mismatch_total = 0
     for w in worker_counts:
+        tasks = tasks_no_stage3 if w == 1 else tasks_full
+        print(f"[W={w}] {len(tasks)} problems "
+              f"({'stage3 skipped' if w == 1 else 'all stages'})", flush=True)
         completed = _measure_at_workers(tasks, w, cores)
         for i, meta, res, block in completed:
             got_result = res.get("result", "Unknown")
@@ -288,10 +314,11 @@ def main():
 
     elapsed = time.monotonic() - t_start
     _OUT.write_text(json.dumps(results, indent=2) + "\n")
+    n_runs = sum(len(r["by_workers"]) for r in results.values())
     print()
     print(f"wrote {_OUT.relative_to(_BENCH_DIR.parent)} "
-          f"({len(results)} entries × {len(worker_counts)} W = "
-          f"{len(results) * len(worker_counts)} runs, {mismatch_total} mismatches)")
+          f"({len(results)} entries, {n_runs} (sha,W) runs, "
+          f"{mismatch_total} mismatches)")
     print(f"total time: {elapsed:.1f}s")
     if mismatch_total:
         print(f"WARNING: {mismatch_total} (problem, W) pairs had result mismatch — "

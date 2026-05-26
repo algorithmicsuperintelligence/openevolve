@@ -47,18 +47,27 @@ LLM-mutated initial_program.py
 evaluator.py:
     1. get_params(problem=None, stage=...) → global dict (workers/locked)
     2. LOCKED-violation check (random_seed, num_search_workers, timeout_sec)
-    3. stage1 (5 problems, runtime Q1+Q2 cluster centers):
+    3. stage1 (10 problems, runtime Q1+Q2 cluster centers):
         get_params(problem=p, stage="stage1") per problem
         invalid_param triggers early 0
         score → gate (cascade_thresholds[0]) → stage2
-    4. stage2 (5 problems, runtime Q3+Q4 cluster centers): same
-    5. stage3 (5 OUTLIER problems from Statistics/outliers_top.csv,
-       capped @ MAX_BASELINE_MS):
+    4. stage2 (10 problems, runtime Q3+Q4 cluster centers): same
+    5. stage3 (5 OUTLIER problems, stratified small/mid/large @ cap=1.5M ms,
+       phase3/4 only — phase1/2 skips stage3 and goes direct to stage4):
         get_params(problem=p, stage="stage3") — STAGE3_OVERRIDES applied
         on top of GLOBAL_OVERRIDES + SIZE_BUCKETS match
         score → gate (cascade_thresholds[2]) → stage4 (chained inside stage3)
     6. stage4 (20 broad-runtime problems): final metrics + artifacts
 ```
+
+### Why phase1/2 skip stage3
+
+Stage3 holds outlier problems whose recorded baseline came from W=8 runs
+(median ~25min). Running them at W=1 (phase1/2 PHASE_LOCKED) takes ~10×
+longer with no useful signal — phase1/2 tune knobs (presolve, single-worker
+search) that the outliers don't really exercise. `evaluate_stage3` checks
+`_peek_workers(program_path)` and, when W=1, returns stage4 metrics
+directly with a `stage3_policy=skipped` artifact note.
 
 ### Per-problem param resolution
 
