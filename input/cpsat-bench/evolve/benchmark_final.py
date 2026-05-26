@@ -26,6 +26,7 @@ Sample selection (same as final_verify.py):
 import argparse
 import csv
 import importlib.util
+import inspect
 import json
 import pathlib
 import statistics
@@ -44,10 +45,41 @@ _BENCH_DIR = _HERE.parent
 _RAW_DIR = _BENCH_DIR / "raw-data"
 _PROBLEMS_JSONL = _BENCH_DIR / "problems.jsonl"
 _FINAL_SAMPLE = _HERE / "shared" / "final_sample.json"
+_OUTLIERS_JSON = _HERE / "shared" / "outliers.json"
 
 _DEFAULT_ITERS = 20
 _DEFAULT_TIMEOUT_S = 300
 _DECISIVE = ("OPTIMAL", "FEASIBLE")
+
+
+def _load_outlier_shas():
+    if not _OUTLIERS_JSON.exists():
+        return set()
+    try:
+        d = json.loads(_OUTLIERS_JSON.read_text())
+    except (json.JSONDecodeError, OSError):
+        return set()
+    return set(d.get("outliers") or {})
+
+
+def _supports_kwargs(fn, *kwargs):
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    params_ = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params_.values()):
+        return True
+    return any(name in params_ for name in kwargs)
+
+
+def _resolve_params(fn, problem, stage_name):
+    kwargs = {}
+    if _supports_kwargs(fn, "problem"):
+        kwargs["problem"] = problem
+    if _supports_kwargs(fn, "stage"):
+        kwargs["stage"] = stage_name
+    return fn(**kwargs) if kwargs else fn()
 
 
 def _load_program(program_path):
@@ -61,15 +93,23 @@ def _load_program(program_path):
 
 
 def _load_problem_index():
+    outliers = _load_outlier_shas()
     idx = {}
     with open(_PROBLEMS_JSONL) as f:
         for line in f:
             d = json.loads(line)
-            idx[d["problem_sha256"]] = {
-                "sha": d["problem_sha256"],
+            sha = d["problem_sha256"]
+            features = d.get("features") or {}
+            idx[sha] = {
+                "sha": sha,
                 "problem_filename": d["problem_filename"],
                 "raw_ms": (d.get("cpsat_status") or {}).get("elapsed_ms", 0),
                 "raw_result": (d.get("cpsat_status") or {}).get("result"),
+                "num_variables": int(features.get("num_variables") or 0),
+                "num_constraints": int(features.get("num_constraints") or 0),
+                "num_bool": int(features.get("num_bool") or 0),
+                "num_int": int(features.get("num_int") or 0),
+                "is_outlier": sha in outliers,
             }
     return idx
 
@@ -154,7 +194,10 @@ def main():
         return 2
 
     program = _load_program(program_path)
-    variant_params = program.get_params()
+    # No-arg path resolves the "global" params used for worker/block sizing,
+    # locked-key validation, and summary diff stats. Per-problem variants
+    # (SIZE_BUCKETS + STAGE3_OVERRIDES) are resolved inside _worker below.
+    variant_params = _resolve_params(program.get_params, None, "final")
     _phase_locked = getattr(program, "PHASE_LOCKED", None)
     _lock = _phase_locked if isinstance(_phase_locked, dict) else LOCKED
     violations = {k: variant_params.get(k) for k in _lock
@@ -195,9 +238,16 @@ def main():
         slot = i % n_parallel
         v_core = blocks[slot]
         b_core = baseline_cores[slot]
+        # Per-problem param resolution. Locked + worker count re-pinned to
+        # match `variant_params` so core blocks stay consistent.
+        per_params = _resolve_params(program.get_params, meta, "final")
+        for k, v in _lock.items():
+            per_params[k] = v
+        if "num_search_workers" in variant_params:
+            per_params["num_search_workers"] = variant_params["num_search_workers"]
         t0 = time.monotonic()
         baseline_runs = _run_repeat(pb, BASELINE, n_iters, timeout_s, b_core, "baseline")
-        variant_runs = _run_repeat(pb, variant_params, n_iters, timeout_s, v_core, "variant")
+        variant_runs = _run_repeat(pb, per_params, n_iters, timeout_s, v_core, "variant")
         dt = time.monotonic() - t0
         return i, meta, baseline_runs, variant_runs, v_core, dt
 

@@ -13,15 +13,23 @@ boundaries don't get distorted by long-tail monsters.
 
 Stages (decisive = OPTIMAL or FEASIBLE; this dataset is all OPTIMAL):
   Runtime is clustered into N_BUCKETS via 1D k-means (Lloyd's). Clusters
-  are ordered by ascending centroid (c1=fastest, c5=slowest), then merged:
+  are ordered by ascending centroid (c1=fastest, c5=slowest), then merged.
 
-  stage1 (5)  center pick from clusters c1+c2 (fast group)
-  stage2 (5)  center pick from clusters c3+c4 (mid group)
-  stage3 (5)  center pick from cluster  c5    (slow group)
+  stage1 (5)  center pick from clusters c1+c2 (fast group)   — default-param sanity
+  stage2 (5)  center pick from clusters c3+c4 (mid group)    — default-param sanity
+  stage3 (5)  outliers from Statistics/outliers_top.csv      — per-problem tune target
+              (top residual, capped at MAX_BASELINE_MS so a single tune
+              iteration stays in time budget)
   stage4 (20) quintile-spread broad sample, dedup vs stage1-3
+
+Stage3 sample also writes shared/outliers.json (sha -> {residual, baseline_ms,
+n_cons, n_vars}) so the evaluator can mark `is_outlier` on problem records and
+phase initial_program.py can branch STAGE3_OVERRIDES on it.
 """
+import csv
 import json
 import pathlib
+import sys
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _BENCH = _HERE.parent
@@ -31,6 +39,13 @@ _STAGE1 = _HERE / "shared" / "stage1_sample.json"
 _STAGE2 = _HERE / "shared" / "stage2_sample.json"
 _STAGE3 = _HERE / "shared" / "stage3_sample.json"
 _STAGE4 = _HERE / "shared" / "stage4_sample.json"
+_OUTLIERS_JSON = _HERE / "shared" / "outliers.json"
+
+# outliers_top.csv lives under cpsat-bench/Statistics/ (or its rename "1/").
+_OUTLIERS_CSV_CANDIDATES = [
+    _BENCH / "Statistics" / "outliers_top.csv",
+    _BENCH / "1" / "outliers_top.csv",
+]
 
 STAGE1_N = 5
 STAGE2_N = 5
@@ -42,7 +57,7 @@ OUTLIER_IQR_K = 3.0
 
 STAGE1_STRATEGY = "center"
 STAGE2_STRATEGY = "center"
-STAGE3_STRATEGY = "center"
+STAGE3_STRATEGY = "outliers"   # was "center" — now picks outliers_top.csv
 STAGE4_STRATEGY = "spread"
 
 _DECISIVE_RESULTS = {"OPTIMAL", "FEASIBLE"}
@@ -98,7 +113,103 @@ def _pick(strategy, sorted_rows, n_pick):
         return _center_pick(sorted_rows, n_pick)
     if strategy == "spread":
         return _quintile_spread(sorted_rows, n_pick, N_BUCKETS)
+    if strategy == "outliers":
+        # stage3 uses _pick_outliers() directly; this branch should not fire.
+        raise ValueError("'outliers' strategy requires _pick_outliers(), not _pick()")
     raise ValueError(f"unknown sample strategy: {strategy!r}")
+
+
+def _find_outliers_csv():
+    for p in _OUTLIERS_CSV_CANDIDATES:
+        if p.exists():
+            return p
+    return None
+
+
+def _load_outliers_top(csv_path):
+    """Read outliers_top.csv -> ordered list of {sha, residual, elapsed_ms,
+    n_vars, n_cons}, sorted by descending residual (already the file's order)."""
+    rows = []
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            try:
+                rows.append({
+                    "sha": r["_sha"],
+                    "residual": float(r.get("_residual") or 0.0),
+                    "elapsed_ms": float(r.get("_elapsed_ms") or 0.0),
+                    "n_vars": int(float(r.get("_num_variables") or 0)),
+                    "n_cons": int(float(r.get("_num_constraints") or 0)),
+                })
+            except (KeyError, ValueError) as e:
+                print(f"warning: skipping malformed outlier row: {e}",
+                      file=sys.stderr)
+                continue
+    rows.sort(key=lambda d: -d["residual"])
+    return rows
+
+
+def _pick_outliers(rows_by_sha, csv_path, n_pick, max_baseline_ms):
+    """Pick top-N residual outliers from outliers_top.csv whose baseline_ms is
+    ≤ max_baseline_ms (so a single tune iteration fits time budget).
+
+    Falls back to slowest-cluster center pick (legacy stage3 logic) if csv is
+    missing or yields < n_pick eligible entries."""
+    if csv_path is None:
+        print("warning: outliers_top.csv not found — falling back to "
+              "slow-cluster center pick for stage3", file=sys.stderr)
+        return None, []
+
+    csv_rows = _load_outliers_top(csv_path)
+    picks = []
+    used = set()
+    diag = []
+    for c in csv_rows:
+        if len(picks) >= n_pick:
+            break
+        if c["elapsed_ms"] > max_baseline_ms:
+            diag.append((c["sha"][:12], c["elapsed_ms"],
+                         "skip: > MAX_BASELINE_MS"))
+            continue
+        d = rows_by_sha.get(c["sha"])
+        if d is None:
+            diag.append((c["sha"][:12], c["elapsed_ms"],
+                         "skip: not in problems.jsonl"))
+            continue
+        if c["sha"] in used:
+            continue
+        picks.append(d)
+        used.add(c["sha"])
+        diag.append((c["sha"][:12], c["elapsed_ms"],
+                     f"pick (residual={c['residual']:.3f}, "
+                     f"n_cons={c['n_cons']})"))
+
+    print(f"outliers stage3: from {csv_path.relative_to(_BENCH.parent)}, "
+          f"picked {len(picks)}/{n_pick} under MAX_BASELINE_MS={max_baseline_ms}ms")
+    for sha12, ms, note in diag:
+        print(f"  {sha12}  {int(ms):>10}ms  {note}")
+
+    return picks, csv_rows
+
+
+def _write_outliers_json(picks, csv_all):
+    """Write shared/outliers.json: {sha: {residual, elapsed_ms, n_vars, n_cons}}
+    for every entry in outliers_top.csv (not just the stage3 picks). The
+    evaluator uses this map to set `is_outlier` on problem records."""
+    by_sha = {c["sha"]: {
+        "residual": c["residual"],
+        "elapsed_ms": c["elapsed_ms"],
+        "n_vars": c["n_vars"],
+        "n_cons": c["n_cons"],
+    } for c in (csv_all or [])}
+    stage3_shas = [_id_key(d) for d in picks]
+    payload = {
+        "stage3_sample": stage3_shas,
+        "outliers": by_sha,
+    }
+    _OUTLIERS_JSON.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"wrote {_OUTLIERS_JSON.relative_to(_BENCH.parent)} "
+          f"({len(by_sha)} outliers, stage3_sample={len(stage3_shas)})")
 
 
 def _center_pick(sorted_rows, n_pick):
@@ -255,7 +366,26 @@ def main():
 
     s1 = _pick(STAGE1_STRATEGY, pool_c12, STAGE1_N)
     s2 = _pick(STAGE2_STRATEGY, pool_c34, STAGE2_N)
-    s3 = _pick(STAGE3_STRATEGY, pool_c5, STAGE3_N)
+
+    # Stage3: outliers from Statistics/outliers_top.csv (top residual, capped
+    # at MAX_BASELINE_MS). Fallback to slow-cluster center pick if csv missing
+    # or yields nothing usable.
+    rows_by_sha = {_id_key(d): d for d in rows}
+    outliers_csv = _find_outliers_csv()
+    s3_outliers, csv_all = _pick_outliers(rows_by_sha, outliers_csv,
+                                          STAGE3_N, MAX_BASELINE_MS) \
+        if outliers_csv else (None, [])
+    if s3_outliers:
+        s3 = s3_outliers
+        stage3_criteria = (f"top-{STAGE3_N} residual outliers from "
+                           f"{outliers_csv.name}, capped @ "
+                           f"{MAX_BASELINE_MS}ms baseline")
+    else:
+        s3 = _center_pick(pool_c5, STAGE3_N)
+        stage3_criteria = ("FALLBACK: decisive runtime cluster c5 "
+                           "(outliers_top.csv unavailable or empty)")
+
+    _write_outliers_json(s3 if s3_outliers else [], csv_all)
 
     # Stage4: broad spread across full decisive pool, dedup vs stage1-3.
     used = {_id_key(d) for d in (s1 + s2 + s3)}
@@ -267,7 +397,7 @@ def main():
 
     _write_sample(_STAGE1, s1, "stage1", "decisive runtime clusters c1+c2 (fast group)")
     _write_sample(_STAGE2, s2, "stage2", "decisive runtime clusters c3+c4 (mid group)")
-    _write_sample(_STAGE3, s3, "stage3", "decisive runtime cluster c5 (slow group)")
+    _write_sample(_STAGE3, s3, "stage3", stage3_criteria)
     _write_sample(_STAGE4, s4, "stage4", "broad runtime spread, dedup vs stage1-3")
 
     for label, picks in (("stage1", s1), ("stage2", s2),

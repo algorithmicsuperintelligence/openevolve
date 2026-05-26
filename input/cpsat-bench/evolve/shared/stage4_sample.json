@@ -3,25 +3,25 @@
   "source": "cpsat-bench/problems.jsonl",
   "sha256": [
     "5976726485c23db055e872eabd8a172c73609854b8c228b47ccf42422bf7c8b5",
-    "bcaed7c25140d0d5731f397b188a271512394f14fabe67b495076b23436e1d57",
     "3e2b36379a2919afebb3b79a5e34bd8fd946fbc28059edd6a832ad467f412fc3",
-    "f9e4e9cdb24462a34649e1e803328a7ce8332623aa743a6197d0c69af13b02d2",
-    "2d527c24410310a430c63e56560a9f6346660fde96829775a284645f63c86f17",
-    "395b9abdb72014e256f558ea722b7df71fedf88a40e4bf0f70b34ed75d3e7ce1",
-    "8f41589af6050547301acab498a4f5b7894920b712156a7e2fac1664966dd04e",
-    "8073c7c85295abafcc3ca9dde8e50e775e59175274e1b7d3eec04570581b4469",
-    "d7df934f3b3ba0e8254473ce06758550361bdc3f1491b9f8d9053d63822f60cf",
-    "3b522f278d5967449cb3fc8dcdcf198cc3ecd7bd5f5c03cec433b4bb332433c0",
-    "cf629228e69ab5f293c8c30459175cccac150e85ec84539bfd8d5dc27540cf1a",
-    "674b484eb726690bc9d4878cb217bc6b22f30eac4f8d512be6e2713a303545dd",
-    "4e4bc1ad622d2addafb58df0886f20fabf9c872e18cba83057410255a6e2f356",
-    "ed8349c414d687ac9dd6fc5f0f2406149f5e340dbddbb010a78b646aa1dff047",
-    "c6a6b2aab48ad0047d3e14c25d630fb1e22e3844608af935b5e481c1965a8010",
-    "12e68b0b5089d173f44977d0bc3a9a85c4639b3691b74fce9d76d473e3231d38",
-    "62c6e2f566388ddc13097f1369c9ad4569c1b4f54f888066e8ab2bfe96d3a0b4",
-    "14ea5ccece18b8bffb5947b963c7d0f9e5a2f1c56d1ccd70e1493be39380ba78",
-    "90e16615aa9873fcba0b9ffeaec5584d26877834691f2b3011096e29281d26ec",
-    "a49d307cfcf3ca9dff031a54cca31086a1882b7c0e65c1da60de651a8c9a79b8"
+    "d28acbdfd6c0f8dc93e215ce1a2fc55b369d63cd6b94efdbfaad6045b6f882ea",
+    "1a1c06a66af7443f6136b4ba851fd267ab7fff909953005391a5e81fc0a57af0",
+    "a4dbf4239260ca8770d6c3f876a98ba92dd42102400396cf211e7f9696e4776c",
+    "6c64b95d90a6caf1573da836e471273a2845a145a3ce07ccc4124cf7654bc226",
+    "87106998551ed8b22ec13067c8b3a05d47ccb12637e779a1040a9def4e9765b6",
+    "9c801bcf5dc6a4fa11be76710e268871e68ba55da83399f00fb9e0390f675962",
+    "ca043f0850c14f2d99c0a48b1a959387505b2facf3551fa053ddb9c68bfa58b5",
+    "9f330e3d7528eea46bbfbd640e4dc0f7d732bf1fdc1dd9e39c323406b9cede01",
+    "4dc032eadf8f2c84d493c917a5356a18eb9633a34763a134563923b85548d7ba",
+    "c640cc60784b5f00e395f07384f65c540c7f59d3766fc098f1c34f8645b0e4ae",
+    "55194630a32dfef1e51e9adc4cd97e19a58f98d99e9d0668428a70b57f0539e5",
+    "d1b2c9992efda91256f54b5da850272632e2cd7a46cab2a4e81f74cedf156620",
+    "f38c4b16a01010ad99c30db049af26efc7fa7366d244e2d8b09c59fb44bc51f6",
+    "e5c9e667fbee60ca8a589904e1a7afc30c81394efd58e388a9f63470fa4ea406",
+    "8a3a0575a6af4727c9e27c2e63a5da1f147282a3478b1278fd9bc8069e8110b1",
+    "9b68c85c1a117037be6720b3f7a9f0c2b040b41c9b725525fb162df7f3a2910c",
+    "e272c0e4899bd231855a0205e36e42663a9208b44d081e1149dc37bdafe3a33d",
+    "5b8c61f99d31fed9077ef475613e5be6648f55f2a47bcc92c0e5d0e3b41ecb94"
   ],
   "summary": [
     {
@@ -30,99 +30,99 @@
       "baseline_ms": 105.102
     },
     {
-      "sha": "bcaed7c25140",
-      "baseline_result": "OPTIMAL",
-      "baseline_ms": 502.374
-    },
-    {
       "sha": "3e2b36379a29",
       "baseline_result": "OPTIMAL",
       "baseline_ms": 626.761
     },
     {
-      "sha": "f9e4e9cdb244",
+      "sha": "d28acbdfd6c0",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 668.915
+      "baseline_ms": 974.173
     },
     {
-      "sha": "2d527c244103",
+      "sha": "1a1c06a66af7",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 695.523
+      "baseline_ms": 1500.26
     },
     {
-      "sha": "395b9abdb720",
+      "sha": "a4dbf4239260",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1394.5
+      "baseline_ms": 1500.8
     },
     {
-      "sha": "8f41589af605",
+      "sha": "6c64b95d90a6",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1599.16
+      "baseline_ms": 1883.75
     },
     {
-      "sha": "8073c7c85295",
+      "sha": "87106998551e",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1649.08
+      "baseline_ms": 2555.9
     },
     {
-      "sha": "d7df934f3b3b",
+      "sha": "9c801bcf5dc6",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1764.03
+      "baseline_ms": 3098.94
     },
     {
-      "sha": "3b522f278d59",
+      "sha": "ca043f0850c1",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 2334.59
+      "baseline_ms": 3101.11
     },
     {
-      "sha": "cf629228e69a",
+      "sha": "9f330e3d7528",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 2972.04
+      "baseline_ms": 3351.44
     },
     {
-      "sha": "674b484eb726",
+      "sha": "4dc032eadf8f",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3104.21
+      "baseline_ms": 3844.03
     },
     {
-      "sha": "4e4bc1ad622d",
+      "sha": "c640cc60784b",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3107.88
+      "baseline_ms": 4313.07
     },
     {
-      "sha": "ed8349c414d6",
+      "sha": "55194630a32d",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3318.12
+      "baseline_ms": 4354.72
     },
     {
-      "sha": "c6a6b2aab48a",
+      "sha": "d1b2c9992efd",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3883.39
+      "baseline_ms": 5355.17
     },
     {
-      "sha": "12e68b0b5089",
+      "sha": "f38c4b16a010",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 4031.48
+      "baseline_ms": 6043.44
     },
     {
-      "sha": "62c6e2f56638",
+      "sha": "e5c9e667fbee",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 4069.74
+      "baseline_ms": 6608.39
     },
     {
-      "sha": "14ea5ccece18",
+      "sha": "8a3a0575a6af",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 4358.96
+      "baseline_ms": 6624.34
     },
     {
-      "sha": "90e16615aa98",
+      "sha": "9b68c85c1a11",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 5772.7
+      "baseline_ms": 7909.24
     },
     {
-      "sha": "a49d307cfcf3",
+      "sha": "e272c0e4899b",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 10574.9
+      "baseline_ms": 11336.5
+    },
+    {
+      "sha": "5b8c61f99d31",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 19871.1
     }
   ]
 }

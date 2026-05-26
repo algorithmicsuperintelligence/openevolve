@@ -1,0 +1,191 @@
+{
+  "stage3_sample": [
+    "5f84583fd6d8cd9e732ba4f0c0922ce8935d1ef2820ebbd9fe01a87ec3121746",
+    "303a6733c9ec03beaf7942544bf89ce2ecba38c65ae2e6a93e248b36e6b7fc2a",
+    "d8130c88625b627297a53f53c8e762e3364a3a80df8f3c156308af5f39bfd89d",
+    "e2b2952cbec18758e829524bf6dbc3429f6a22fa6d02d67a9a769b04e568acda",
+    "471adab20a3091cc680bb5711324febc0100c3a3ef98bc2c30d1f5812cff17ce"
+  ],
+  "outliers": {
+    "9c28c175d2cd7871aaff707f1cdbb5132941625137f09fd93fa2116fc9b3470e": {
+      "residual": 1.2970725496824338,
+      "elapsed_ms": 5307350.0,
+      "n_vars": 20881,
+      "n_cons": 236975
+    },
+    "ea6187c13380778e85ba5d23d7e056bb2abb811dea32e9675213085586a23a06": {
+      "residual": 1.2433334003277663,
+      "elapsed_ms": 4689630.0,
+      "n_vars": 20881,
+      "n_cons": 236975
+    },
+    "64e85d066f667ad5185c60b610746320099aafce4e68f71ded08c02a10c15ec2": {
+      "residual": 1.2381431698374108,
+      "elapsed_ms": 5707370.0,
+      "n_vars": 20867,
+      "n_cons": 246453
+    },
+    "5651d412c1f0510a7ff1b43da9e22935ec2c616c7ad6d2f15b7d8cb00930480c": {
+      "residual": 1.133091777448728,
+      "elapsed_ms": 4481100.0,
+      "n_vars": 20867,
+      "n_cons": 246453
+    },
+    "fe2b12d0f0ce68302c564ec85a5cf7640583a9cf878d8ac3d467d8cab178e90e": {
+      "residual": 1.069007782061628,
+      "elapsed_ms": 3111920.0,
+      "n_vars": 20867,
+      "n_cons": 236494
+    },
+    "b14c571a562972071899d8eb08ed99fa4dfc944eedf4613632bbc2008ae90e23": {
+      "residual": 0.8756390854867613,
+      "elapsed_ms": 1873900.0,
+      "n_vars": 20844,
+      "n_cons": 233581
+    },
+    "cdc476dfd87c9b11d9a46dc7e8aeaa0f3efa9708cac0093587abb35f1228ffe0": {
+      "residual": 0.7970804353527665,
+      "elapsed_ms": 1549180.0,
+      "n_vars": 20830,
+      "n_cons": 233076
+    },
+    "5f84583fd6d8cd9e732ba4f0c0922ce8935d1ef2820ebbd9fe01a87ec3121746": {
+      "residual": 0.7969822465157113,
+      "elapsed_ms": 6436.58,
+      "n_vars": 1979,
+      "n_cons": 21981
+    },
+    "073ef8ba3455034f551b19285f0e25708263e1fbe2bbb1bbcdeb5bc650889151": {
+      "residual": 0.7818373624636896,
+      "elapsed_ms": 1496560.0,
+      "n_vars": 20830,
+      "n_cons": 233100
+    },
+    "7e5aa4016ad68c0efd86e36186d0de0f5d8c69fc9d27fdd2b3976e26905325de": {
+      "residual": 0.773978648305965,
+      "elapsed_ms": 1482010.0,
+      "n_vars": 20844,
+      "n_cons": 233557
+    },
+    "96e1d05ec560b176485b6da3c8924718e9a3efa0e6605dda68c85a8354cfac91": {
+      "residual": 0.7622553039424815,
+      "elapsed_ms": 1443320.0,
+      "n_vars": 20844,
+      "n_cons": 233581
+    },
+    "484ac3f3201370073c6a5c037e22b9f57078489440e357c56a6d9520b4c08955": {
+      "residual": 0.7430443637073942,
+      "elapsed_ms": 1380120.0,
+      "n_vars": 20844,
+      "n_cons": 233557
+    },
+    "26f53ed6235393586f5beac50e9c02ddb551c8112f394470fa9f3c1764d3c5b0": {
+      "residual": 0.7188228191471246,
+      "elapsed_ms": 856786.0,
+      "n_vars": 17076,
+      "n_cons": 192805
+    },
+    "083beb025bc59908b1bdace2fac047f8f204cdb3fc4f947c0af0327a928abdcf": {
+      "residual": 0.6452098909063135,
+      "elapsed_ms": 686113.0,
+      "n_vars": 17058,
+      "n_cons": 190773
+    },
+    "bc676605802ed5fb85e5006a7df234667d32237dd086e56b2a8bd20a578155e4": {
+      "residual": 0.6308698262064754,
+      "elapsed_ms": 837165.0,
+      "n_vars": 17070,
+      "n_cons": 199450
+    },
+    "9c5486163986ecf6d1316c2ad9ab5a154f3847a1b7e01d23f2ad6251435b68dd": {
+      "residual": 0.6033156870934357,
+      "elapsed_ms": 1312210.0,
+      "n_vars": 20853,
+      "n_cons": 245972
+    },
+    "303a6733c9ec03beaf7942544bf89ce2ecba38c65ae2e6a93e248b36e6b7fc2a": {
+      "residual": 0.5798136104655174,
+      "elapsed_ms": 3530.81,
+      "n_vars": 1850,
+      "n_cons": 20766
+    },
+    "d8130c88625b627297a53f53c8e762e3364a3a80df8f3c156308af5f39bfd89d": {
+      "residual": 0.5104993662822994,
+      "elapsed_ms": 3748.33,
+      "n_vars": 1850,
+      "n_cons": 21650
+    },
+    "e2b2952cbec18758e829524bf6dbc3429f6a22fa6d02d67a9a769b04e568acda": {
+      "residual": 0.45256432545942227,
+      "elapsed_ms": 2894.64,
+      "n_vars": 1739,
+      "n_cons": 20421
+    },
+    "471adab20a3091cc680bb5711324febc0100c3a3ef98bc2c30d1f5812cff17ce": {
+      "residual": 0.44623053094988485,
+      "elapsed_ms": 3311.66,
+      "n_vars": 1863,
+      "n_cons": 21835
+    },
+    "202fbcb0eaf3a2173b0d1f86dc29d0d1f31403f91ef9ffc3b4539a004d4291d0": {
+      "residual": 0.4435643369239455,
+      "elapsed_ms": 3024.07,
+      "n_vars": 1674,
+      "n_cons": 20236
+    },
+    "b040ac13f61b42c52e957df48581cfd54d36eedaad63da36839fdde9183dece6": {
+      "residual": 0.43988588482448865,
+      "elapsed_ms": 3052.7,
+      "n_vars": 1766,
+      "n_cons": 20923
+    },
+    "c0a0dc04538c4ae54401b99c91b6b743811aab04bbc638360c16b4fc9b915728": {
+      "residual": 0.43851503778542833,
+      "elapsed_ms": 4920.17,
+      "n_vars": 2199,
+      "n_cons": 25921
+    },
+    "834873ba45a488c7f8b1d6ad0d1d689ce41cb19ae9186807eabc801920b926a5": {
+      "residual": 0.42543640356891776,
+      "elapsed_ms": 3081.59,
+      "n_vars": 1850,
+      "n_cons": 21650
+    },
+    "a87f850d84c25316081211e9935add586d4abd88a36e386cc59db72975479dc9": {
+      "residual": 0.4217202793170176,
+      "elapsed_ms": 180.457,
+      "n_vars": 715,
+      "n_cons": 7423
+    },
+    "c4fe2cc04ae7a35679d2f3e71e91d1476eaaa48ed0e0eea02642695224d1a3a5": {
+      "residual": 0.41361338316732565,
+      "elapsed_ms": 4839.59,
+      "n_vars": 2326,
+      "n_cons": 26958
+    },
+    "9c6904d7802ccf85e6e37fed810f6c741d114f7244b89d3d8801e90f0cf52cf4": {
+      "residual": 0.403130605161544,
+      "elapsed_ms": 3212.27,
+      "n_vars": 1977,
+      "n_cons": 22871
+    },
+    "7b9053fb13e462eae04cb54e9e64f7929247a3ece739347a45fdc8deacd46646": {
+      "residual": 0.39503502501284604,
+      "elapsed_ms": 2916.72,
+      "n_vars": 1859,
+      "n_cons": 21771
+    },
+    "c0bbae62f14d03166e20cbff5fabab7917480464a9baf804ec42409b26e0d32c": {
+      "residual": 0.39114990000400063,
+      "elapsed_ms": 400652.0,
+      "n_vars": 17070,
+      "n_cons": 192562
+    },
+    "63f1e1c6c7452e11af1db799f7a380dabc9c9b6edb7083f59d57c4952dfdb16d": {
+      "residual": 0.38764579685835177,
+      "elapsed_ms": 2893.75,
+      "n_vars": 1863,
+      "n_cons": 21835
+    }
+  }
+}

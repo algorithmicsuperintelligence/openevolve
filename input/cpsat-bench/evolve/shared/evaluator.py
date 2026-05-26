@@ -6,12 +6,26 @@ Score mode: cost (minimize CP-SAT objective; see score.py).
 Per-problem timeout = max(MIN_TIMEOUT_S, ceil(baseline_ms * TIMEOUT_FACTOR / 1000)).
 Locked params (see baseline_params.LOCKED) must not deviate — violation => combined_score=0.
 
+Per-problem param resolution:
+  If the program defines `get_params(problem=None, stage=None)`, the evaluator
+  calls it once per problem with the problem dict (carries num_constraints,
+  num_variables, is_outlier) and the active stage name ("stage1"…"stage4").
+  This lets phases ship SIZE_BUCKETS (constraint-count conditional overrides)
+  and STAGE3_OVERRIDES (outlier-only tuning) inside their EVOLVE-BLOCK.
+  Programs that still expose `get_params()` (no args) keep working — the
+  evaluator falls back to a single global call and applies it uniformly.
+
+Worker count / PHASE_LOCKED must stay identical across all problems within
+a phase. The evaluator reads them once via the no-arg path; per-problem
+get_params() calls must NOT change locked keys or num_search_workers.
+
 Environment overrides:
   OPENEVOLVE_MAX_PROBLEMS      cap stage problem count
   OPENEVOLVE_PARALLEL_SOLVERS  concurrent solver subprocesses (default 1)
   OPENEVOLVE_PYTHON_BIN        python for worker subprocess
 """
 import importlib.util
+import inspect
 import json
 import math
 import os
@@ -41,7 +55,20 @@ _STAGE1_SAMPLE = _HERE / "stage1_sample.json"
 _STAGE2_SAMPLE = _HERE / "stage2_sample.json"
 _STAGE3_SAMPLE = _HERE / "stage3_sample.json"
 _STAGE4_SAMPLE = _HERE / "stage4_sample.json"
+_OUTLIERS_JSON = _HERE / "outliers.json"
 _LOCAL_BASELINE = _HERE / "local_baseline.json"
+
+
+def _load_outlier_shas():
+    """Return set of SHAs flagged by outliers_top.csv (via build_samples.py
+    writing shared/outliers.json). Empty if file missing."""
+    if not _OUTLIERS_JSON.exists():
+        return set()
+    try:
+        d = json.loads(_OUTLIERS_JSON.read_text())
+    except (json.JSONDecodeError, OSError):
+        return set()
+    return set(d.get("outliers") or {})
 
 _PYTHON_BIN = os.environ.get("OPENEVOLVE_PYTHON_BIN")
 
@@ -87,6 +114,7 @@ def _load_problems(workers=1):
     local = {}
     if _LOCAL_BASELINE.exists():
         local = json.loads(_LOCAL_BASELINE.read_text())
+    outlier_shas = _load_outlier_shas()
     rows = []
     with open(_PROBLEMS_JSONL) as f:
         for line in f:
@@ -96,6 +124,7 @@ def _load_problems(workers=1):
             baseline_result = (d.get("cpsat_status") or {}).get("result")
             baseline_stats = d.get("cpsat_response_stats") or {}
             baseline_objective = (d.get("cpsat_status") or {}).get("objective_value")
+            features = d.get("features") or {}
             lo = _pick_local_baseline(local.get(sha), workers)
             if lo and lo.get("matches_raw"):
                 baseline_ms = lo["elapsed_ms"]
@@ -109,6 +138,11 @@ def _load_problems(workers=1):
                 "baseline_result": baseline_result,
                 "baseline_stats": baseline_stats,
                 "baseline_objective": baseline_objective,
+                "num_variables": int(features.get("num_variables") or 0),
+                "num_constraints": int(features.get("num_constraints") or 0),
+                "num_bool": int(features.get("num_bool") or 0),
+                "num_int": int(features.get("num_int") or 0),
+                "is_outlier": sha in outlier_shas,
             })
     return rows
 
@@ -154,6 +188,33 @@ def _err_result(metrics_extra, artifacts):
     return EvaluationResult(metrics=metrics, artifacts=artifacts)
 
 
+def _supports_kwargs(fn, *kwargs):
+    """Return True if `fn` accepts any of the named kwargs (problem/stage)."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    params_ = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params_.values()):
+        return True
+    return any(name in params_ for name in kwargs)
+
+
+def _resolve_params(program_get_params, problem, stage_name):
+    """Call program.get_params(problem=..., stage=...) when supported, else
+    fall back to get_params() (legacy single-dict per phase). Returns dict."""
+    kwargs = {}
+    if _supports_kwargs(program_get_params, "problem"):
+        kwargs["problem"] = problem
+    if _supports_kwargs(program_get_params, "stage"):
+        kwargs["stage"] = stage_name
+    p = program_get_params(**kwargs) if kwargs else program_get_params()
+    if not isinstance(p, dict):
+        raise TypeError(
+            f"get_params() returned {type(p).__name__}, expected dict")
+    return p
+
+
 def _evaluate(program_path, problems, stage_name):
     try:
         program = _load_program(program_path)
@@ -171,10 +232,11 @@ def _evaluate(program_path, problems, stage_name):
              "stage": stage_name},
         )
 
+    # Resolve "global" params (no problem context) once — used for worker
+    # count, core-block allocation, and PHASE_LOCKED enforcement. Per-problem
+    # variation only affects non-locked knobs (see _solve below).
     try:
-        params = program.get_params()
-        if not isinstance(params, dict):
-            raise TypeError(f"get_params() returned {type(params).__name__}, expected dict")
+        params = _resolve_params(program.get_params, None, stage_name)
     except Exception as e:
         return _err_result(
             {"error": f"get_params() raised: {e}"},
@@ -233,9 +295,22 @@ def _evaluate(program_path, problems, stage_name):
         idx, p = idx_p
         input_path = _RAW_DIR / p["input_file"]
         timeout_s = max(MIN_TIMEOUT_S, math.ceil(p["baseline_ms"] * TIMEOUT_FACTOR / 1000))
+        # Per-problem param resolution. Locked keys + num_search_workers MUST
+        # match the global `params` resolved earlier — re-pin defensively.
+        try:
+            per_params = _resolve_params(program.get_params, p, stage_name)
+        except Exception as e:
+            return idx, p, {"result": "ERROR", "elapsed_ms": 0,
+                            "invalid_param": f"get_params(problem,stage) raised: {e}"}, \
+                   None, timeout_s
+        for k, v in locked.items():
+            per_params[k] = v
+        if "num_search_workers" in params:
+            per_params["num_search_workers"] = params["num_search_workers"]
         core = _core_pool.get()
         try:
-            r = run_cpsat(input_path, params, timeout_s, python_bin=_PYTHON_BIN, cpu_core=core)
+            r = run_cpsat(input_path, per_params, timeout_s,
+                          python_bin=_PYTHON_BIN, cpu_core=core)
         finally:
             _core_pool.put(core)
         return idx, p, r, core, timeout_s

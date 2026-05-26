@@ -124,6 +124,218 @@ prompt:
     Watch num_conflicts and num_branches — a 2x speedup with same conflict count
     is hardware noise; a 2x with 10x fewer conflicts is a real find.
 
+    Per-problem param resolution (NEW): get_params(problem=None, stage=None).
+    Three evolution surfaces per phase:
+      GLOBAL_OVERRIDES   — every problem
+      SIZE_BUCKETS       — list[(upper_exclusive_num_constraints, dict)];
+                           first match wins. small/mid/large = <50k / 50–150k / ≥150k.
+      STAGE3_OVERRIDES   — applied ONLY when stage == "stage3" AND
+                           problem["is_outlier"] (residual outliers from
+                           Statistics/outliers_top.csv). Tune aggressive knobs
+                           that help long-tail problems without regressing the
+                           fast/mid groups (those score stage1/2 and reject the
+                           candidate before stage3 ever runs).
+
+    Stage layout in cascade:
+      stage1 (5)  fast cluster centers       — must not regress
+      stage2 (5)  mid  cluster centers       — must not regress
+      stage3 (5)  OUTLIER problems only      — STAGE3_OVERRIDES active here
+      stage4 (20) broad spread               — final score
+
+    Outliers (~30 of 430 problems) have ~80x more conflicts, ~13x more branches
+    vs baseline median (see Statistics/outliers_report.txt). Two clusters:
+    small (<50k constraints, hard small SAT-like) and large (>=150k, LP-heavy).
+    Mid bucket has 0 outliers. So SIZE_BUCKETS small/large entries pair well
+    with STAGE3_OVERRIDES.
+
+    === CP-SAT CpSolverParameters Reference (ortools 9.14.6206) ===
+    Authoritative field list (275 fields). Use ONLY these names in get_params().
+    Defaults shown; setattr-compatible via cp_model.CpSolver().parameters.
+
+    parallel/workers:
+      diversify_lns_params(bool=F), extra_subsolvers(list<str>),
+      filter_subsolvers(list<str>), ignore_subsolvers(list<str>),
+      interleave_search(bool=F), lb_relax_num_workers_threshold(int=16),
+      log_subsolver_statistics(bool=F), num_full_subsolvers(int=0),
+      num_search_workers(int=0)*LOCKED, num_workers(int=0),
+      share_binary_clauses(bool=T), share_glue_clauses(bool=F),
+      share_glue_clauses_dtime(double=1.0), share_level_zero_bounds(bool=T),
+      share_objective_bounds(bool=T), shared_tree_num_workers(int=0),
+      subsolvers(list<str>), use_objective_lb_search(bool=F)
+
+    seed/reproducibility:
+      ignore_names(bool=T), instantiate_all_variables(bool=T),
+      lns_initial_deterministic_limit(double=0.1),
+      log_search_progress(bool=F), max_deterministic_time(double=inf),
+      max_num_deterministic_batches(int=0),
+      permute_presolve_constraint_order(bool=F),
+      permute_variable_randomly(bool=F),
+      presolve_probing_deterministic_time_limit(double=30.0),
+      probing_deterministic_time_limit(double=1.0),
+      random_seed(int=1)*LOCKED,
+      shaving_deterministic_time_in_probing_search(double=0.001),
+      shaving_search_deterministic_time(double=0.1),
+      symmetry_detection_deterministic_time_limit(double=1.0)
+
+    timeout/limits:
+      max_memory_in_mb(int64=10000), max_number_of_conflicts(int64=∞),
+      max_presolve_iterations(int=3), max_time_in_seconds(double=inf),
+      stop_after_first_solution(bool=F), stop_after_presolve(bool=F),
+      stop_after_root_propagation(bool=F)
+
+    search/branching:
+      boolean_encoding_level(int=1), fix_variables_to_their_hinted_value(bool=F),
+      hint_conflict_limit(int=10),
+      initial_polarity(enum=1:{POLARITY_TRUE,POLARITY_FALSE,POLARITY_RANDOM}),
+      initial_variables_activity(double=0.0),
+      polarity_exploit_ls_hints(bool=F), polarity_rephase_increment(int=1000),
+      preferred_variable_order(enum=0:{IN_ORDER,IN_REVERSE_ORDER,IN_RANDOM_ORDER}),
+      random_polarity_ratio(double=0.0), repair_hint(bool=F),
+      search_branching(enum=0:{AUTOMATIC_SEARCH,FIXED_SEARCH,PORTFOLIO_SEARCH,
+        LP_SEARCH,PSEUDO_COST_SEARCH,PORTFOLIO_WITH_QUICK_RESTART_SEARCH,
+        HINT_SEARCH,PARTIAL_FIXED_SEARCH,RANDOMIZED_SEARCH}),
+      use_combined_no_overlap(bool=F), use_disjunctive_constraint_in_cumulative(bool=T),
+      use_dual_scheduling_heuristics(bool=T), use_erwa_heuristic(bool=F),
+      use_extended_probing(bool=T), use_implied_bounds(bool=T),
+      use_lns(bool=T), use_lns_only(bool=F),
+      use_objective_shaving_search(bool=F), use_phase_saving(bool=T),
+      use_strong_propagation_in_disjunctive(bool=F)
+
+    conflict/restart:
+      binary_minimization_algorithm(enum=1:{NO_BINARY_MINIMIZATION,
+        BINARY_MINIMIZATION_FIRST,
+        BINARY_MINIMIZATION_FIRST_WITH_TRANSITIVE_REDUCTION,
+        BINARY_MINIMIZATION_WITH_REACHABILITY,EXPERIMENTAL_BINARY_MINIMIZATION}),
+      blocking_restart_multiplier(double=1.4), blocking_restart_window_size(int=5000),
+      default_restart_algorithms(str='LUBY_RESTART,LBD_MOVING_AVERAGE_RESTART,DL_MOVING_AVERAGE_RESTART'),
+      feasibility_jump_restart_factor(int=1), glucose_decay_increment(double=0.01),
+      glucose_decay_increment_period(int=5000), glucose_max_decay(double=0.95),
+      max_variable_activity_value(double=1e+100),
+      minimization_algorithm(enum=2:{NONE,SIMPLE,RECURSIVE,EXPERIMENTAL}),
+      restart_algorithms(list<enum>:{NO_RESTART,LUBY_RESTART,
+        DL_MOVING_AVERAGE_RESTART,LBD_MOVING_AVERAGE_RESTART,FIXED_RESTART}),
+      restart_dl_average_ratio(double=1.0), restart_lbd_average_ratio(double=1.0),
+      restart_period(int=50), restart_running_window_size(int=50),
+      subsumption_during_conflict_analysis(bool=T), use_blocking_restart(bool=F),
+      variable_activity_decay(double=0.8)
+
+    clause db:
+      clause_cleanup_lbd_bound(int=5),
+      clause_cleanup_ordering(enum=0:{CLAUSE_ACTIVITY,CLAUSE_LBD}),
+      clause_cleanup_period(int=10000),
+      clause_cleanup_protection(enum=0:{PROTECTION_NONE,PROTECTION_ALWAYS,PROTECTION_LBD}),
+      clause_cleanup_ratio(double=0.5), clause_cleanup_target(int=0),
+      pb_cleanup_increment(int=200), pb_cleanup_ratio(double=0.5)
+
+    presolve:
+      convert_intervals(bool=T), cp_model_presolve(bool=T),
+      cp_model_probing_level(int=2),
+      encode_complex_linear_constraint_with_integer(bool=F),
+      expand_alldiff_constraints(bool=F), expand_reservoir_constraints(bool=T),
+      expand_reservoir_using_circuit(bool=F),
+      find_big_linear_overlap(bool=T), infer_all_diffs(bool=T),
+      max_pairs_pairwise_reasoning_in_no_overlap_2d(int=1250),
+      max_size_to_create_precedence_literals_in_disjunctive(int=60),
+      merge_at_most_one_work_limit(double=1e8),
+      merge_no_overlap_work_limit(double=1e12),
+      mip_presolve_level(int=2), presolve_blocked_clause(bool=T),
+      presolve_bva_threshold(int=1), presolve_bve_clause_weight(int=3),
+      presolve_bve_threshold(int=500),
+      presolve_extract_integer_enforcement(bool=F),
+      presolve_inclusion_work_limit(int64=1e8),
+      presolve_substitution_level(int=1), presolve_use_bva(bool=T),
+      remove_fixed_variables_early(bool=T), symmetry_level(int=2),
+      disable_constraint_expansion(bool=F)
+
+    LP/cuts:
+      add_cg_cuts(bool=T), add_clique_cuts(bool=T), add_lin_max_cuts(bool=T),
+      add_lp_constraints_lazily(bool=T), add_mir_cuts(bool=T),
+      add_objective_cut(bool=F), add_rlt_cuts(bool=T), add_zero_half_cuts(bool=T),
+      cut_active_count_decay(double=0.8), cut_cleanup_target(int=1000),
+      cut_level(int=1), cut_max_active_count_value(double=1e10),
+      exploit_all_lp_solution(bool=T), exploit_all_precedences(bool=F),
+      exploit_integer_lp_solution(bool=T), feasibility_jump_linearization_level(int=2),
+      linearization_level(int=1), lp_dual_tolerance(double=1e-7),
+      lp_primal_tolerance(double=1e-7), max_all_diff_cut_size(int=64),
+      max_consecutive_inactive_count(int=100), max_cut_rounds_at_level_zero(int=1),
+      max_integer_rounding_scaling(int=600), max_num_cuts(int=10000),
+      new_constraints_batch_size(int=50), only_add_cuts_at_level_zero(bool=F),
+      use_energetic_reasoning_in_no_overlap_2d(bool=F),
+      use_optimization_hints(bool=T), use_overload_checker_in_cumulative(bool=F),
+      use_pb_resolution(bool=F), use_timetabling_in_no_overlap_2d(bool=F)
+
+    MIP bridge:
+      mip_automatically_scale_variables(bool=T), mip_check_precision(double=1e-4),
+      mip_compute_true_objective_bound(bool=T), mip_drop_tolerance(double=1e-16),
+      mip_max_activity_exponent(int=53), mip_max_bound(double=1e7),
+      mip_max_valid_magnitude(double=1e20), mip_scale_large_domain(bool=F),
+      mip_treat_high_magnitude_bounds_as_infinity(bool=F),
+      mip_var_scaling(double=1.0), mip_wanted_precision(double=1e-6)
+
+    LNS:
+      lns_initial_difficulty(double=0.5)
+
+    feasibility jump/pump:
+      feasibility_jump_batch_dtime(double=0.1), feasibility_jump_decay(double=0.95),
+      feasibility_jump_enable_restarts(bool=T),
+      feasibility_jump_max_expanded_constraint_size(int=500),
+      feasibility_jump_var_perburbation_range_ratio(double=0.2),
+      feasibility_jump_var_randomization_probability(double=0.05),
+      use_feasibility_jump(bool=T), use_feasibility_pump(bool=T),
+      violation_ls_compound_move_probability(double=0.5),
+      violation_ls_perturbation_period(int=100)
+
+    optimization:
+      auto_detect_greater_than_at_least_one_of(bool=T),
+      binary_search_num_conflicts(int=-1), exploit_best_solution(bool=F),
+      exploit_relaxation_solution(bool=F),
+      minimize_reduction_during_pb_resolution(bool=F),
+      optimize_with_core(bool=F), optimize_with_lb_tree_search(bool=F),
+      optimize_with_max_hs(bool=F), use_absl_random(bool=F),
+      use_precedences_in_disjunctive_constraint(bool=T)
+
+    other (notable):
+      absolute_gap_limit(double=1e-4), at_most_one_max_expansion_size(int=3),
+      clause_activity_decay(double=0.999), core_minimization_level(int=2),
+      count_assumption_levels_in_lbd(bool=T), cover_optimization(bool=T),
+      cp_model_use_sat_presolve(bool=T), detect_linearized_product(bool=F),
+      detect_table_with_cost(bool=F), encode_cumulative_as_reservoir(bool=F),
+      exploit_objective(bool=T), fill_additional_solutions_in_response(bool=F),
+      filter_sat_postsolve_clauses(bool=F), find_multiple_cores(bool=T),
+      inprocessing_dtime_ratio(double=0.2), inprocessing_minimization_dtime(double=1.0),
+      inprocessing_probing_dtime(double=1.0), interleave_batch_size(int=0),
+      linear_split_size(int=100), max_alldiff_domain_size(int=256),
+      max_domain_size_when_encoding_eq_neq_constraints(int=16),
+      max_lin_max_size_for_expansion(int=0),
+      max_sat_assumption_order(enum=0:{DEFAULT_ASSUMPTION_ORDER,
+        ORDER_ASSUMPTION_BY_DEPTH,ORDER_ASSUMPTION_BY_WEIGHT}),
+      max_sat_stratification(enum=1:{STRATIFICATION_NONE,
+        STRATIFICATION_DESCENT,STRATIFICATION_ASCENT}),
+      min_orthogonality_for_lp_constraints(double=0.05),
+      minimize_shared_clauses(bool=T), new_linear_propagation(bool=T),
+      num_conflicts_before_strategy_changes(int=0), num_violation_ls(int=0),
+      polish_lp_solution(bool=F), probing_num_combinations_limit(int=20000),
+      propagation_loop_detection_factor(double=10.0),
+      pseudo_cost_reliability_threshold(int64=100),
+      random_branches_ratio(double=0.0), randomize_search(bool=F),
+      relative_gap_limit(double=0.0), root_lp_iterations(int=2000),
+      save_lp_basis_in_lb_tree_search(bool=F),
+      search_random_variable_pool_size(int64=0),
+      shaving_search_threshold(int64=64), solution_pool_size(int=3),
+      strategy_change_increase_ratio(double=0.0), table_compression_level(int=2),
+      use_exact_lp_reason(bool=T), use_lb_relax_lns(bool=T),
+      use_linear3_for_no_overlap_2d_precedences(bool=T), use_ls_only(bool=F),
+      use_optional_variables(bool=F), use_probing_search(bool=F),
+      use_rins_lns(bool=T), use_sat_inprocessing(bool=T),
+      use_shared_tree_search(bool=F), use_symmetry_in_lp(bool=F),
+      variables_shaving_level(int=-1)
+
+    Subsolver name strings (for extra_subsolvers/ignore_subsolvers/subsolvers):
+      "default_lp", "no_lp", "max_lp", "core", "quick_restart",
+      "reduced_costs", "lb_tree_search", "probing_search",
+      "objective_lb_search", "objective_shaving_search_no_lp",
+      "pseudo_costs", "fixed", "feasibility_pump", "feasibility_jump"
+
 database:
   population_size: 50
   archive_size: 20

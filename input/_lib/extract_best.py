@@ -104,6 +104,59 @@ def main(root, shared, phase_dirs, argv=None):
               f"expected dict", file=sys.stderr)
         sys.exit(1)
 
-    out = pathlib.Path(shared) / f"phase{n}_best.json"
+    shared_dir = pathlib.Path(shared)
+    root_path = pathlib.Path(root)
+
+    out = shared_dir / f"phase{n}_best.json"
     out.write_text(json.dumps(overrides, indent=2, sort_keys=True) + "\n")
-    print(f"wrote {out.relative_to(pathlib.Path(root))} ({len(overrides)} keys)")
+    print(f"wrote {out.relative_to(root_path)} ({len(overrides)} keys)")
+
+    # Optional extras for size-bucket / stage3 evolution (cpsat-bench).
+    # Programs that don't expose these helpers stay backward-compatible.
+    if hasattr(module, "get_phase_size_buckets"):
+        try:
+            buckets = module.get_phase_size_buckets()
+        except Exception as e:
+            print(f"get_phase_size_buckets() raised: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(buckets, list):
+            print(f"get_phase_size_buckets() returned "
+                  f"{type(buckets).__name__}, expected list", file=sys.stderr)
+            sys.exit(1)
+        # JSON can't encode inf — write None as the sentinel.
+        serializable = []
+        for entry in buckets:
+            if not (isinstance(entry, (list, tuple)) and len(entry) == 2):
+                print(f"bucket entry malformed: {entry!r}", file=sys.stderr)
+                sys.exit(1)
+            upper, override = entry
+            if upper == float("inf"):
+                upper = None
+            elif not isinstance(upper, (int, float)):
+                print(f"bucket upper bound not numeric: {upper!r}",
+                      file=sys.stderr)
+                sys.exit(1)
+            if not isinstance(override, dict):
+                print(f"bucket override not dict: {override!r}",
+                      file=sys.stderr)
+                sys.exit(1)
+            serializable.append([upper, override])
+        out_b = shared_dir / f"phase{n}_buckets.json"
+        out_b.write_text(json.dumps(serializable, indent=2, sort_keys=False) + "\n")
+        nonempty = sum(1 for _, d in serializable if d)
+        print(f"wrote {out_b.relative_to(root_path)} "
+              f"({len(serializable)} buckets, {nonempty} non-empty)")
+
+    if hasattr(module, "get_phase_stage3_overrides"):
+        try:
+            stage3 = module.get_phase_stage3_overrides()
+        except Exception as e:
+            print(f"get_phase_stage3_overrides() raised: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(stage3, dict):
+            print(f"get_phase_stage3_overrides() returned "
+                  f"{type(stage3).__name__}, expected dict", file=sys.stderr)
+            sys.exit(1)
+        out_s = shared_dir / f"phase{n}_stage3.json"
+        out_s.write_text(json.dumps(stage3, indent=2, sort_keys=True) + "\n")
+        print(f"wrote {out_s.relative_to(root_path)} ({len(stage3)} keys)")

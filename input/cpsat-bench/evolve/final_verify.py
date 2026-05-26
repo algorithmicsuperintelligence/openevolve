@@ -28,6 +28,7 @@ warm cache / system noise. Concurrency = config parallel_solvers (taskset
 pinned via OPENEVOLVE_CORE_RANGE or 1..N).
 """
 import importlib.util
+import inspect
 import json
 import pathlib
 import sys
@@ -46,9 +47,40 @@ _BENCH_DIR = _HERE.parent
 _RAW_DIR = _BENCH_DIR / "raw-data"
 _PROBLEMS_JSONL = _BENCH_DIR / "problems.jsonl"
 _FINAL_SAMPLE = _HERE / "shared" / "final_sample.json"
+_OUTLIERS_JSON = _HERE / "shared" / "outliers.json"
 
 TIMEOUT_S = 300
 _DECISIVE = ("OPTIMAL", "FEASIBLE")
+
+
+def _load_outlier_shas():
+    if not _OUTLIERS_JSON.exists():
+        return set()
+    try:
+        d = json.loads(_OUTLIERS_JSON.read_text())
+    except (json.JSONDecodeError, OSError):
+        return set()
+    return set(d.get("outliers") or {})
+
+
+def _supports_kwargs(fn, *kwargs):
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    params_ = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params_.values()):
+        return True
+    return any(name in params_ for name in kwargs)
+
+
+def _resolve_params(fn, problem, stage_name):
+    kwargs = {}
+    if _supports_kwargs(fn, "problem"):
+        kwargs["problem"] = problem
+    if _supports_kwargs(fn, "stage"):
+        kwargs["stage"] = stage_name
+    return fn(**kwargs) if kwargs else fn()
 
 
 def _load_program(program_path):
@@ -62,15 +94,23 @@ def _load_program(program_path):
 
 
 def _load_problem_index():
+    outliers = _load_outlier_shas()
     idx = {}
     with open(_PROBLEMS_JSONL) as f:
         for line in f:
             d = json.loads(line)
-            idx[d["problem_sha256"]] = {
-                "sha": d["problem_sha256"],
+            sha = d["problem_sha256"]
+            features = d.get("features") or {}
+            idx[sha] = {
+                "sha": sha,
                 "problem_filename": d["problem_filename"],
                 "raw_ms": (d.get("cpsat_status") or {}).get("elapsed_ms", 0),
                 "raw_result": (d.get("cpsat_status") or {}).get("result"),
+                "num_variables": int(features.get("num_variables") or 0),
+                "num_constraints": int(features.get("num_constraints") or 0),
+                "num_bool": int(features.get("num_bool") or 0),
+                "num_int": int(features.get("num_int") or 0),
+                "is_outlier": sha in outliers,
             }
     return idx
 
@@ -107,7 +147,9 @@ def main():
         return 2
 
     program = _load_program(program_path)
-    variant_params = program.get_params()
+    # final_verify treats stage as "final"; per-problem resolution still
+    # applies SIZE_BUCKETS but skips STAGE3_OVERRIDES (which is stage3-gated).
+    variant_params = _resolve_params(program.get_params, None, "final")
     # Use the program's PHASE_LOCKED if it exposes one (later phases typically
     # lock num_search_workers higher than baseline); fall back to global LOCKED.
     _phase_locked = getattr(program, "PHASE_LOCKED", None)
@@ -148,8 +190,14 @@ def main():
         slot = i % n_parallel if n_parallel > 0 else 0
         v_core = blocks[slot] if n_parallel > 0 else None
         b_core = baseline_cores[slot] if n_parallel > 0 else None
+        # Per-problem param resolution. PHASE_LOCKED keys re-pinned defensively.
+        per_params = _resolve_params(program.get_params, meta, "final")
+        for k, v in _lock.items():
+            per_params[k] = v
+        if "num_search_workers" in variant_params:
+            per_params["num_search_workers"] = variant_params["num_search_workers"]
         b = run_cpsat(pb, BASELINE, TIMEOUT_S, cpu_core=b_core)
-        v = run_cpsat(pb, variant_params, TIMEOUT_S, cpu_core=v_core)
+        v = run_cpsat(pb, per_params, TIMEOUT_S, cpu_core=v_core)
         return i, meta, b, v
 
     tasks = [(i, meta, pb) for i, (meta, pb) in enumerate(metas)]
