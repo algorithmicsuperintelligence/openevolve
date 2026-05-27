@@ -1,0 +1,14 @@
+{
+  "selection": "1 top-1 residual outlier(s) from outliers_top.csv (W=8 tuning set)",
+  "source": "cpsat-bench/problems.jsonl",
+  "sha256": [
+    "9c28c175d2cd7871aaff707f1cdbb5132941625137f09fd93fa2116fc9b3470e"
+  ],
+  "summary": [
+    {
+      "sha": "9c28c175d2cd",
+      "baseline_result": "OPTIMAL",
+      "baseline_ms": 5307350.0
+    }
+  ]
+}

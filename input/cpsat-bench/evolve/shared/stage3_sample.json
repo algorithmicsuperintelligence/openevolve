@@ -1,12 +1,12 @@
 {
-  "selection": "5 stratified outliers from outliers_top.csv (small\u226410000ms / mid<500000ms / large\u22641500000ms; top-residual within band; target 2+2+1)",
+  "selection": "5 outliers from outliers_top.csv nearest 20000ms (tol=5.0x, cap=1500000ms; target 5)",
   "source": "cpsat-bench/problems.jsonl",
   "sha256": [
     "5f84583fd6d8cd9e732ba4f0c0922ce8935d1ef2820ebbd9fe01a87ec3121746",
-    "303a6733c9ec03beaf7942544bf89ce2ecba38c65ae2e6a93e248b36e6b7fc2a",
-    "c0bbae62f14d03166e20cbff5fabab7917480464a9baf804ec42409b26e0d32c",
-    "073ef8ba3455034f551b19285f0e25708263e1fbe2bbb1bbcdeb5bc650889151",
-    "7e5aa4016ad68c0efd86e36186d0de0f5d8c69fc9d27fdd2b3976e26905325de"
+    "c0a0dc04538c4ae54401b99c91b6b743811aab04bbc638360c16b4fc9b915728",
+    "c4fe2cc04ae7a35679d2f3e71e91d1476eaaa48ed0e0eea02642695224d1a3a5",
+    "5b8c61f99d31fed9077ef475613e5be6648f55f2a47bcc92c0e5d0e3b41ecb94",
+    "0976039f182f3d2a82c23ebc237b080434e5f24b43329696d42000dc1865231e"
   ],
   "summary": [
     {
@@ -15,24 +15,24 @@
       "baseline_ms": 6436.58
     },
     {
-      "sha": "303a6733c9ec",
+      "sha": "c0a0dc04538c",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 3530.81
+      "baseline_ms": 4920.17
     },
     {
-      "sha": "c0bbae62f14d",
+      "sha": "c4fe2cc04ae7",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 400652
+      "baseline_ms": 4839.59
     },
     {
-      "sha": "073ef8ba3455",
+      "sha": "5b8c61f99d31",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1496560.0
+      "baseline_ms": 19871.1
     },
     {
-      "sha": "7e5aa4016ad6",
+      "sha": "0976039f182f",
       "baseline_result": "OPTIMAL",
-      "baseline_ms": 1482010.0
+      "baseline_ms": 19431.4
     }
   ]
 }
