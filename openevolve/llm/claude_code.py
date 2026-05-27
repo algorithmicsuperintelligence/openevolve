@@ -108,7 +108,7 @@ class ClaudeCodeLLM(LLMInterface):
         )
 
         opts_kwargs: Dict[str, Any] = {
-            "max_turns": 1,
+            "max_turns": 4,
             "allowed_tools": [],
             "disallowed_tools": [],
             "permission_mode": "bypassPermissions",
