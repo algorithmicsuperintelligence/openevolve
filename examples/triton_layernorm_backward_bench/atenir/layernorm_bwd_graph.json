@@ -1,0 +1,552 @@
+{
+  "nodes": [
+    {
+      "op": "placeholder",
+      "name": "grad_out_1",
+      "shape": [
+        64,
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "x_1",
+      "shape": [
+        64,
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "mean_1",
+      "shape": [
+        64,
+        1
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "rstd_1",
+      "shape": [
+        64,
+        1
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "weight_1",
+      "shape": [
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "bias_1",
+      "shape": [
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "call_function",
+      "name": "sub",
+      "target": "aten.sub.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "x_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "mean_1",
+          "shape": [
+            64,
+            1
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "x_1",
+        "mean_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "sub",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "rstd_1",
+          "shape": [
+            64,
+            1
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "sub",
+        "rstd_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul_1",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "grad_out_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "weight_1",
+          "shape": [
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "grad_out_1",
+        "weight_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul_2",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        256
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "mul_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sum_1",
+      "target": "aten.sum.dim_IntList",
+      "output_shape": [
+        64,
+        1
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": [
+        1
+      ],
+      "keepdim": true,
+      "predecessor_ids": [
+        "mul_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul_3",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "mul",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "mul_1",
+        "mul"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sum_2",
+      "target": "aten.sum.dim_IntList",
+      "output_shape": [
+        64,
+        1
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul_3",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": [
+        1
+      ],
+      "keepdim": true,
+      "predecessor_ids": [
+        "mul_3"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul_4",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "sum_2",
+          "shape": [
+            64,
+            1
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "mul",
+        "sum_2"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sub_1",
+      "target": "aten.sub.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul_2",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "sum_1",
+          "shape": [
+            64,
+            1
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "mul_2",
+        "sum_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sub_2",
+      "target": "aten.sub.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "sub_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "mul_4",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "sub_1",
+        "mul_4"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "div",
+      "target": "aten.div.Tensor",
+      "output_shape": [
+        64,
+        1
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "rstd_1",
+          "shape": [
+            64,
+            1
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        256
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "rstd_1"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul_5",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "div",
+          "shape": [
+            64,
+            1
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "sub_2",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "div",
+        "sub_2"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mul_6",
+      "target": "aten.mul.Tensor",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "grad_out_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "mul",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "grad_out_1",
+        "mul"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sum_3",
+      "target": "aten.sum.dim_IntList",
+      "output_shape": [
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mul_6",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": [
+        0
+      ],
+      "keepdim": null,
+      "predecessor_ids": [
+        "mul_6"
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sum_4",
+      "target": "aten.sum.dim_IntList",
+      "output_shape": [
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "grad_out_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": [
+        0
+      ],
+      "keepdim": null,
+      "predecessor_ids": [
+        "grad_out_1"
+      ]
+    },
+    {
+      "op": "output",
+      "args": [
+        [
+          "mul_5",
+          "sum_3",
+          "sum_4"
+        ]
+      ]
+    }
+  ],
+  "distinct_ops": [
+    "aten.div.Tensor",
+    "aten.mul.Tensor",
+    "aten.sub.Tensor",
+    "aten.sum.dim_IntList"
+  ]
+}
