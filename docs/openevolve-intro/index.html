@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenEvolve 개념·아키텍처 — 일반 엔지니어를 위한 소개</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+
+<header class="hero">
+  <h1>OpenEvolve — LLM으로 코드를 진화시키는 프레임워크</h1>
+  <p class="tagline">
+    SW 개발자가 아니어도 이해할 수 있도록 정리한 OpenEvolve 개념, 알고리즘, 그리고 이 repo에서 z3·CP-SAT 솔버 파라미터 튜닝에 어떻게 적용되는지에 대한 안내서.
+  </p>
+  <div class="meta">
+    참고: <code>openevolve/</code> 소스코드 · <code>input/z3-bench</code>, <code>input/cpsat-bench</code> 두 벤치마크 적용 사례 · 위키 문서.
+    <br><strong>발표용 슬라이드:</strong> <a href="slides.html">slides.html</a> (35 슬라이드, 키보드 ← → 탐색)
+  </div>
+</header>
+
+<main>
+
+<!-- 목차 -->
+<nav class="toc" aria-label="목차">
+  <h2>목차</h2>
+  <ol>
+    <li><a href="#tldr">1분 요약 (TL;DR)</a></li>
+    <li><a href="#core">3가지 핵심 개념 (격자·Island 비유 포함)</a></li>
+    <li><a href="#arch">큰 그림 아키텍처</a></li>
+    <li><a href="#iteration">한 iteration의 생애</a></li>
+    <li><a href="#llm">LLM이 어떻게 적용되나</a></li>
+    <li><a href="#z3-result">Z3 파라미터 최적화 — 실제 결과</a></li>
+    <li><a href="#log-example">실전 예시: CP-SAT phase2 진화 로그 읽기</a></li>
+    <li><a href="#bench">repo 활용: z3-bench / cpsat-bench</a></li>
+    <li><a href="#checklist">새 솔버에 적용하려면</a></li>
+    <li><a href="#glossary">용어 미니 사전</a></li>
+  </ol>
+</nav>
+
+<!-- 1. TL;DR -->
+<section id="tldr">
+  <h2>1. 1분 요약 (TL;DR)</h2>
+  <p>
+    <strong>OpenEvolve</strong>는 LLM(거대 언어 모델)을 <em>코드 변이(mutation) 연산자</em>로 사용하는 진화 알고리즘 프레임워크다.
+    사람이 "이 부분을 더 좋게 만들어줘"라고 한 줄을 직접 짜는 게 아니라, <code>EVOLVE-BLOCK</code>으로 표시된 코드 구역을 LLM이 반복적으로 변형하고, 그 결과를 자동으로 평가·비교한다.
+  </p>
+
+  <div class="callout">
+    <strong>핵심 루프 한 줄로:</strong>
+    타겟 코드(target code)를 뽑고 → LLM이 변형하고 → 점수를 매기고 → 좋은 것만 남기고 → 다시 다음 라운드 타겟으로 → 반복.
+  </div>
+
+  <h3>전형적인 활용 사례 (AlphaEvolve 류)</h3>
+  <ul>
+    <li><strong>행렬 곱셈 알고리즘 발견</strong> — 4×4 복소 행렬 곱셈에서 1969년 Strassen 알고리즘 이후 처음으로 더 적은 곱셈 횟수(49 → 48)의 새 알고리즘을 탐색.</li>
+    <li><strong>데이터센터 스케줄링 휴리스틱 개선</strong> — Google Borg 클러스터의 작업 배치 휴리스틱을 자동 탐색해 stranded compute resource 0.7%pt 회수.</li>
+    <li><strong>TPU 칩 설계 최적화</strong> — TPU의 산술 회로 Verilog/RTL 코드에서 면적·지연을 줄이는 변형 탐색.</li>
+    <li><strong>LLM 학습 커널 최적화</strong> — Gemini 학습용 GPU 커널(예: FlashAttention 변형)의 처리량을 자동 튜닝.</li>
+    <li><strong>수학적 추측 탐색</strong> — Kissing number, autocorrelation inequality 같은 open problem에서 새 lower/upper bound 구성.</li>
+  </ul>
+
+  <p>
+    OpenEvolve는 Google DeepMind의 <em>AlphaEvolve</em> 시스템을 오픈소스로 구현한 프레임워크다. 일반 진화 알고리즘과의 가장 큰 차이는 <strong>변이를 LLM이 만든다</strong>는 점, 그리고 <strong>평가의 부산물(실행 로그, 에러, profiling)을 다음 prompt에 자동으로 다시 넣는다</strong>는 점이다.
+  </p>
+</section>
+
+<!-- 2. 3가지 핵심 개념 -->
+<section id="core">
+  <h2>2. 3가지 핵심 개념</h2>
+
+  <!-- 2.0 배경 -->
+  <h3>2.0 배경: 진화 알고리즘이란 무엇인가</h3>
+  <p>
+    <strong>진화 알고리즘(Evolutionary Algorithm, EA)</strong>은 생물 진화에서 영감을 받은 최적화 기법이다. 자연이 수십억 년에 걸쳐 더 잘 적응한 개체를 살아남게 한 것처럼, 컴퓨터 안에서도 "후보 해(候補解)들의 집단"을 만들어 더 좋은 해만 살아남게 하면 어려운 문제를 풀 수 있다는 아이디어.
+  </p>
+
+  <p>기본 사이클은 단순하다:</p>
+  <ol>
+    <li><strong>집단 초기화</strong> — 무작위 또는 사람이 만든 초기 후보 해들을 N개 만든다.</li>
+    <li><strong>평가</strong> — 각 후보의 점수(fitness)를 측정한다. 솔버 옵션이면 "얼마나 빨리 풀었나", 신경망 가중치면 "얼마나 정확한가".</li>
+    <li><strong>선택</strong> — 점수가 높은 후보를 다음 세대의 부모로 뽑는다.</li>
+    <li><strong>변형(mutation·crossover)</strong> — 부모를 살짝 바꾸거나 두 부모를 섞어 자식 후보를 만든다.</li>
+    <li><strong>교체</strong> — 자식을 집단에 넣고 약한 후보를 밀어낸다. 1~5단계를 수백~수천 번 반복.</li>
+  </ol>
+
+  <h4>전통 EA의 한계와 OpenEvolve의 자리</h4>
+  <table>
+    <thead><tr><th>구성요소</th><th>전통 EA</th><th>OpenEvolve</th></tr></thead>
+    <tbody>
+      <tr><td>후보 표현</td><td>실수 벡터·비트열·트리</td><td><strong>코드 텍스트</strong> (EVOLVE-BLOCK 안의 Python/JSON dict 등)</td></tr>
+      <tr><td>변형 연산자</td><td>비트 플립·산술 노이즈·crossover</td><td><strong>LLM 호출</strong> (의미 있는 변형)</td></tr>
+      <tr><td>피드백</td><td>스칼라 점수만</td><td><strong>점수 + stderr + 통계</strong> (artifact)</td></tr>
+      <tr><td>집단 구조</td><td>단일 풀</td><td><strong>MAP-Elites 격자 × N개 island</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    즉 OpenEvolve는 진화 알고리즘의 "후보·평가·선택·변형·교체" 골격을 그대로 빌리되, 네 군데를 LLM 시대에 맞게 갈아 끼웠다. 아래 세 가지 핵심 개념이 그 갈아끼움의 정수다.
+  </p>
+
+  <p>OpenEvolve를 다른 자동 코드 생성 도구와 구분짓는 세 가지 아이디어:</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="icon">▦</div>
+      <h4>MAP-Elites Quality-Diversity</h4>
+      <p>단일 최적해 하나를 쫓는 대신, 여러 특성(feature) 차원의 격자(grid)를 만들어 <em>각 셀의 1등</em>을 동시에 보존한다. 다양성을 유지해 조기 수렴을 막는다.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🏝️</div>
+      <h4>Island 기반 분산 집단</h4>
+      <p>집단을 여러 island(섬)로 나눠 격리 진화시키고, 주기적으로 우수 개체를 옆 섬으로 이주(migration)시킨다. 한 전략이 전체를 지배하지 못하도록.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔁</div>
+      <h4>Artifact 사이드 채널 피드백</h4>
+      <p>평가가 점수만 반환하는 게 아니라 stderr, traceback, profiling 같은 <em>실행 흔적</em>도 같이 반환한다. 다음 LLM prompt에 자동 포함돼 "왜 실패했는지"를 모델이 본다.</p>
+    </div>
+  </div>
+
+  <!-- 2.1 MAP-Elites 심화 -->
+  <h3>2.1 MAP-Elites Quality-Diversity — 자세히</h3>
+  <p>
+    <strong>문제 의식.</strong> 전통적 진화 알고리즘은 "가장 점수 높은 1개"만 보존한다. 그 결과 처음 몇 세대에서 한 전략이 선두를 잡으면 모든 후손이 그 전략의 변형이 되고, 전혀 다른 가능성은 사라진다. 이걸 <em>조기 수렴(premature convergence)</em>이라고 한다. 솔버 튜닝 맥락에서는 "SAT 위주 옵션 셋"이 초반에 우세하면 "presolve 위주" 같은 다른 줄기가 영영 탐색되지 않는다.
+  </p>
+
+  <p>
+    <strong>해결.</strong> MAP-Elites는 해답을 단일 1등으로 압축하지 않는다. 대신 <em>특성(feature) 차원</em>을 정의해 다차원 격자를 만들고, 격자 셀별로 챔피언을 하나씩 유지한다. 격자가 채워질수록 "이 특성 조합으로는 이 정도가 최선"이라는 지도(map)가 만들어진다.
+  </p>
+
+  <h4>3단계 처리 파이프라인</h4>
+  <ol>
+    <li><strong>Extraction</strong> — 새 프로그램이 들어오면 각 feature 차원의 raw 값을 계산. 예: 코드 길이 = 230줄, 실행시간 = 4.2초.</li>
+    <li><strong>Scaling</strong> — 모든 프로그램에 걸쳐 min-max 정규화 또는 z-score 변환. raw 값을 [0, 1] 같은 균일한 스케일로 변환.</li>
+    <li><strong>Binning</strong> — 정규화 값을 <code>feature_bins</code> 개수의 이산 칸으로 나눔. 예: 10 bin이면 4.2초가 bin index 6에 떨어짐.</li>
+  </ol>
+
+  <h4>역할 분리 — 점수 vs 좌표</h4>
+  <ul>
+    <li><strong>Fitness(점수)</strong>: "같은 셀에 들어온 두 프로그램 중 누가 1등이냐"만 결정. 셀 안 비교용.</li>
+    <li><strong>Feature 좌표</strong>: "어느 셀에 들어갈지"만 결정. 셀 배치용.</li>
+  </ul>
+  <p>
+    이 분리가 핵심이다. 점수가 좌표를 결정하면 다양성을 잃는다. 좌표가 독립이라 점수가 낮은 영역도 살아남고, 그 영역에서 나중에 더 좋은 변형이 나오면 셀이 갱신된다.
+  </p>
+
+  <div class="callout">
+    <strong>왜 솔버 튜닝에 잘 맞나.</strong> "빠르지만 메모리 많이 쓰는 옵션"과 "느리지만 메모리 적게 쓰는 옵션"이 다른 셀에 산다. 둘 다 죽지 않고 보존되므로, 나중에 두 줄기의 좋은 점만 조합한 변형이 LLM 입력으로 같이 들어갈 수 있다.
+  </div>
+
+  <h4>그림으로 보는 격자 비유</h4>
+  <p>
+    x축을 "코드 복잡도", y축을 "실행시간"이라고 하자. 격자 셀마다 ★는 그 셀의 챔피언이다. 새 변형 코드가 들어오면 그 코드의 (복잡도, 실행시간) 좌표로 어느 셀에 속하는지 계산하고, 그 셀의 기존 ★보다 점수가 높으면 챔피언을 교체한다.
+  </p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 600 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MAP-Elites 격자 비유">
+      <defs>
+        <style>
+          .grid { fill: #fafaf7; stroke: #2c7a4b; stroke-width: 1.5; }
+          .cell { fill: #f3f4ed; stroke: #cdd2c4; stroke-width: 1; }
+          .filled { fill: #d6edd9; stroke: #2c7a4b; stroke-width: 1.5; }
+          .new { fill: #fff3e0; stroke: #d97706; stroke-width: 2; }
+          .ax { font: 600 13px sans-serif; fill: #1f2933; }
+          .lab { font: 11px sans-serif; fill: #52606d; }
+          .star { font: 700 22px sans-serif; fill: #2c7a4b; }
+          .star.new { fill: #d97706; }
+        </style>
+      </defs>
+
+      <g transform="translate(120,60)">
+        <g>
+          <rect class="cell"   x="0"   y="0"   width="60" height="60"/>
+          <rect class="filled" x="60"  y="0"   width="60" height="60"/>
+          <rect class="cell"   x="120" y="0"   width="60" height="60"/>
+          <rect class="filled" x="180" y="0"   width="60" height="60"/>
+          <rect class="cell"   x="240" y="0"   width="60" height="60"/>
+
+          <rect class="filled" x="0"   y="60"  width="60" height="60"/>
+          <rect class="filled" x="60"  y="60"  width="60" height="60"/>
+          <rect class="cell"   x="120" y="60"  width="60" height="60"/>
+          <rect class="cell"   x="180" y="60"  width="60" height="60"/>
+          <rect class="filled" x="240" y="60"  width="60" height="60"/>
+
+          <rect class="cell"   x="0"   y="120" width="60" height="60"/>
+          <rect class="filled" x="60"  y="120" width="60" height="60"/>
+          <rect class="new"    x="120" y="120" width="60" height="60"/>
+          <rect class="filled" x="180" y="120" width="60" height="60"/>
+          <rect class="cell"   x="240" y="120" width="60" height="60"/>
+
+          <rect class="filled" x="0"   y="180" width="60" height="60"/>
+          <rect class="cell"   x="60"  y="180" width="60" height="60"/>
+          <rect class="filled" x="120" y="180" width="60" height="60"/>
+          <rect class="cell"   x="180" y="180" width="60" height="60"/>
+          <rect class="filled" x="240" y="180" width="60" height="60"/>
+
+          <rect class="cell"   x="0"   y="240" width="60" height="60"/>
+          <rect class="filled" x="60"  y="240" width="60" height="60"/>
+          <rect class="cell"   x="120" y="240" width="60" height="60"/>
+          <rect class="filled" x="180" y="240" width="60" height="60"/>
+          <rect class="cell"   x="240" y="240" width="60" height="60"/>
+        </g>
+
+        <text class="star"     x="90"  y="38">★</text>
+        <text class="star"     x="210" y="38">★</text>
+        <text class="star"     x="30"  y="98">★</text>
+        <text class="star"     x="90"  y="98">★</text>
+        <text class="star"     x="270" y="98">★</text>
+        <text class="star"     x="90"  y="158">★</text>
+        <text class="star new" x="150" y="158">★</text>
+        <text class="star"     x="210" y="158">★</text>
+        <text class="star"     x="30"  y="218">★</text>
+        <text class="star"     x="150" y="218">★</text>
+        <text class="star"     x="270" y="218">★</text>
+        <text class="star"     x="90"  y="278">★</text>
+        <text class="star"     x="210" y="278">★</text>
+      </g>
+
+      <text class="ax"  x="270" y="40" text-anchor="middle">코드 복잡도 (낮음 → 높음)</text>
+      <text class="ax"  x="50"  y="220" text-anchor="middle" transform="rotate(-90 50 220)">실행시간 (느림 → 빠름)</text>
+
+      <g transform="translate(120, 380)">
+        <rect class="filled" x="0"   y="-10" width="14" height="14"/>
+        <text class="lab"    x="20"  y="0">기존 챔피언</text>
+        <rect class="new"    x="120" y="-10" width="14" height="14"/>
+        <text class="lab"    x="140" y="0">새로 들어온 변형 (해당 셀 1등 교체)</text>
+      </g>
+    </svg>
+    <figcaption>그림 3. MAP-Elites 격자. 새 변형(주황)이 본인 셀의 기존 챔피언보다 점수가 높으면 교체된다.</figcaption>
+  </figure>
+
+  <ul>
+    <li>"단순하면서 빠른" 셀과 "복잡하지만 더 빠른" 셀이 <strong>동시에</strong> 챔피언을 가진다.</li>
+    <li>한 셀의 챔피언이 다른 셀에서 영감 코드로 쓰일 수 있다 — 다른 셀에 사는 좋은 아이디어를 빌려 자기 셀의 챔피언을 갱신.</li>
+    <li>격자 전체가 채워지면 <em>"이 코드 공간에서 어떤 트레이드오프가 가능한지"</em>에 대한 지도(map)가 자동으로 그려진다.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>왜 이렇게 하나?</strong> 단일 1등만 키우면 "빠르지만 너무 복잡한 코드" 한 줄기로 진화가 쏠려 다양성이 사라진다. 격자별 챔피언을 동시에 키우면 "단순하면서 적당히 빠른" 셀이 살아남아 나중에 돌파구가 된다.
+  </div>
+
+  <p>
+    OpenEvolve 빌트인 feature 차원: <code>complexity</code>(코드 길이 기반), <code>diversity</code>(다른 프로그램과의 edit distance). 사용자 정의 evaluator는 <code>combined_score</code> 외에 임의 키를 metric dict에 넣으면 자동으로 feature 차원으로 쓰일 수 있다 (<code>config.yaml</code>의 <code>feature_dimensions</code> 리스트에 명시).
+  </p>
+
+  <!-- 2.2 Island 심화 -->
+  <h3>2.2 Island 기반 분산 집단 — 자세히</h3>
+  <p>
+    <strong>문제 의식.</strong> MAP-Elites만으로도 다양성은 어느 정도 유지된다. 하지만 격자가 하나뿐이라면 한 LLM 호출이 강력한 변형을 만든 순간, 그 변형이 곧장 격자 전체의 타겟 코드 후보 풀에 합류한다. 그러면 다음 세대들은 거의 다 그 변형의 후손이 되고, 격자의 많은 셀이 같은 조상에서 갈라진 비슷비슷한 변형들로 채워진다. 결국 셀 좌표는 다양해 보이지만 <em>실제 코드 혈통(누구의 후손인지)</em>은 한 줄기로 좁아진다 — 겉으로 다양한 척하지만 속은 한 가족인 상태.
+  </p>
+
+  <p>
+    <strong>해결.</strong> 격자 자체를 N개로 복제해 독립 운영한다. 각 island는 자기만의 격자, 자기만의 타겟 코드 풀, 자기만의 best를 갖는다. 한 island에서 일어난 일이 다른 island에 즉시 영향을 못 미치므로, N개의 서로 다른 진화 줄기가 동시에 자란다.
+  </p>
+
+  <h4>Migration — 격리만 하면 안 되는 이유</h4>
+  <p>
+    완전 격리는 island별로 다른 지역 최적해에 빠질 위험이 있다. 그래서 주기적으로 <strong>migration</strong>을 한다.
+  </p>
+  <table>
+    <thead><tr><th>파라미터</th><th>의미</th><th>전형 값</th></tr></thead>
+    <tbody>
+      <tr><td><code>num_islands</code></td><td>island 개수</td><td>3 ~ 8</td></tr>
+      <tr><td><code>migration_interval</code></td><td>몇 generation마다 이주</td><td>10</td></tr>
+      <tr><td><code>migration_rate</code></td><td>이주 비율 (선택된 island 인구 중)</td><td>0.1 (10%)</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Ring topology</strong>로 이웃 island에만 보낸다 (island 0 → 1 → 2 → ... → 0). broadcast가 아니라 인접 전파라서, 한 사이클이 도는 데 시간이 걸려 다양성이 더 오래 유지된다. lazy migration: 이주 카운터는 generation 단위라서 iteration이 빨라도 너무 자주 안 일어난다.
+  </p>
+
+  <h4>타겟 코드 선택 — Exploration vs Exploitation</h4>
+  <p>
+    iteration이 시작되면 현재 island에서 다음에 변형할 타겟 코드를 뽑는데, <code>exploration_ratio</code>와 <code>exploitation_ratio</code> 비율로 두 전략을 섞는다.
+  </p>
+  <ul>
+    <li><strong>Exploration</strong>: 현재 island 인구에서 균일 무작위 추출. 점수가 낮은 후보에게도 기회.</li>
+    <li><strong>Exploitation</strong>: archive(island의 elite 모음)에서 fitness 비례 가중 추출. 좋은 타겟에 집중.</li>
+    <li><strong>Fallback</strong>: island가 비었을 때 global best를 시드로 주입 (best가 모든 island를 재시작시킬 수 있음).</li>
+  </ul>
+
+  <p>
+    <strong>Best 추적 분리.</strong> OpenEvolve는 island별 best와 별도로 <em>global best</em>를 영구 보존한다. MAP-Elites 격자 갱신 과정에서 best가 셀에서 밀려 사라지는 사고를 막기 위한 안전장치.
+  </p>
+
+  <h4>그림으로 보는 Island 비유 — 갈라파고스</h4>
+  <p>
+    찰스 다윈이 갈라파고스 제도에서 관찰한 핀치새는 섬마다 부리 모양이 달랐다. 같은 조상에서 출발했지만 섬마다 다른 먹이·환경에 적응하면서 다른 형질이 발달한 것. 가끔 새가 다른 섬으로 날아가 형질을 옮기면 새로운 조합이 만들어진다.
+  </p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 600 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Island 모델 — 5개 섬 ring topology">
+      <defs>
+        <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#d97706"/>
+        </marker>
+        <style>
+          .isle { fill: #d6edd9; stroke: #2c7a4b; stroke-width: 2; }
+          .water { fill: #e6f0f8; }
+          .lbl { font: 600 13px sans-serif; fill: #1f2933; }
+          .sub { font: 11px sans-serif; fill: #52606d; }
+          .migrate { stroke: #d97706; stroke-width: 2; fill: none; stroke-dasharray: 5 3; marker-end: url(#arr3); }
+        </style>
+      </defs>
+
+      <rect class="water" x="0" y="0" width="600" height="380"/>
+
+      <g>
+        <circle class="isle" cx="300" cy="70"  r="50"/>
+        <text class="lbl" x="300" y="72" text-anchor="middle">Island 0</text>
+        <text class="sub" x="300" y="90" text-anchor="middle">SAT 위주 진화</text>
+
+        <circle class="isle" cx="500" cy="180" r="50"/>
+        <text class="lbl" x="500" y="182" text-anchor="middle">Island 1</text>
+        <text class="sub" x="500" y="200" text-anchor="middle">presolve 위주</text>
+
+        <circle class="isle" cx="420" cy="320" r="50"/>
+        <text class="lbl" x="420" y="322" text-anchor="middle">Island 2</text>
+        <text class="sub" x="420" y="340" text-anchor="middle">LP/cuts 위주</text>
+
+        <circle class="isle" cx="180" cy="320" r="50"/>
+        <text class="lbl" x="180" y="322" text-anchor="middle">Island 3</text>
+        <text class="sub" x="180" y="340" text-anchor="middle">heuristic 위주</text>
+
+        <circle class="isle" cx="100" cy="180" r="50"/>
+        <text class="lbl" x="100" y="182" text-anchor="middle">Island 4</text>
+        <text class="sub" x="100" y="200" text-anchor="middle">랜덤 탐색</text>
+      </g>
+
+      <path class="migrate" d="M345 90  Q450 110 470 145"/>
+      <path class="migrate" d="M500 230 Q480 290 450 295"/>
+      <path class="migrate" d="M380 340 Q300 360 220 340"/>
+      <path class="migrate" d="M150 295 Q110 270 110 225"/>
+      <path class="migrate" d="M140 150 Q220 90  260 80"/>
+
+      <text class="sub" x="300" y="200" text-anchor="middle">ring topology migration</text>
+      <text class="sub" x="300" y="215" text-anchor="middle">(주기적으로 엘리트 형질 전달)</text>
+    </svg>
+    <figcaption>그림 4. 5개 island가 ring topology로 연결됨. 각 섬은 다른 전략을 시도하고, 가끔 우수 개체가 옆 섬으로 이주한다.</figcaption>
+  </figure>
+
+  <ul>
+    <li><strong>섬 = island</strong>. 격리된 독립 진화 공간.</li>
+    <li><strong>핀치새 부리 = 진화 중인 코드 변형</strong>. 같은 초기 프로그램에서 출발했지만 섬마다 다른 방향으로 변형.</li>
+    <li><strong>새가 다른 섬으로 날아감 = migration</strong>. 우수 변형을 옆 island로 복사.</li>
+    <li><strong>섬 멸종해도 다른 섬 살아남음 = 분산 안전망</strong>. 한 island가 나쁜 지역 최적해에 빠져도 다른 island가 다른 줄기를 계속 진화시킴.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>솔버 튜닝 맥락 비유.</strong> 한 솔버 옵션 dict가 island 4에서는 "큰 문제 특화"(LP·cuts 강화)로, island 1에서는 "빠른 SAT 특화"(presolve 가볍게)로 갈라진다. 가끔 두 섬의 좋은 부분만 골라 합친 융합 변형이 진화 도약의 계기가 된다.
+  </div>
+
+  <!-- 2.3 Artifact 심화 -->
+  <h3>2.3 Artifact 사이드 채널 피드백 — 자세히</h3>
+  <p>
+    <strong>문제 의식.</strong> 자동 코드 생성에서 LLM이 같은 실수를 반복하는 흔한 원인은 "왜 실패했는지" 정보가 다음 호출에 없기 때문이다. 점수 0.3 받았다는 사실만 보면 모델은 "더 잘하자" 정도밖에 모른다. 인간 개발자는 컴파일 에러 메시지나 스택 트레이스를 보고 정확히 어디를 고쳐야 할지 안다.
+  </p>
+
+  <p>
+    <strong>해결.</strong> Evaluator가 <code>EvaluationResult</code> 객체에 두 필드를 채워 반환한다.
+  </p>
+
+  <pre><code>EvaluationResult(
+    metrics={
+        "combined_score": 0.43,
+        "execution_time": 30.0,
+        "memory_usage": 1024,
+    },
+    artifacts={
+        "stderr": "(error \"smt.case_split=5 out of range\")",
+        "solver_stats": "conflicts=1.3M decisions=2.1M propagations=8.9M",
+        "timeout_note": "30s exceeded on problem #17",
+    },
+)</code></pre>
+
+  <p>
+    metrics는 숫자만, artifacts는 자유 텍스트/바이너리. OpenEvolve가 artifacts를 자동으로 다음 prompt에 끼워 넣는다.
+  </p>
+
+  <h4>저장 정책</h4>
+  <ul>
+    <li><strong>소형 (≤10KB 정도)</strong>: Program 객체의 <code>artifacts_json</code> 필드에 직렬화돼 DB에 인라인 저장.</li>
+    <li><strong>대형</strong>: 별도 디스크 디렉토리(<code>artifact_dir</code>)에 파일로 저장. DB에는 참조만.</li>
+    <li><strong>크기 컷</strong>: <code>max_artifact_bytes</code> 설정으로 prompt 주입 시 자동 truncate.</li>
+  </ul>
+
+  <h4>Prompt 주입 형태</h4>
+  <pre><code>### stderr
+```
+(error "smt.case_split=5 out of range")
+```
+
+### solver_stats
+```
+conflicts=1.3M decisions=2.1M propagations=8.9M
+```</code></pre>
+  <p>
+    각 artifact 키가 markdown 헤더로, 값이 코드 펜스로 들어간다. LLM이 자연스럽게 읽고 다음 변형에서 참고한다.
+  </p>
+
+  <h4>다른 피드백 채널과의 차이</h4>
+  <table>
+    <thead><tr><th>채널</th><th>전달 정보</th><th>한계</th></tr></thead>
+    <tbody>
+      <tr><td>점수만 (전통적 EA)</td><td>스칼라 fitness</td><td>왜 실패했는지 모름</td></tr>
+      <tr><td>점수 + diff history</td><td>이전 시도 코드</td><td>실행 결과는 못 봄</td></tr>
+      <tr><td><strong>Artifact (OpenEvolve)</strong></td><td>stderr·stats·timeout 등 실행 산출물</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>실용적 효과.</strong> 솔버 튜닝에서 artifact에 솔버 내부 카운터(conflicts, branches, restarts)를 넣으면 LLM이 "이 파라미터가 conflict 폭증을 유발했으니 줄이자"처럼 인과적으로 추론한다. 단순 timing만 줬을 때보다 수렴이 빨라진다.
+  </div>
+
+  <p>
+    <strong>설계 시 주의.</strong> artifact는 자유 형식이지만 일관된 키 이름을 유지하는 게 좋다 (<code>stderr</code>, <code>solver_stats</code>, <code>traceback</code>). LLM이 같은 키를 반복적으로 보면서 그 의미를 학습하기 때문.
+  </p>
+</section>
+
+<!-- 3. 큰 그림 아키텍처 -->
+<section id="arch">
+  <h2>3. 큰 그림 아키텍처</h2>
+  <p>
+    OpenEvolve 한 번 실행하면 다음 컴포넌트들이 서로 데이터를 주고받는다. 가장 바깥의 <strong>Controller</strong>가 진화 라이프사이클 전체를 지휘하고, 안쪽의 <strong>Database</strong>·<strong>Worker Pool</strong>·<strong>LLM</strong>·<strong>Evaluator</strong>가 각자 역할을 맡는다.
+  </p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 820 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenEvolve 큰 그림 아키텍처">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#52606d"/>
+        </marker>
+        <style>
+          .box { fill: #ffffff; stroke: #2c7a4b; stroke-width: 2; }
+          .box-2 { fill: #ffffff; stroke: #2563a8; stroke-width: 2; }
+          .box-3 { fill: #fff3e0; stroke: #d97706; stroke-width: 2; }
+          .lbl { font: 600 14px sans-serif; fill: #1f2933; }
+          .sub { font: 12px sans-serif; fill: #52606d; }
+          .arrow { stroke: #52606d; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+        </style>
+      </defs>
+
+      <!-- 초기 프로그램 -->
+      <rect class="box-2" x="40" y="30" width="180" height="56" rx="8"/>
+      <text class="lbl" x="130" y="56" text-anchor="middle">Initial Program</text>
+      <text class="sub" x="130" y="74" text-anchor="middle">EVOLVE-BLOCK 표시</text>
+
+      <!-- Controller -->
+      <rect class="box-3" x="320" y="30" width="180" height="56" rx="8"/>
+      <text class="lbl" x="410" y="56" text-anchor="middle">Controller</text>
+      <text class="sub" x="410" y="74" text-anchor="middle">전체 오케스트레이션</text>
+
+      <!-- Database -->
+      <rect class="box" x="60" y="160" width="200" height="80" rx="8"/>
+      <text class="lbl" x="160" y="186" text-anchor="middle">Program Database</text>
+      <text class="sub" x="160" y="206" text-anchor="middle">MAP-Elites 그리드</text>
+      <text class="sub" x="160" y="222" text-anchor="middle">+ Islands</text>
+
+      <!-- Worker Pool -->
+      <rect class="box" x="560" y="160" width="200" height="80" rx="8"/>
+      <text class="lbl" x="660" y="186" text-anchor="middle">Worker Pool</text>
+      <text class="sub" x="660" y="206" text-anchor="middle">병렬 iteration</text>
+      <text class="sub" x="660" y="222" text-anchor="middle">(ProcessParallel)</text>
+
+      <!-- Iteration Step -->
+      <rect class="box-3" x="280" y="290" width="260" height="56" rx="8"/>
+      <text class="lbl" x="410" y="316" text-anchor="middle">Iteration Step</text>
+      <text class="sub" x="410" y="334" text-anchor="middle">sample → prompt → LLM → eval</text>
+
+      <!-- Prompt / LLM / Evaluator -->
+      <rect class="box-2" x="40" y="390" width="200" height="60" rx="8"/>
+      <text class="lbl" x="140" y="416" text-anchor="middle">Prompt Sampler</text>
+      <text class="sub" x="140" y="434" text-anchor="middle">문맥 prompt 구성</text>
+
+      <rect class="box-2" x="310" y="390" width="200" height="60" rx="8"/>
+      <text class="lbl" x="410" y="416" text-anchor="middle">LLM Ensemble</text>
+      <text class="sub" x="410" y="434" text-anchor="middle">가중치 모델 1개 선택</text>
+
+      <rect class="box-2" x="580" y="390" width="200" height="60" rx="8"/>
+      <text class="lbl" x="680" y="416" text-anchor="middle">Evaluator</text>
+      <text class="sub" x="680" y="434" text-anchor="middle">cascade stage1/2/3</text>
+
+      <!-- 화살표 -->
+      <path class="arrow" d="M220 58 L320 58"/>
+      <path class="arrow" d="M410 86 L160 160"/>
+      <path class="arrow" d="M410 86 L660 160"/>
+      <path class="arrow" d="M160 240 L320 290"/>
+      <path class="arrow" d="M660 240 L500 290"/>
+      <path class="arrow" d="M340 346 L140 390"/>
+      <path class="arrow" d="M410 346 L410 390"/>
+      <path class="arrow" d="M480 346 L680 390"/>
+      <!-- 피드백: Evaluator → Database -->
+      <path class="arrow" d="M680 450 Q400 470 160 240" stroke-dasharray="5 3"/>
+      <text class="sub" x="400" y="466" text-anchor="middle">score + artifacts 피드백 (다음 iteration의 prompt에 자동 포함)</text>
+    </svg>
+    <figcaption>그림 1. OpenEvolve 컴포넌트와 데이터 흐름. 점선 = 피드백 경로.</figcaption>
+  </figure>
+
+  <div class="callout">
+    <strong>비유.</strong> 솔버 파라미터를 사람이 손으로 튜닝할 때의 절차 ─ "옵션 바꿔보고 → 실행해 보고 → 좋으면 적어두고 → 다시 변형" ─ 를 자동화한 시스템이다. 사람의 직관 자리에 LLM이, 메모장 자리에 Program Database가 들어간다.
+  </div>
+</section>
+
+<!-- 4. 한 iteration 의 생애 -->
+<section id="iteration">
+  <h2>4. 한 iteration의 생애 — 피드백 루프</h2>
+  <p>
+    위 그림의 <em>Iteration Step</em> 한 번을 풀어 쓰면 다음 7단계다. 이 7단계가 수백 ~ 수천 번 반복되며 점수가 올라간다.
+  </p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 880 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="iteration 생애 7단계 루프">
+      <defs>
+        <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#52606d"/>
+        </marker>
+        <style>
+          .stp { fill: #ffffff; stroke: #2c7a4b; stroke-width: 2; }
+          .stp.acc { fill: #fff3e0; stroke: #d97706; }
+          .num { font: 700 14px sans-serif; fill: #2c7a4b; }
+          .num.acc { fill: #d97706; }
+          .ttl { font: 600 13px sans-serif; fill: #1f2933; }
+          .dsc { font: 11px sans-serif; fill: #52606d; }
+          .arr { stroke: #52606d; stroke-width: 1.5; fill: none; marker-end: url(#arr2); }
+        </style>
+      </defs>
+
+      <!-- 7 boxes 가로 배치, 마지막에 루프백 화살표 -->
+      <g>
+        <rect class="stp" x="20"  y="80" width="115" height="80" rx="8"/>
+        <text class="num" x="78"  y="100" text-anchor="middle">①</text>
+        <text class="ttl" x="78"  y="120" text-anchor="middle">Sample</text>
+        <text class="dsc" x="78"  y="138" text-anchor="middle">island 에서 타겟</text>
+        <text class="dsc" x="78"  y="152" text-anchor="middle">+ inspirations</text>
+
+        <rect class="stp" x="155" y="80" width="115" height="80" rx="8"/>
+        <text class="num" x="213" y="100" text-anchor="middle">②</text>
+        <text class="ttl" x="213" y="120" text-anchor="middle">Build Prompt</text>
+        <text class="dsc" x="213" y="138" text-anchor="middle">코드 + 과거 시도</text>
+        <text class="dsc" x="213" y="152" text-anchor="middle">+ top elite + artifact</text>
+
+        <rect class="stp acc" x="290" y="80" width="115" height="80" rx="8"/>
+        <text class="num acc" x="348" y="100" text-anchor="middle">③</text>
+        <text class="ttl" x="348" y="120" text-anchor="middle">LLM Generate</text>
+        <text class="dsc" x="348" y="138" text-anchor="middle">가중치 모델 선택</text>
+        <text class="dsc" x="348" y="152" text-anchor="middle">diff or rewrite</text>
+
+        <rect class="stp" x="425" y="80" width="115" height="80" rx="8"/>
+        <text class="num" x="483" y="100" text-anchor="middle">④</text>
+        <text class="ttl" x="483" y="120" text-anchor="middle">Parse Code</text>
+        <text class="dsc" x="483" y="138" text-anchor="middle">SEARCH/REPLACE</text>
+        <text class="dsc" x="483" y="152" text-anchor="middle">블록 적용</text>
+
+        <rect class="stp acc" x="560" y="80" width="115" height="80" rx="8"/>
+        <text class="num acc" x="618" y="100" text-anchor="middle">⑤</text>
+        <text class="ttl" x="618" y="120" text-anchor="middle">Cascade Eval</text>
+        <text class="dsc" x="618" y="138" text-anchor="middle">stage1→2→3</text>
+        <text class="dsc" x="618" y="152" text-anchor="middle">임계 미달 시 컷</text>
+
+        <rect class="stp" x="695" y="80" width="115" height="80" rx="8"/>
+        <text class="num" x="753" y="100" text-anchor="middle">⑥</text>
+        <text class="ttl" x="753" y="120" text-anchor="middle">Insert</text>
+        <text class="dsc" x="753" y="138" text-anchor="middle">같은 island 추가</text>
+        <text class="dsc" x="753" y="152" text-anchor="middle">global best 갱신</text>
+      </g>
+
+      <!-- 가로 화살표 -->
+      <path class="arr" d="M135 120 L155 120"/>
+      <path class="arr" d="M270 120 L290 120"/>
+      <path class="arr" d="M405 120 L425 120"/>
+      <path class="arr" d="M540 120 L560 120"/>
+      <path class="arr" d="M675 120 L695 120"/>
+
+      <!-- 루프백: ⑥ → ⑦ Cycle island → 다시 ① -->
+      <rect class="stp" x="335" y="240" width="170" height="60" rx="8"/>
+      <text class="num" x="418" y="260" text-anchor="middle">⑦</text>
+      <text class="ttl" x="418" y="278" text-anchor="middle">Cycle Island</text>
+      <text class="dsc" x="418" y="294" text-anchor="middle">다음은 옆 island 에서</text>
+
+      <path class="arr" d="M753 160 Q753 240 505 270"/>
+      <path class="arr" d="M335 270 Q78 250 78 160"/>
+
+      <!-- 점선 피드백 강조 -->
+      <text class="dsc" x="440" y="345" text-anchor="middle" fill="#d97706">⑤의 score + artifacts 가 ②의 다음 prompt 에 자동 주입 — 이것이 OpenEvolve 의 핵심 피드백 루프</text>
+    </svg>
+    <figcaption>그림 2. 한 iteration 7단계 + 루프백. ③⑤가 LLM/평가가 일어나는 핵심 지점.</figcaption>
+  </figure>
+
+  <h3>각 단계 세부</h3>
+  <ol>
+    <li><strong>Sample</strong> — 현재 island에서 exploration(다양성) vs exploitation(엘리트) 비율로 타겟 코드와 영감 프로그램을 무작위 추출.</li>
+    <li><strong>Build Prompt</strong> — 타겟 코드, 과거 시도 3개 점수, 다른 island의 elite 5개, 직전 평가 artifact를 하나의 prompt로 묶음.</li>
+    <li><strong>LLM Generate</strong> — Ensemble이 가중치로 모델 1개를 뽑음. 그 모델이 diff 블록 또는 전체 재작성 코드를 출력.</li>
+    <li><strong>Parse Code</strong> — diff 모드면 SEARCH/REPLACE 블록을 타겟 코드에 적용; rewrite 모드면 코드 블록 추출.</li>
+    <li><strong>Cascade Evaluate</strong> — stage1(빠른 필터) → stage2(중간) → stage3(전체). 각 단계 임계값을 못 넘으면 조기 중단해 비용 절약.</li>
+    <li><strong>Insert</strong> — Program 객체로 DB에 추가. 같은 island에 들어가고, MAP-Elites 그리드 셀에 배정됨. global best보다 좋으면 갱신.</li>
+    <li><strong>Cycle Island</strong> — <code>current_island = (current_island + 1) % num_islands</code>. 다음 iteration은 옆 섬에서.</li>
+  </ol>
+</section>
+
+<!-- 5. MAP-Elites -->
+<!-- 5. LLM 적용 -->
+<section id="llm">
+  <h2>5. LLM이 어떻게 적용되나</h2>
+  <p>
+    OpenEvolve에서 LLM은 <strong>"똑똑한 변이 함수"</strong> 역할이다. 일반 진화 알고리즘이 비트 플립이나 무작위 swap으로 변형하는 자리에, 코드 문맥을 이해하는 LLM이 들어간다.
+  </p>
+
+  <h3>Ensemble — 모델 여러 개를 가중치로 섞기</h3>
+  <p>
+    한 모델만 쓰면 그 모델의 편향에 묶이므로, OpenEvolve는 <em>Ensemble</em>을 쓴다. <code>config.yaml</code>에서 모델 목록과 weight를 지정하면 매 iteration마다 가중치에 비례해 모델 1개가 뽑힌다.
+  </p>
+
+  <pre><code>llm:
+  models:
+    - name: "google/gemini-2.0-flash-001"
+      weight: 0.7
+    - name: "anthropic/claude-3.7-sonnet"
+      weight: 0.3
+  temperature: 0.7</code></pre>
+
+  <h3>Prompt 안에 들어가는 정보 (피드백 채널)</h3>
+  <p>
+    Prompt sampler가 각 iteration마다 다음 정보를 모아 LLM에 전달한다. 단순히 타겟 코드 하나가 아니다.
+  </p>
+  <table>
+    <thead><tr><th>채널</th><th>내용</th><th>왜 필요한가</th></tr></thead>
+    <tbody>
+      <tr><td>현재 타겟 코드</td><td>변형 대상 EVOLVE-BLOCK 코드</td><td>변경 베이스</td></tr>
+      <tr><td>과거 시도 3개</td><td>최근 시도 코드 + 점수 + improved/regressed 라벨</td><td>같은 실수 반복 방지</td></tr>
+      <tr><td>Top elite 5개</td><td>전체에서 점수 높은 프로그램들</td><td>성공 패턴 학습</td></tr>
+      <tr><td>Inspirations</td><td>다양성 강제용 무작위 1~5개</td><td>지역 최적해 탈출</td></tr>
+      <tr><td>Artifacts</td><td>직전 평가의 stderr, traceback, profiling</td><td>실패 원인 직접 보고 수정</td></tr>
+    </tbody>
+  </table>
+
+  <h3>LLM 응답 형식 2가지</h3>
+  <p>OpenEvolve는 두 가지 변형 모드를 지원한다. <code>diff_based_evolution: true</code> 설정 여부로 선택.</p>
+
+  <h4>(a) Diff 모드 — 작은 변경에 유리</h4>
+  <pre><code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
+  "search_branching": "AUTO",
+=======
+  "search_branching": "PSEUDO_COST",
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code></pre>
+  <p>위 블록만 응답하면 OpenEvolve가 자동으로 타겟 코드에 적용한다. 토큰 효율적이고, 큰 코드에서도 작은 변경이 쉽다.</p>
+
+  <h4>(b) Full Rewrite 모드 — 구조적 변경에 유리</h4>
+  <p>EVOLVE-BLOCK 전체를 통째로 새로 작성한 코드 블록을 응답하면 타겟을 통째로 교체. 작은 코드에서 자유로운 재설계가 필요할 때.</p>
+
+  <div class="callout">
+    <strong>한 줄로:</strong> "LLM = 코드 문맥을 이해하는 mutation 연산자". 무작위 변형 대신 의미 있는 변형을 만들어내는 게 차이.
+  </div>
+</section>
+
+<!-- 6. Z3 최적화 실제 결과 -->
+<section id="z3-result">
+  <h2>6. Z3 파라미터 최적화 — 실제 결과</h2>
+  <p>
+    OpenEvolve가 튜닝한 Z3 파라미터를 axion-cell 라이브러리 셀 캐릭터라이제이션에 적용한 결과. 베이스라인 = <code>axion-cell-v.0.1.0 (5.8)</code> 기본 Z3 설정, 비교 대상 = OpenEvolve로 진화시킨 Z3 파라미터 dict.
+  </p>
+
+  <p>
+    <strong>GAIN</strong> = baseline runtime ÷ optimized runtime (백분율). 100% 초과 = 그만큼 빨라짐.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Cell</th>
+        <th style="text-align:right;">axion-cell-v.0.1.0 (5.8)</th>
+        <th style="text-align:right;">Z3 param optimization</th>
+        <th style="text-align:right;">GAIN</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>SDFFSQRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">16779.7</td><td style="text-align:right;">12842.017</td><td style="text-align:right;">130.66%</td></tr>
+      <tr><td><code>SDFFRPQRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">16718.8</td><td style="text-align:right;">11917.475</td><td style="text-align:right;">140.29%</td></tr>
+      <tr><td><code>SDFFRPQNRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">16514.3</td><td style="text-align:right;">11492.625</td><td style="text-align:right;">143.69%</td></tr>
+      <tr><td><code>SDFFQRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">9240.2</td><td style="text-align:right;">6972.733</td><td style="text-align:right;">132.52%</td></tr>
+      <tr><td><code>ADDF_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">7554.4</td><td style="text-align:right;">3752.992</td><td style="text-align:right;">201.29%</td></tr>
+      <tr><td><code>XOR3_D2_N_S6P25TL_C54L04</code></td><td style="text-align:right;">4745.7</td><td style="text-align:right;">2840.486</td><td style="text-align:right;">167.07%</td></tr>
+      <tr><td><code>XNOR3_D2_N_S6P25TL_C54L04</code></td><td style="text-align:right;">4089.8</td><td style="text-align:right;">730.925</td><td style="text-align:right; color: var(--highlight); font-weight: 700;">559.54%</td></tr>
+      <tr><td><code>PREICG_D4_N_S6P25TL_C54L04</code></td><td style="text-align:right;">3889.6</td><td style="text-align:right;">3771.472</td><td style="text-align:right;">103.13%</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>핵심 수치</strong>
+    <ul style="margin-top:8px;">
+      <li><strong>최대 GAIN</strong>: XNOR3_D2 — <strong>559.54%</strong> (베이스라인 4089.8 → 730.9, 5.6배 가속)</li>
+      <li><strong>최소 GAIN</strong>: PREICG_D4 — 103.13% (이미 잘 튜닝된 셀)</li>
+      <li><strong>기하평균 GAIN</strong>: 약 <strong>176%</strong> — 평균적으로 1.76배 가속</li>
+      <li><strong>모든 셀에서 GAIN &gt; 100%</strong> — 회귀 없이 일관된 개선</li>
+    </ul>
+  </div>
+
+  <p>
+    <strong>해석.</strong> Sequential 셀(SDFF*)은 30~45% 가속, 산술 셀(ADDF)은 2배 이상, XOR/XNOR 같은 조합 로직은 더 큰 폭. 셀의 SMT 모델링 패턴이 다르고 OpenEvolve로 튜닝된 Z3 파라미터가 특정 패턴에서 특히 강점을 보임.
+  </p>
+
+  <p>
+    <strong>실용적 의미.</strong> Cell library 캐릭터라이제이션 한 round 전체에 적용하면 <em>대규모 wall-clock 단축</em>이 가능. OpenEvolve가 단순 벤치마크가 아닌 실제 EDA 워크플로우에서 측정 가능한 가치를 만들어낸 사례.
+  </p>
+</section>
+
+<!-- 7. 실전 진화 로그 예시 -->
+<section id="log-example">
+  <h2>7. 실전 예시 — CP-SAT phase2 진화 로그 읽기</h2>
+  <p>
+    여기까지가 이론. 이제 실제 로그를 따라가며 LLM이 어떻게 CP-SAT 파라미터를 튜닝하는지 본다. 로그 출처: <code>input/cpsat-bench/evolve/phase2_presolve/openevolve_output/logs/openevolve_20260527_154008.log</code>. Phase2는 phase1의 best 결과를 물려받아 <strong>presolve/probing 표면</strong>을 미세 조정하는 단계.
+  </p>
+
+  <h3>7.1 실행 환경</h3>
+  <table>
+    <thead><tr><th>항목</th><th>값</th></tr></thead>
+    <tbody>
+      <tr><td>LLM Ensemble</td><td><code>claude-sonnet-4-6</code> (weight 0.80) + <code>claude-haiku-4-5</code> (weight 0.20)</td></tr>
+      <tr><td>Random seed</td><td>42 (재현성 확보)</td></tr>
+      <tr><td>Island</td><td>3개</td></tr>
+      <tr><td>총 iteration</td><td>20</td></tr>
+      <tr><td>고정(LOCKED) 파라미터</td><td><code>random_seed=0</code>, <code>num_search_workers=1</code> — LLM이 못 건드림</td></tr>
+      <tr><td>샘플 문제</td><td>stage1=10개, stage2=10개, stage3=outlier (cascade 평가)</td></tr>
+      <tr><td>Phase 위치</td><td>phase1 best 상속 → presolve 표면 튜닝</td></tr>
+    </tbody>
+  </table>
+
+  <h3>7.2 시작점 — 이미 높은 baseline (score 0.9976)</h3>
+  <p>
+    Phase2의 초기 <code>initial_program.py</code>는 phase1에서 검증된 minimum 설정만 들고 있다. Phase1이 다양한 search 옵션을 시도한 뒤 살아남은 핵심 파라미터:
+  </p>
+  <pre><code>GLOBAL_OVERRIDES = {
+    "cp_model_probing_level": 1,
+}
+
+SIZE_BUCKETS = [
+    (50_000,         {}),
+    (150_000,        {}),
+    (float("inf"),   {}),
+]
+
+STAGE3_OVERRIDES = {}</code></pre>
+
+  <p>평가 결과:</p>
+  <pre><code>combined_score = 0.9976
+geomean_speedup = 1.0409          ← deterministic_time 4.1% 단축
+geomean_wall_speedup = 1.2351     ← wall time 23.5% 빠름
+solved_rate = 1.0 (10/10 OPTIMAL)
+efficiency = 0.8802               ← 일부 문제에서 conflicts 약간 증가 (88점)</code></pre>
+
+  <div class="callout">
+    <strong>Phase1과의 큰 차이.</strong> Phase1은 score=0에서 출발했지만 Phase2는 시작부터 0.9976. 즉 phase1이 잘 작동해 미세 조정만 남은 상태. <em>큰 도약 대신 점진적 개선이 목표</em>.
+  </div>
+
+  <h3>7.3 Iteration 1 — SIZE_BUCKETS와 STAGE3_OVERRIDES 채움 (score 1.0)</h3>
+  <p>
+    Iteration 1에서 ensemble이 <code>claude-haiku-4-5</code>를 샘플링. LLM thinking 로그를 한국어로 요약하면:
+  </p>
+
+  <div class="callout">
+    <strong>LLM 사고 요약 (번역):</strong>
+    <ol>
+      <li>"현재 score 0.9976 — 이미 매우 높음. 큰 점프 대신 점진적 개선이 필요하다."</li>
+      <li>"Phase2는 presolve/probing 튜닝 단계. <code>cp_model_probing_level=1</code>이 글로벌 기본인데, <em>작은 문제(&lt;50k)</em>는 SAT-유사 특성이라 probing을 더 높게 가져도 안전하다."</li>
+      <li>"<code>SIZE_BUCKETS</code>의 첫 버킷에 <code>cp_model_probing_level: 2</code> 추가. 중/대 버킷은 그대로 두어 LP-heavy 인스턴스 회귀 방지."</li>
+      <li>"Outlier(stage3 전용)에는 더 공격적으로 — <code>cp_model_probing_level: 3</code>, <code>symmetry_level: 3</code>, <code>probing_num_combinations_limit: 35000</code>. STAGE3_OVERRIDES는 outlier에만 적용되니 일반 stage1/2 성능 손해 없음."</li>
+    </ol>
+  </div>
+
+  <p>
+    LLM이 적용한 새 EVOLVE-BLOCK:
+  </p>
+
+  <pre><code>GLOBAL_OVERRIDES = {
+    "cp_model_probing_level": 1,    # 글로벌은 보수적으로 유지
+}
+
+SIZE_BUCKETS = [
+    (50000,  {"cp_model_probing_level": 2}),   # 작은 문제 — probing 올림
+    (150000, {}),                              # 중간 — 그대로
+    (inf,    {}),                              # 큰 문제 — 그대로 (LP-heavy 보호)
+]
+
+STAGE3_OVERRIDES = {
+    "cp_model_probing_level": 3,               # outlier 전용 — 강력
+    "symmetry_level": 3,
+    "probing_num_combinations_limit": 35000,
+}</code></pre>
+
+  <p>평가 결과:</p>
+  <pre><code>iter 1: combined_score = 1.0000  (0.9976 → 1.0000, +0.0024)
+        solved_rate = 1.0  (10/10 OPTIMAL)
+        geomean_speedup = 1.0000
+        geomean_wall_speedup = 1.1226
+        efficiency = 1.0000           ← efficiency 페널티 사라짐
+        🌟 New best solution found at iteration 1</code></pre>
+
+  <div class="callout ok">
+    <strong>주목할 점.</strong> wall_speedup은 1.2351 → 1.1226으로 살짝 하락. 하지만 <code>combined_score</code>는 <strong>증가</strong>. 이유는 efficiency 0.88 → 1.00. score 식이 wall만 보지 않고 efficiency까지 가중치를 두기 때문에, <em>"솔버가 더 적은 일을 해서 같은 결과를 얻은 변형"</em>이 더 높은 점수를 받는다.
+  </div>
+
+  <h3>7.4 Iteration 5~6 — 욕심내다 efficiency 페널티</h3>
+  <p>
+    Iteration 5, 6에서 LLM이 더 공격적인 presolve 옵션을 시도. 결과는 의외:
+  </p>
+  <pre><code>iter 5: combined_score=0.7969  geomean_speedup=0.8460  efficiency=0.8356
+iter 6: combined_score=0.6964  geomean_speedup=0.7689  efficiency=0.7427</code></pre>
+  <p>
+    OPTIMAL은 다 맞췄지만 (<code>solved_rate=1.0</code>) score는 큰 폭으로 하락. 원인은 두 가지:
+  </p>
+  <ul>
+    <li><strong>geomean_speedup &lt; 1.0</strong> — variant가 baseline보다 deterministic_time을 <em>더 많이</em> 씀</li>
+    <li><strong>efficiency 하락</strong> — conflicts 5,221 → 7,817~8,670개로 증가. 솔버가 헤맴.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>학습 포인트.</strong> 이미 score 1.0인 상태에서 추가 개선은 매우 어렵다. 어설픈 욕심이 오히려 후퇴. score 식 자체가 "더 빠르거나 더 효율적이면 보상, 양쪽 다 나쁘면 페널티" 구조라 stable한 변형이 valuable.
+  </div>
+
+  <h3>7.5 Iteration 7~13 — Regression 폭주와 같은 문제 반복</h3>
+  <p>
+    Iteration 7, 8, 10, 11, 12, 13 모두 같은 에러:
+  </p>
+  <pre><code>combined_score = 0.0000
+error = "result regression on 3e69d6f5b7: baseline=OPTIMAL got=UNKNOWN"</code></pre>
+  <p>
+    같은 문제(SHA <code>3e69d6f5b7</code>, num_constraints=28938)에서 반복적으로 OPTIMAL → UNKNOWN. LLM이 매번 다른 변형을 시도하는데 자꾸 이 한 문제가 무너진다. 이 문제는 phase1에서 무난히 풀던 문제 — phase2의 presolve 튜닝이 이 문제의 핵심 구조를 깬다는 의미.
+  </p>
+
+  <div class="callout danger">
+    <strong>Phase2의 어려움.</strong> Phase1과 달리 phase2의 가능한 변형 공간이 <em>이미 잘 작동하는 baseline</em>에 비해 좁다. 한 발만 잘못 디뎌도 OPTIMAL → UNKNOWN. LLM이 conservative 영역에서 surf해야 함.
+  </div>
+
+  <h3>7.6 Iteration 14 — 복구 (score 0.969)</h3>
+  <p>
+    여러 차례 regression 후 iter 14에서 다시 OPTIMAL 회복:
+  </p>
+  <pre><code>iter 14: combined_score = 0.9690
+         geomean_speedup = 1.0113
+         geomean_wall_speedup = 1.2008
+         efficiency = 0.8794
+         solved_rate = 1.0</code></pre>
+  <p>
+    Parent는 iter 4 (<code>04718c2f</code>, score 0.7969)의 자식이지만 iter 1의 검증된 SIZE_BUCKETS 패턴으로 회귀. 즉 LLM이 artifact를 통해 "3e69d6f5b7에서 무엇이 깨졌는지" 학습 후 안전한 영역으로 복귀.
+  </p>
+
+  <h3>7.7 종합 — Phase2가 보여주는 OpenEvolve 동작 양상</h3>
+  <table>
+    <thead><tr><th>특징</th><th>이 로그에서 확인된 증거</th></tr></thead>
+    <tbody>
+      <tr><td>Phase 체이닝</td><td>phase1 best (<code>cp_model_probing_level=1</code>)이 phase2 initial로 import. 시작 점수 이미 0.9976.</td></tr>
+      <tr><td>점진적 개선</td><td>iter 1: 0.9976 → 1.0000 (+0.0024). 점프가 아닌 미세 조정.</td></tr>
+      <tr><td>Efficiency vs Wall 트레이드오프</td><td>iter 1은 wall은 약간 느려졌지만 efficiency가 좋아져 종합 점수 상승.</td></tr>
+      <tr><td>STAGE3_OVERRIDES 활용</td><td>LLM이 "outlier 전용 공격적 설정"을 분리 — stage1/2 안전, stage3에만 적용.</td></tr>
+      <tr><td>반복적 동일 문제 실패</td><td>iter 7~13: 같은 문제(<code>3e69d6f5b7</code>)에서 반복 UNKNOWN — phase2 변형이 이 문제 구조를 깸.</td></tr>
+      <tr><td>Artifact 학습 복구</td><td>iter 14에서 LLM이 regression 메시지를 보고 안전 영역으로 회귀.</td></tr>
+      <tr><td>Cascade 평가</td><td>모든 iteration이 stage1만 평가됨 — 점수 1.0 이상 도달 못 해 stage2 진입 못 함 (phase2의 한계).</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    20 iteration 후 phase2의 best 변형은 <strong>iter 1</strong> (<code>combined_score=1.0000</code>, SIZE_BUCKETS + STAGE3_OVERRIDES 추가). 이 best가 추출돼 phase3의 <code>initial_program.py</code>로 import되고 다음 표면(LP/cuts) 튜닝이 시작된다.
+  </p>
+
+  <div class="callout ok">
+    <strong>Phase1 vs Phase2 비교.</strong> Phase1은 score 0 → 1.0822로 큰 도약 (탐색). Phase2는 0.9976 → 1.0000으로 미세 조정 (수렴). 두 phase의 진화 양상이 본질적으로 다르며, 이게 OpenEvolve의 multi-phase cascade가 단계마다 적절한 최적화를 하는 이유.
+  </div>
+</section>
+
+<!-- 8. repo 활용 -->
+<section id="bench">
+  <h2>8. 이 repo의 활용: z3-bench / cpsat-bench</h2>
+  <p>
+    이 워크스페이스의 <code>input/z3-bench</code>, <code>input/cpsat-bench</code> 두 디렉토리는 OpenEvolve를 솔버 파라미터 튜닝에 적용한 실제 사례다. 두 벤치마크는 거의 같은 구조를 따른다.
+  </p>
+
+  <h3>공통 디렉토리 구조</h3>
+
+  <figure class="figure">
+    <svg viewBox="0 0 760 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="z3-bench / cpsat-bench 디렉토리 구조">
+      <defs>
+        <style>
+          .root  { fill: #fff3e0; stroke: #d97706; stroke-width: 2; }
+          .dir   { fill: #d6edd9; stroke: #2c7a4b; stroke-width: 1.5; }
+          .file  { fill: #ffffff; stroke: #2563a8; stroke-width: 1.5; }
+          .lbl   { font: 600 13px sans-serif; fill: #1f2933; }
+          .lbl-s { font: 500 11px sans-serif; fill: #1f2933; }
+          .sub   { font: 10px sans-serif; fill: #52606d; }
+          .line  { stroke: #9aa5ad; stroke-width: 1; fill: none; }
+        </style>
+      </defs>
+
+      <!-- root -->
+      <rect class="root" x="20" y="20" width="200" height="40" rx="6"/>
+      <text class="lbl" x="120" y="44" text-anchor="middle">input/&lt;bench&gt;/</text>
+
+      <!-- raw-data -->
+      <rect class="dir" x="260" y="20" width="200" height="40" rx="6"/>
+      <text class="lbl-s" x="360" y="40" text-anchor="middle">raw-data/</text>
+      <text class="sub"   x="360" y="54" text-anchor="middle">원본 문제 + meta.jsonl</text>
+
+      <!-- problems.jsonl -->
+      <rect class="file" x="260" y="75" width="200" height="40" rx="6"/>
+      <text class="lbl-s" x="360" y="95" text-anchor="middle">problems.jsonl</text>
+      <text class="sub"   x="360" y="109" text-anchor="middle">통합 baseline 데이터</text>
+
+      <!-- evolve/ -->
+      <rect class="dir" x="260" y="130" width="200" height="40" rx="6"/>
+      <text class="lbl-s" x="360" y="155" text-anchor="middle">evolve/</text>
+
+      <!-- evolve children -->
+      <rect class="file" x="500" y="130" width="240" height="40" rx="6"/>
+      <text class="lbl-s" x="620" y="150" text-anchor="middle">config.yaml</text>
+      <text class="sub"   x="620" y="164" text-anchor="middle">LLM·iteration·cascade 설정</text>
+
+      <rect class="dir"  x="500" y="180" width="240" height="40" rx="6"/>
+      <text class="lbl-s" x="620" y="200" text-anchor="middle">shared/</text>
+      <text class="sub"   x="620" y="214" text-anchor="middle">evaluator·score·runner·baseline</text>
+
+      <rect class="file" x="500" y="230" width="240" height="40" rx="6"/>
+      <text class="lbl-s" x="620" y="250" text-anchor="middle">build_samples.py</text>
+      <text class="sub"   x="620" y="264" text-anchor="middle">stage1/2/3 샘플 선정</text>
+
+      <rect class="file" x="500" y="280" width="240" height="40" rx="6"/>
+      <text class="lbl-s" x="620" y="300" text-anchor="middle">run_phase.sh</text>
+      <text class="sub"   x="620" y="314" text-anchor="middle">phase 체이닝</text>
+
+      <rect class="dir"  x="500" y="330" width="240" height="40" rx="6"/>
+      <text class="lbl-s" x="620" y="350" text-anchor="middle">phase{1..4}_&lt;name&gt;/</text>
+      <text class="sub"   x="620" y="364" text-anchor="middle">initial_program.py (EVOLVE-BLOCK)</text>
+
+      <!-- 연결선 -->
+      <path class="line" d="M220 40 L260 40"/>
+      <path class="line" d="M220 40 L240 95 L260 95"/>
+      <path class="line" d="M220 40 L240 150 L260 150"/>
+      <path class="line" d="M460 150 L500 150"/>
+      <path class="line" d="M460 150 L480 200 L500 200"/>
+      <path class="line" d="M460 150 L480 250 L500 250"/>
+      <path class="line" d="M460 150 L480 300 L500 300"/>
+      <path class="line" d="M460 150 L480 350 L500 350"/>
+    </svg>
+    <figcaption>그림 5. 두 벤치마크에 공통인 디렉토리 구조. <code>raw-data</code>에서 baseline을 모으고, <code>evolve/</code>에서 진화를 돌린다.</figcaption>
+  </figure>
+
+  <h3>4-Phase Cascade 흐름</h3>
+  <p>
+    파라미터 공간이 너무 크면 한 번에 모두 튜닝하기 어렵다. 그래서 두 벤치마크 모두 진화를 <strong>4 phase</strong>로 나눠 점진적으로 좁혀간다.
+  </p>
+
+  <figure class="figure">
+    <svg viewBox="0 0 820 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="4-phase cascade 흐름">
+      <defs>
+        <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#2c7a4b"/>
+        </marker>
+        <style>
+          .ph  { fill: #ffffff; stroke: #2c7a4b; stroke-width: 2; }
+          .ph4 { fill: #fff3e0; stroke: #d97706; stroke-width: 2; }
+          .lbl { font: 700 14px sans-serif; fill: #1f2933; }
+          .sub { font: 11px sans-serif; fill: #52606d; }
+          .arr { stroke: #2c7a4b; stroke-width: 2; fill: none; marker-end: url(#arr4); }
+        </style>
+      </defs>
+
+      <rect class="ph" x="20"  y="60" width="180" height="100" rx="8"/>
+      <text class="lbl" x="110" y="90" text-anchor="middle">Phase 1</text>
+      <text class="sub" x="110" y="110" text-anchor="middle">작은 표면 단독</text>
+      <text class="sub" x="110" y="126" text-anchor="middle">z3: opt.* + sls.*</text>
+      <text class="sub" x="110" y="142" text-anchor="middle">cpsat: search/subsolvers</text>
+
+      <rect class="ph" x="220" y="60" width="180" height="100" rx="8"/>
+      <text class="lbl" x="310" y="90" text-anchor="middle">Phase 2</text>
+      <text class="sub" x="310" y="110" text-anchor="middle">phase1 best 고정</text>
+      <text class="sub" x="310" y="126" text-anchor="middle">z3: sat.*</text>
+      <text class="sub" x="310" y="142" text-anchor="middle">cpsat: presolve</text>
+
+      <rect class="ph" x="420" y="60" width="180" height="100" rx="8"/>
+      <text class="lbl" x="510" y="90" text-anchor="middle">Phase 3</text>
+      <text class="sub" x="510" y="110" text-anchor="middle">phase1+2 best 고정</text>
+      <text class="sub" x="510" y="126" text-anchor="middle">z3: smt.*</text>
+      <text class="sub" x="510" y="142" text-anchor="middle">cpsat: lp/cuts</text>
+
+      <rect class="ph4" x="620" y="60" width="180" height="100" rx="8"/>
+      <text class="lbl" x="710" y="90" text-anchor="middle">Phase 4</text>
+      <text class="sub" x="710" y="110" text-anchor="middle">통합 미세조정</text>
+      <text class="sub" x="710" y="126" text-anchor="middle">모든 best 결합</text>
+      <text class="sub" x="710" y="142" text-anchor="middle">전체 표면</text>
+
+      <path class="arr" d="M200 110 L220 110"/>
+      <path class="arr" d="M400 110 L420 110"/>
+      <path class="arr" d="M600 110 L620 110"/>
+
+      <text class="sub" x="410" y="200" text-anchor="middle">탐색 공간을 점진적으로 좁히면서, 앞 phase의 우승 dict을 다음 phase의 시작점으로 사용</text>
+    </svg>
+    <figcaption>그림 6. 4-phase cascade. 각 phase가 끝나면 best dict가 다음 phase의 <code>initial_program.py</code>에 import 된다.</figcaption>
+  </figure>
+
+  <h3>Scoring 공식 — LLM이 최대화하려는 숫자</h3>
+  <p>
+    두 벤치마크 모두 같은 패턴의 점수식을 쓴다. 세 요소를 곱한 단일 스칼라.
+  </p>
+
+  <div class="formula">combined_score
+    = geomean(speedup_per_problem, weight=baseline_ms)   ← 큰 문제일수록 가중치 ↑
+      × solved_rate²                                       ← 정답률 떨어지면 큰 페널티
+      × efficiency^0.333                                   ← conflict/decision/propagation 개선</div>
+
+  <ul>
+    <li><strong>geomean(speedup)</strong> — 문제별 (baseline_ms ÷ variant_ms) 의 기하평균. baseline_ms로 가중하면 오래 걸리는 어려운 문제가 점수를 좌우.</li>
+    <li><strong>solved_rate²</strong> — 한 문제라도 정답을 못 맞히거나 OPTIMAL을 놓치면 제곱으로 페널티. 속도 위해 정확성을 희생하지 못하게 막는 안전장치.</li>
+    <li><strong>efficiency^0.333</strong> — 솔버 내부 카운터(conflicts, decisions, propagations 등)의 베이스라인 대비 개선 정도. 시간 외에 "솔버가 더 적은 일을 했는가"도 본다.</li>
+  </ul>
+
+  <p>
+    차이는 미세하다:
+    <strong>z3-bench</strong>은 wall-clock speedup 기반,
+    <strong>cpsat-bench</strong>은 하드웨어 의존성을 줄이려 <code>deterministic_time</code>(작업 카운터) 기반 cost mode를 쓴다.
+  </p>
+
+  <h3>EVOLVE 표면 차이</h3>
+  <table>
+    <thead><tr><th>벤치</th><th>EVOLVE-BLOCK 안의 구조</th><th>의도</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><a href="../../input/z3-bench/evolve/">z3-bench</a></td>
+        <td>단일 dict <code>OPT_SLS_OVERRIDES</code></td>
+        <td>모든 문제에 같은 옵션 dict 적용</td>
+      </tr>
+      <tr>
+        <td><a href="../../input/cpsat-bench/evolve/">cpsat-bench</a></td>
+        <td>3층: <code>GLOBAL_OVERRIDES</code> + <code>SIZE_BUCKETS</code>(문제 크기 분기) + <code>STAGE3_OVERRIDES</code>(outlier 전용)</td>
+        <td>문제 특성별로 다른 옵션 셋을 적용하는 적응형 튜닝</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    cpsat의 <code>SIZE_BUCKETS</code>는 예를 들면 "제약 5만개 미만 / 5만~15만 / 15만 이상"으로 나눠 각 버킷마다 다른 옵션 dict를 갖는다. 작은 문제는 빠른 휴리스틱, 큰 문제는 무거운 LP를 켜는 식.
+  </p>
+</section>
+
+<!-- 10. 체크리스트 -->
+<section id="checklist">
+  <h2>9. 새 솔버에 적용하려면 — 정의해야 할 코드</h2>
+  <p>
+    예: cvc5, MiniZinc, picosat 같은 다른 솔버에 OpenEvolve를 적용하고 싶다면 다음 순서로 파일을 작성한다. z3-bench가 거의 그대로 템플릿 역할을 한다.
+  </p>
+
+  <ol class="checklist">
+    <li>
+      <strong><code>raw-data/</code> + <code>problems.jsonl</code></strong> — 베이스라인 실행 결과를 모아 둔다.
+      각 row: <code>problem_sha256</code>, <code>baseline_ms</code>, <code>baseline_result</code> (SAT/UNSAT/OPTIMAL/...), 도메인 features, 솔버 stats.
+      참고: <a href="../../input/z3-bench/problems.jsonl">input/z3-bench/problems.jsonl</a>.
+    </li>
+    <li>
+      <strong><code>shared/&lt;solver&gt;_runner.py</code></strong> — 서브프로세스로 솔버를 호출하는 얇은 래퍼. timeout, stderr 캡처, stats 파싱.
+      참고: <a href="../../input/z3-bench/evolve/shared/">z3-bench/evolve/shared/</a>.
+    </li>
+    <li>
+      <strong><code>shared/baseline_params.py</code></strong> — <code>BASELINE</code> dict(기본값)와 <code>LOCKED</code> dict(절대 변경 금지: random_seed, num_workers).
+      LOCKED는 LLM이 건드리면 결과가 비교 불가능해지는 키들.
+    </li>
+    <li>
+      <strong><code>shared/score.py</code></strong> — 위 9절의 scoring 공식 구현. <code>combined_score</code>를 반환하는 함수 하나.
+      불일치 시 (variant가 OPTIMAL 못 맞춤 등) <code>1e-6</code> 같은 큰 페널티.
+    </li>
+    <li>
+      <strong><code>shared/evaluator.py</code></strong> — <code>evaluate_stage1/2/3</code> 함수. 각 stage 통과 임계값 정의, 적응적 timeout <code>max(5s, baseline_ms × 1.3)</code>.
+    </li>
+    <li>
+      <strong><code>build_samples.py</code></strong> — 문제집을 stage별로 나눔. 보통 stage1=5개 빠른 거(필터), stage2=50개 대표, stage3=5개 어려운 거(검증).
+      Tukey IQR로 outlier 컷, 분위수 stratified sampling.
+    </li>
+    <li>
+      <strong><code>phase{N}_&lt;name&gt;/initial_program.py</code></strong> — EVOLVE-BLOCK 안에 튜닝 대상 파라미터 dict. 단순 dict 또는 z3/cpsat 같은 다층 구조.
+      Phase 마다 다른 표면을 노출.
+    </li>
+    <li>
+      <strong><code>config.yaml</code></strong> — LLM 모델(<code>models</code>), <code>max_iterations</code>(20~40), <code>population_size</code>(50),
+      <code>cascade_thresholds</code> [예: 1.03 = "3% 이상 개선해야 통과"], <code>feature_dimensions</code>,
+      prompt <code>system_message</code>에 "이 솔버의 OO 파라미터를 OO 목표로 튜닝한다" 명시.
+    </li>
+    <li>
+      <strong><code>run_phase.sh</code></strong> — phase 체이닝 스크립트. phase N이 끝나면 best dict를 추출해 phase N+1의 <code>initial_program.py</code>에 import.
+    </li>
+    <li>
+      <strong>(선택) <code>extract_best.py</code>, <code>Statistics/</code>, outlier 분석</strong> — 체크포인트에서 best dict를 뽑는 유틸, outlier 자동 식별.
+      cpsat-bench는 <code>shared/outliers.json</code>으로 stage3 전용 outlier 집합을 미리 정의.
+    </li>
+  </ol>
+
+  <div class="callout">
+    <strong>가장 빨리 시작하는 법:</strong> <a href="../../input/z3-bench/evolve/">input/z3-bench/evolve/</a> 디렉토리를 통째로 복사한 뒤 (1) <code>shared/&lt;solver&gt;_runner.py</code>를 새 솔버로 교체, (2) <code>baseline_params.py</code>의 dict 키를 새 솔버 옵션으로 교체, (3) <code>problems.jsonl</code>을 새 도메인 데이터로 교체. 나머지 구조는 거의 그대로 작동한다.
+  </div>
+</section>
+
+<!-- 11. 용어 사전 -->
+<section id="glossary">
+  <h2>10. 부록 — 용어 미니 사전</h2>
+  <table>
+    <thead><tr><th>용어</th><th>한 줄 정의</th></tr></thead>
+    <tbody>
+      <tr><td>Program</td><td>진화의 기본 단위. 코드 + 점수 + parent 링크 + artifact를 한 묶음으로 가진 객체.</td></tr>
+      <tr><td>MAP-Elites</td><td>"특성 격자별 1등을 동시에 보존"하는 Quality-Diversity 알고리즘.</td></tr>
+      <tr><td>Island</td><td>격리 진화하는 부분 집단. ring topology로 주기적 migration.</td></tr>
+      <tr><td>Migration</td><td>Island 사이에 우수 개체를 이주시키는 작업. <code>migration_interval</code>로 주기 제어.</td></tr>
+      <tr><td>Cascade Evaluation</td><td>stage1 → stage2 → stage3 단계 평가. 약한 후보는 조기 컷오프.</td></tr>
+      <tr><td>Artifact</td><td>평가의 사이드 채널 데이터 (stderr, traceback, profiling). 다음 prompt에 자동 주입.</td></tr>
+      <tr><td>EVOLVE-BLOCK</td><td><code># EVOLVE-BLOCK-START</code> ~ <code># EVOLVE-BLOCK-END</code> 마커. LLM이 수정 가능한 영역.</td></tr>
+      <tr><td>Combined Score</td><td>주 fitness 스칼라. 보통 geomean(speedup) × solved_rate² × efficiency^0.333 같은 곱셈식.</td></tr>
+      <tr><td>Ensemble</td><td>여러 LLM을 가중치로 섞어 매 호출마다 하나를 샘플링하는 방식.</td></tr>
+      <tr><td>Feature Dimension</td><td>MAP-Elites 그리드의 축. complexity, execution_time 같은 비-fitness 특성.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  본 문서는 <code>openevolve/</code> 소스코드와 <code>~/private/dev-study/wiki/openevolve</code> 위키를 교차 참조해 작성. 그림은 모두 inline SVG (외부 의존성 0).
+</footer>
+
+</main>
+
+</body>
+</html>

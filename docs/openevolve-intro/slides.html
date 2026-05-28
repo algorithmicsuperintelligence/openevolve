@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OpenEvolve — 슬라이드 발표</title>
+<style>
+/* ===== Slide deck base ===== */
+:root {
+  --bg: #0f1316;
+  --bg-card: #1a2024;
+  --bg-soft: #232a2e;
+  --fg: #e7ecef;
+  --fg-mute: #9aa5ad;
+  --accent: #5fc28a;
+  --accent-2: #7fb6e8;
+  --highlight: #f4a836;
+  --danger: #e87878;
+  --border: #2c3438;
+  --code-bg: #11181d;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html {
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+  background: var(--bg);
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  color: var(--fg);
+  font-size: 24px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  word-break: keep-all;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Slide container */
+.slide {
+  height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  padding: 36px 56px 48px;
+  position: relative;
+  background: var(--bg);
+  overflow: hidden;
+}
+.slide.title-slide {
+  background: linear-gradient(135deg, #0f1316, #1a2a3a);
+}
+.slide.section-slide {
+  background: linear-gradient(135deg, #142020, #1f2e2a);
+}
+
+/* Slide head */
+.slide-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+.slide-head .chap {
+  font-size: 1rem;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.slide-head h1 {
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  line-height: 1.2;
+}
+
+/* Slide body */
+.slide-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+.slide-body.compact { justify-content: flex-start; }
+
+h2.big {
+  font-size: 3.4rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--accent);
+  line-height: 1.15;
+}
+h2.med {
+  font-size: 2.3rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0 0 8px;
+  line-height: 1.2;
+}
+h3.sub {
+  font-size: 1.4rem;
+  color: var(--accent-2);
+  margin: 10px 0 4px;
+  letter-spacing: -0.005em;
+}
+
+p { font-size: 1.2rem; margin: 6px 0; }
+p.lead { font-size: 1.7rem; color: var(--fg-mute); font-weight: 300; line-height: 1.45; letter-spacing: -0.01em; }
+p.tag { font-size: 1rem; color: var(--fg-mute); }
+
+ul, ol { padding-left: 28px; font-size: 1.2rem; }
+li { margin: 8px 0; line-height: 1.5; }
+li strong { color: var(--accent); }
+
+em { color: var(--highlight); font-style: italic; }
+strong { color: var(--fg); font-weight: 700; }
+
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  color: var(--accent-2);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  letter-spacing: 0;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  overflow: auto;
+  font-size: 1rem;
+  line-height: 1.5;
+  margin: 8px 0;
+  max-height: 100%;
+  letter-spacing: 0;
+}
+pre code { background: transparent; padding: 0; color: var(--fg); font-size: inherit; }
+
+/* Callout */
+.callout {
+  border-left: 5px solid var(--highlight);
+  background: rgba(244, 168, 54, 0.08);
+  padding: 14px 20px;
+  border-radius: 0 8px 8px 0;
+  margin: 8px 0;
+  font-size: 1.2rem;
+  line-height: 1.55;
+}
+.callout strong { color: var(--highlight); }
+.callout.danger { border-left-color: var(--danger); background: rgba(232, 120, 120, 0.08); }
+.callout.danger strong { color: var(--danger); }
+.callout.ok { border-left-color: var(--accent); background: rgba(95, 194, 138, 0.08); }
+.callout.ok strong { color: var(--accent); }
+
+/* Cards */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin: 12px 0;
+}
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 26px 22px;
+}
+.card .icon { font-size: 3rem; margin-bottom: 12px; color: var(--accent); line-height: 1; }
+.card h4 { color: var(--accent); font-size: 1.3rem; margin-bottom: 10px; }
+.card p { font-size: 1.1rem; color: var(--fg-mute); margin: 0; line-height: 1.5; }
+
+/* Two-col */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+.two-col.uneven { grid-template-columns: 1fr 1.4fr; }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; font-size: 1.1rem; }
+th, td { border-bottom: 1px solid var(--border); padding: 10px 14px; text-align: left; vertical-align: top; line-height: 1.45; }
+th { background: var(--bg-soft); color: var(--fg-mute); text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.06em; }
+td code { font-size: 0.95rem; }
+
+/* SVG figure — fix sizing */
+.figure {
+  text-align: center;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  overflow: hidden;
+}
+.figure svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+}
+.figure figcaption {
+  font-size: 0.82rem;
+  color: var(--fg-mute);
+  font-style: italic;
+  margin-top: 6px;
+}
+
+/* For SVG-only slides — let figure breathe */
+.slide-body > .figure:only-child {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+.slide-body > .figure:only-child svg {
+  max-height: 78vh;
+}
+
+/* Slide foot */
+.slide-foot {
+  position: absolute;
+  bottom: 12px;
+  left: 56px;
+  right: 56px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.72rem;
+  color: var(--fg-mute);
+  flex-shrink: 0;
+}
+.slide-foot .progress {
+  flex: 1;
+  height: 3px;
+  background: var(--bg-soft);
+  margin: 0 16px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.slide-foot .progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+/* Title slide special */
+.title-slide .slide-head { border: none; padding: 0; margin: 0; height: 0; }
+.title-slide .slide-body {
+  text-align: center;
+  justify-content: center;
+  gap: 20px;
+}
+.title-slide h2.big { font-size: 4.4rem; }
+
+/* Top nav */
+.topnav {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+  background: rgba(26, 32, 36, 0.85);
+  padding: 8px 12px;
+  border-radius: 24px;
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+}
+.topnav button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+.topnav button:hover { background: var(--bg-soft); }
+.topnav .counter {
+  padding: 4px 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+/* Help overlay */
+.help {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  z-index: 200;
+  display: none;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+.help.show { display: block; }
+.help h3 { color: var(--accent); margin-bottom: 12px; }
+.help kbd {
+  display: inline-block;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  margin: 0 2px;
+}
+.help table td { padding: 6px 12px; border: none; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .slide { padding: 24px 22px 42px; }
+  .slide-foot { left: 22px; right: 22px; }
+  .two-col, .two-col.uneven { grid-template-columns: 1fr; gap: 14px; }
+  .cards { grid-template-columns: 1fr; gap: 12px; }
+  h2.big { font-size: 2.2rem !important; }
+  h2.med { font-size: 1.6rem; }
+  body { font-size: 17px; }
+  .slide-head h1 { font-size: 1.2rem; }
+  .slide-head .chap { font-size: 0.95rem; }
+  pre { font-size: 0.85rem; padding: 10px 12px; }
+  p { font-size: 1rem; }
+  ul, ol { font-size: 1rem; }
+  .callout { font-size: 1rem; }
+  table { font-size: 0.9rem; }
+}
+
+@media (max-height: 800px) {
+  .slide { padding: 28px 56px 42px; }
+  .slide-head { margin-bottom: 14px; padding-bottom: 8px; }
+  .slide-body { gap: 10px; }
+  body { font-size: 20px; }
+  h2.big { font-size: 2.8rem; }
+  h2.med { font-size: 1.9rem; }
+  h3.sub { font-size: 1.2rem; }
+  p { font-size: 1.05rem; }
+  ul, ol { font-size: 1.05rem; }
+  pre { font-size: 0.9rem; padding: 12px 16px; }
+  .callout { font-size: 1.05rem; padding: 10px 16px; }
+  .card .icon { font-size: 2.4rem; }
+  .card h4 { font-size: 1.15rem; }
+  .card p { font-size: 0.98rem; }
+  table { font-size: 1rem; }
+}
+
+/* Print = PDF export — preserve dark theme */
+@media print {
+  /* Force browser to keep background colors */
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  @page {
+    size: landscape;
+    margin: 0;
+    background: #0f1316;
+  }
+
+  html, body {
+    background: #0f1316 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html { scroll-snap-type: none; }
+
+  .slide {
+    height: auto;
+    min-height: 100vh;
+    page-break-after: always;
+    break-after: page;
+    box-shadow: none;
+    overflow: visible;
+    background: #0f1316 !important;
+  }
+  .slide.title-slide {
+    background: linear-gradient(135deg, #0f1316, #1a2a3a) !important;
+  }
+  .slide.section-slide {
+    background: linear-gradient(135deg, #142020, #1f2e2a) !important;
+  }
+
+  .topnav, .help, .slide-foot .progress { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Top nav -->
+<div class="topnav">
+  <button onclick="go(idx-1)">←</button>
+  <span class="counter" id="counter">1 / 35</span>
+  <button onclick="go(idx+1)">→</button>
+  <button onclick="toggleHelp()">?</button>
+  <button onclick="window.print()">PDF</button>
+  <button onclick="location.href='index.html'">📄</button>
+</div>
+
+<!-- Help overlay -->
+<div class="help" id="help">
+  <h3>키보드 단축키</h3>
+  <table>
+    <tr><td><kbd>→</kbd> <kbd>Space</kbd> <kbd>PgDn</kbd></td><td>다음 슬라이드</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>PgUp</kbd></td><td>이전 슬라이드</td></tr>
+    <tr><td><kbd>Home</kbd></td><td>첫 슬라이드</td></tr>
+    <tr><td><kbd>End</kbd></td><td>마지막 슬라이드</td></tr>
+    <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>도움말 닫기</td></tr>
+  </table>
+  <p class="tag" style="margin-top:14px;">PDF 변환: 브라우저 인쇄 (Cmd/Ctrl+P) → "Save as PDF"</p>
+</div>
+
+<!-- ========== Slide 1: Title ========== -->
+<section class="slide title-slide">
+  <div class="slide-body">
+    <p class="tag" style="color: var(--accent); letter-spacing: 0.15em; text-transform: uppercase;">Evolutionary Coding Agent</p>
+    <h2 class="big">OpenEvolve</h2>
+    <p class="lead">LLM으로 코드를 진화시키는 프레임워크</p>
+    <p class="tag" style="margin-top:32px;">개념 · 알고리즘 · 실전 로그 · 적용 가이드</p>
+  </div>
+  <div class="slide-foot">
+    <span>OpenEvolve Intro</span>
+    <div class="progress"><div class="progress-fill"></div></div>
+    <span>Slide 1</span>
+  </div>
+</section>
+
+<!-- ========== Slide 2: TL;DR ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">1. TL;DR</span><h1>1분 요약</h1></div>
+  <div class="slide-body">
+    <p class="lead">OpenEvolve = LLM을 <em>코드 변이 연산자</em>로 쓰는 진화 알고리즘.</p>
+
+    <div class="callout">
+      <strong>핵심 루프 한 줄:</strong><br>
+      타겟 코드(target code)를 뽑고 → LLM이 변형 → 점수 매김 → 좋은 것만 남김 → 다시 다음 타겟으로 → 반복.
+    </div>
+
+    <p>사람이 "더 좋게 만들어줘"라고 코드를 직접 짜지 않음. <code>EVOLVE-BLOCK</code> 영역을 LLM이 반복 변형, 자동 평가, 비교.</p>
+    <p class="tag">OpenEvolve = Google DeepMind <em>AlphaEvolve</em>의 오픈소스 구현.</p>
+  </div>
+  <div class="slide-foot"><span>1. TL;DR</span><div class="progress"><div class="progress-fill"></div></div><span>2 / 35</span></div>
+</section>
+
+<!-- ========== Slide 3: Use Cases ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">1. TL;DR</span><h1>전형적인 활용 사례 (AlphaEvolve 류)</h1></div>
+  <div class="slide-body">
+    <ul>
+      <li><strong>행렬 곱셈 알고리즘 발견</strong> — 4×4 복소 행렬 곱셈에서 1969년 Strassen 알고리즘 이후 처음으로 곱셈 49→48회로 단축한 새 알고리즘 탐색.</li>
+      <li><strong>데이터센터 스케줄링</strong> — Google Borg 클러스터 작업 배치 휴리스틱 자동 탐색, stranded compute resource 0.7%pt 회수.</li>
+      <li><strong>TPU 칩 설계 최적화</strong> — TPU 산술 회로 Verilog/RTL의 면적·지연을 줄이는 변형 탐색.</li>
+      <li><strong>LLM 학습 커널 최적화</strong> — Gemini 학습 GPU 커널(FlashAttention 변형 등) 처리량 자동 튜닝.</li>
+      <li><strong>수학적 추측 탐색</strong> — Kissing number 같은 open problem에서 새 lower/upper bound 구성.</li>
+    </ul>
+  </div>
+  <div class="slide-foot"><span>1. TL;DR</span><div class="progress"><div class="progress-fill"></div></div><span>3 / 35</span></div>
+</section>
+
+<!-- ========== Slide 4: EA Background ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">2. 핵심 개념</span><h1>2.0 배경 — 진화 알고리즘이란?</h1></div>
+  <div class="slide-body">
+    <p class="lead">생물 진화에서 영감받은 최적화 기법. "후보 해 집단을 키우면서 더 좋은 것만 살리면 어려운 문제가 풀린다."</p>
+    <h3 class="sub">기본 사이클</h3>
+    <ol>
+      <li><strong>초기화</strong> — 후보 해 N개 (무작위 또는 사람이 만든 시드)</li>
+      <li><strong>평가</strong> — 각 후보의 점수(fitness) 측정</li>
+      <li><strong>선택</strong> — 점수 높은 후보를 부모로 뽑기</li>
+      <li><strong>변형</strong> — mutation(돌연변이) 또는 crossover(교배)로 자식 생성</li>
+      <li><strong>교체</strong> — 자식을 집단에 넣고 약한 후보 밀어내기</li>
+    </ol>
+    <p class="tag">1~5 단계를 수백~수천 번 반복.</p>
+  </div>
+  <div class="slide-foot"><span>2. 핵심 개념</span><div class="progress"><div class="progress-fill"></div></div><span>4 / 35</span></div>
+</section>
+
+<!-- ========== Slide 5: EA vs OpenEvolve ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2. 핵심 개념</span><h1>전통 EA vs OpenEvolve — 무엇이 바뀌었나</h1></div>
+  <div class="slide-body">
+    <table>
+      <thead><tr><th>구성요소</th><th>전통 EA</th><th>OpenEvolve</th></tr></thead>
+      <tbody>
+        <tr><td>후보 표현</td><td>실수 벡터·비트열·트리</td><td><strong>코드 텍스트</strong> (EVOLVE-BLOCK)</td></tr>
+        <tr><td>변형 연산자</td><td>비트 플립·산술 노이즈·crossover</td><td><strong>LLM 호출</strong> (의미 있는 변형)</td></tr>
+        <tr><td>피드백</td><td>스칼라 점수만</td><td><strong>점수 + stderr + 통계</strong> (artifact)</td></tr>
+        <tr><td>집단 구조</td><td>단일 풀</td><td><strong>MAP-Elites 격자 × N개 island</strong></td></tr>
+      </tbody>
+    </table>
+    <div class="callout ok">
+      <strong>요약:</strong> 진화 알고리즘 골격은 그대로. 네 군데를 LLM 시대에 맞게 갈아 끼움. 아래 세 가지가 그 정수.
+    </div>
+  </div>
+  <div class="slide-foot"><span>2. 핵심 개념</span><div class="progress"><div class="progress-fill"></div></div><span>5 / 35</span></div>
+</section>
+
+<!-- ========== Slide 6: 3 Core Ideas ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2. 핵심 개념</span><h1>3가지 핵심 혁신</h1></div>
+  <div class="slide-body">
+    <div class="cards">
+      <div class="card">
+        <div class="icon">▦</div>
+        <h4>MAP-Elites</h4>
+        <p>Quality-Diversity. 특성 격자별 챔피언 동시 보존. 조기 수렴 방지.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🏝️</div>
+        <h4>Island 모델</h4>
+        <p>격리 진화 + 주기적 migration. 한 전략이 전체를 지배하지 못함.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔁</div>
+        <h4>Artifact 피드백</h4>
+        <p>stderr·traceback·profiling이 다음 LLM prompt에 자동 주입.</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-foot"><span>2. 핵심 개념</span><div class="progress"><div class="progress-fill"></div></div><span>6 / 35</span></div>
+</section>
+
+<!-- ========== Slide 7: MAP-Elites Explain ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2.1 MAP-Elites</span><h1>왜 격자별 챔피언인가</h1></div>
+  <div class="slide-body">
+    <h3 class="sub">문제 의식</h3>
+    <p>전통 EA는 "점수 1등"만 보존. 한 전략이 초반에 선두면 모든 후손이 그 변형 → <em>조기 수렴</em>.</p>
+
+    <h3 class="sub">해결</h3>
+    <p>해답을 단일 1등으로 압축하지 않음. <strong>특성(feature) 격자</strong>를 만들고 셀별로 챔피언 보존.</p>
+
+    <div class="callout ok">
+      <strong>역할 분리:</strong><br>
+      Fitness = "같은 셀 안에서 누가 1등?" (셀 내 비교)<br>
+      Feature 좌표 = "어느 셀에 들어갈지?" (셀 배치)
+    </div>
+
+    <p class="tag">처리: Extraction(raw 값) → Scaling(정규화) → Binning(이산 칸).</p>
+  </div>
+  <div class="slide-foot"><span>2.1 MAP-Elites</span><div class="progress"><div class="progress-fill"></div></div><span>7 / 35</span></div>
+</section>
+
+<!-- ========== Slide 8: MAP-Elites Grid SVG ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2.1 MAP-Elites</span><h1>그림 — 격자 시각화</h1></div>
+  <div class="slide-body">
+    <figure class="figure">
+      <svg viewBox="0 0 600 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MAP-Elites 격자">
+        <defs><style>
+          .cell { fill: #232a2e; stroke: #2c3438; stroke-width: 1; }
+          .filled { fill: #1f3a2a; stroke: #5fc28a; stroke-width: 1.5; }
+          .new { fill: #3a2f1a; stroke: #f4a836; stroke-width: 2; }
+          .ax { font: 600 14px sans-serif; fill: #e7ecef; }
+          .lab { font: 12px sans-serif; fill: #9aa5ad; }
+          .star { font: 700 24px sans-serif; fill: #5fc28a; }
+          .star.new { fill: #f4a836; }
+        </style></defs>
+        <g transform="translate(120,60)">
+          <g>
+            <rect class="cell" x="0" y="0" width="60" height="60"/><rect class="filled" x="60" y="0" width="60" height="60"/><rect class="cell" x="120" y="0" width="60" height="60"/><rect class="filled" x="180" y="0" width="60" height="60"/><rect class="cell" x="240" y="0" width="60" height="60"/>
+            <rect class="filled" x="0" y="60" width="60" height="60"/><rect class="filled" x="60" y="60" width="60" height="60"/><rect class="cell" x="120" y="60" width="60" height="60"/><rect class="cell" x="180" y="60" width="60" height="60"/><rect class="filled" x="240" y="60" width="60" height="60"/>
+            <rect class="cell" x="0" y="120" width="60" height="60"/><rect class="filled" x="60" y="120" width="60" height="60"/><rect class="new" x="120" y="120" width="60" height="60"/><rect class="filled" x="180" y="120" width="60" height="60"/><rect class="cell" x="240" y="120" width="60" height="60"/>
+            <rect class="filled" x="0" y="180" width="60" height="60"/><rect class="cell" x="60" y="180" width="60" height="60"/><rect class="filled" x="120" y="180" width="60" height="60"/><rect class="cell" x="180" y="180" width="60" height="60"/><rect class="filled" x="240" y="180" width="60" height="60"/>
+            <rect class="cell" x="0" y="240" width="60" height="60"/><rect class="filled" x="60" y="240" width="60" height="60"/><rect class="cell" x="120" y="240" width="60" height="60"/><rect class="filled" x="180" y="240" width="60" height="60"/><rect class="cell" x="240" y="240" width="60" height="60"/>
+          </g>
+          <text class="star" x="90" y="38">★</text><text class="star" x="210" y="38">★</text>
+          <text class="star" x="30" y="98">★</text><text class="star" x="90" y="98">★</text><text class="star" x="270" y="98">★</text>
+          <text class="star" x="90" y="158">★</text><text class="star new" x="150" y="158">★</text><text class="star" x="210" y="158">★</text>
+          <text class="star" x="30" y="218">★</text><text class="star" x="150" y="218">★</text><text class="star" x="270" y="218">★</text>
+          <text class="star" x="90" y="278">★</text><text class="star" x="210" y="278">★</text>
+        </g>
+        <text class="ax" x="270" y="40" text-anchor="middle">코드 복잡도 (낮음 → 높음)</text>
+        <text class="ax" x="50" y="220" text-anchor="middle" transform="rotate(-90 50 220)">실행시간 (느림 → 빠름)</text>
+        <g transform="translate(120, 380)">
+          <rect class="filled" x="0" y="-10" width="14" height="14"/><text class="lab" x="20" y="0">기존 챔피언</text>
+          <rect class="new" x="120" y="-10" width="14" height="14"/><text class="lab" x="140" y="0">새 변형 (셀 1등 교체)</text>
+        </g>
+      </svg>
+    </figure>
+    <p class="tag" style="text-align:center;">★ = 셀 챔피언. 새 변형의 (복잡도, 실행시간) 좌표로 셀 결정, 그 셀 챔피언과만 비교.</p>
+  </div>
+  <div class="slide-foot"><span>2.1 MAP-Elites</span><div class="progress"><div class="progress-fill"></div></div><span>8 / 35</span></div>
+</section>
+
+<!-- ========== Slide 9: Island Explain ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2.2 Island</span><h1>왜 격자 하나로 부족한가</h1></div>
+  <div class="slide-body">
+    <h3 class="sub">문제 의식</h3>
+    <p>격자가 하나뿐이면 한 LLM 호출의 강력한 변형이 곧장 전체 후보 풀에 합류. 다음 세대들은 거의 다 그 변형의 후손.</p>
+    <div class="callout danger">
+      셀 좌표는 다양해 보이지만 <em>실제 코드 혈통</em>은 한 줄기로 좁아짐. <strong>겉으로 다양한 척하지만 속은 한 가족.</strong>
+    </div>
+    <h3 class="sub">해결</h3>
+    <p>격자 자체를 N개로 복제해 독립 운영. 각 island = 자기만의 격자 + 자기만의 best.</p>
+
+    <h3 class="sub">Migration 파라미터</h3>
+    <ul>
+      <li><code>num_islands</code>: 섬 개수 (3~8)</li>
+      <li><code>migration_interval</code>: 이주 주기 (단위: generation)</li>
+      <li><code>migration_rate</code>: 이주 비율 (전형 10%)</li>
+    </ul>
+  </div>
+  <div class="slide-foot"><span>2.2 Island</span><div class="progress"><div class="progress-fill"></div></div><span>9 / 35</span></div>
+</section>
+
+<!-- ========== Slide 10: Island SVG ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2.2 Island</span><h1>갈라파고스 비유 — Ring Topology</h1></div>
+  <div class="slide-body">
+    <figure class="figure">
+      <svg viewBox="0 0 600 380" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#f4a836"/>
+          </marker>
+          <style>
+            .isle { fill: #1f3a2a; stroke: #5fc28a; stroke-width: 2; }
+            .water { fill: #142028; }
+            .lbl { font: 600 13px sans-serif; fill: #e7ecef; }
+            .sub { font: 11px sans-serif; fill: #9aa5ad; }
+            .mig { stroke: #f4a836; stroke-width: 2; fill: none; stroke-dasharray: 5 3; marker-end: url(#ar1); }
+          </style>
+        </defs>
+        <rect class="water" x="0" y="0" width="600" height="380"/>
+        <circle class="isle" cx="300" cy="70" r="50"/><text class="lbl" x="300" y="72" text-anchor="middle">Island 0</text><text class="sub" x="300" y="90" text-anchor="middle">SAT 위주</text>
+        <circle class="isle" cx="500" cy="180" r="50"/><text class="lbl" x="500" y="182" text-anchor="middle">Island 1</text><text class="sub" x="500" y="200" text-anchor="middle">presolve 위주</text>
+        <circle class="isle" cx="420" cy="320" r="50"/><text class="lbl" x="420" y="322" text-anchor="middle">Island 2</text><text class="sub" x="420" y="340" text-anchor="middle">LP/cuts</text>
+        <circle class="isle" cx="180" cy="320" r="50"/><text class="lbl" x="180" y="322" text-anchor="middle">Island 3</text><text class="sub" x="180" y="340" text-anchor="middle">heuristic</text>
+        <circle class="isle" cx="100" cy="180" r="50"/><text class="lbl" x="100" y="182" text-anchor="middle">Island 4</text><text class="sub" x="100" y="200" text-anchor="middle">랜덤 탐색</text>
+        <path class="mig" d="M345 90 Q450 110 470 145"/><path class="mig" d="M500 230 Q480 290 450 295"/><path class="mig" d="M380 340 Q300 360 220 340"/><path class="mig" d="M150 295 Q110 270 110 225"/><path class="mig" d="M140 150 Q220 90 260 80"/>
+        <text class="sub" x="300" y="200" text-anchor="middle">ring topology migration</text>
+        <text class="sub" x="300" y="215" text-anchor="middle">(주기적 엘리트 형질 전달)</text>
+      </svg>
+    </figure>
+    <p class="tag" style="text-align:center;">섬 = 격리 진화 공간. 핀치새 부리 = 진화 중인 코드 변형. 새가 옆 섬으로 = migration.</p>
+  </div>
+  <div class="slide-foot"><span>2.2 Island</span><div class="progress"><div class="progress-fill"></div></div><span>10 / 35</span></div>
+</section>
+
+<!-- ========== Slide 11: Artifact ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2.3 Artifact</span><h1>실행 흔적을 LLM에 되돌려주기</h1></div>
+  <div class="slide-body">
+    <h3 class="sub">문제 의식</h3>
+    <p>점수만 보면 LLM은 "0.3 받았네, 다음엔 더 잘하자" 수준. <strong>왜 실패했는지</strong>는 모름.</p>
+
+    <h3 class="sub">해결 — EvaluationResult</h3>
+<pre><code>EvaluationResult(
+    metrics={
+        "combined_score": 0.43,
+        "execution_time": 30.0,
+    },
+    artifacts={
+        "stderr": "(error \"smt.case_split=5 out of range\")",
+        "solver_stats": "conflicts=1.3M decisions=2.1M",
+        "timeout_note": "30s exceeded on problem #17",
+    },
+)</code></pre>
+
+    <p>artifacts dict가 자동으로 다음 prompt의 markdown 섹션으로 주입.</p>
+  </div>
+  <div class="slide-foot"><span>2.3 Artifact</span><div class="progress"><div class="progress-fill"></div></div><span>11 / 35</span></div>
+</section>
+
+<!-- ========== Slide 12: Artifact Channel ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">2.3 Artifact</span><h1>피드백 채널 — 다른 방식과 비교</h1></div>
+  <div class="slide-body">
+    <table>
+      <thead><tr><th>채널</th><th>전달 정보</th><th>한계</th></tr></thead>
+      <tbody>
+        <tr><td>점수만 (전통 EA)</td><td>스칼라 fitness</td><td>왜 실패했는지 모름</td></tr>
+        <tr><td>점수 + diff history</td><td>이전 시도 코드</td><td>실행 결과는 못 봄</td></tr>
+        <tr><td><strong>Artifact (OpenEvolve)</strong></td><td>stderr·stats·timeout 등 실행 산출물</td><td>—</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>비유: 학교 시험.</strong> 점수만 보는 학생 vs 빨간 코멘트까지 읽는 학생. OpenEvolve의 LLM은 후자.
+    </div>
+
+    <p class="tag">설계 팁: artifact 키 이름 일관 유지 (<code>stderr</code>, <code>solver_stats</code>). LLM이 반복적으로 보며 의미 학습.</p>
+  </div>
+  <div class="slide-foot"><span>2.3 Artifact</span><div class="progress"><div class="progress-fill"></div></div><span>12 / 35</span></div>
+</section>
+
+<!-- ========== Slide 13: Architecture ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">3. 아키텍처</span><h1>큰 그림 — 컴포넌트 데이터 흐름</h1></div>
+  <div class="slide-body">
+    <figure class="figure">
+      <svg viewBox="0 0 820 470" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa5ad"/></marker>
+          <style>
+            .box { fill: #1a2024; stroke: #5fc28a; stroke-width: 2; }
+            .box-2 { fill: #1a2024; stroke: #7fb6e8; stroke-width: 2; }
+            .box-3 { fill: #2a2218; stroke: #f4a836; stroke-width: 2; }
+            .lbl { font: 600 14px sans-serif; fill: #e7ecef; }
+            .sub { font: 12px sans-serif; fill: #9aa5ad; }
+            .arr { stroke: #9aa5ad; stroke-width: 1.5; fill: none; marker-end: url(#ar2); }
+          </style>
+        </defs>
+        <rect class="box-2" x="40" y="30" width="180" height="56" rx="8"/><text class="lbl" x="130" y="56" text-anchor="middle">Initial Program</text><text class="sub" x="130" y="74" text-anchor="middle">EVOLVE-BLOCK 표시</text>
+        <rect class="box-3" x="320" y="30" width="180" height="56" rx="8"/><text class="lbl" x="410" y="56" text-anchor="middle">Controller</text><text class="sub" x="410" y="74" text-anchor="middle">오케스트레이션</text>
+        <rect class="box" x="60" y="160" width="200" height="80" rx="8"/><text class="lbl" x="160" y="186" text-anchor="middle">Program Database</text><text class="sub" x="160" y="206" text-anchor="middle">MAP-Elites 격자</text><text class="sub" x="160" y="222" text-anchor="middle">+ Islands</text>
+        <rect class="box" x="560" y="160" width="200" height="80" rx="8"/><text class="lbl" x="660" y="186" text-anchor="middle">Worker Pool</text><text class="sub" x="660" y="206" text-anchor="middle">병렬 iteration</text>
+        <rect class="box-3" x="280" y="290" width="260" height="56" rx="8"/><text class="lbl" x="410" y="316" text-anchor="middle">Iteration Step</text><text class="sub" x="410" y="334" text-anchor="middle">sample → prompt → LLM → eval</text>
+        <rect class="box-2" x="40" y="390" width="200" height="60" rx="8"/><text class="lbl" x="140" y="416" text-anchor="middle">Prompt Sampler</text><text class="sub" x="140" y="434" text-anchor="middle">문맥 prompt 구성</text>
+        <rect class="box-2" x="310" y="390" width="200" height="60" rx="8"/><text class="lbl" x="410" y="416" text-anchor="middle">LLM Ensemble</text><text class="sub" x="410" y="434" text-anchor="middle">가중치 모델 선택</text>
+        <rect class="box-2" x="580" y="390" width="200" height="60" rx="8"/><text class="lbl" x="680" y="416" text-anchor="middle">Evaluator</text><text class="sub" x="680" y="434" text-anchor="middle">cascade stage1/2/3</text>
+        <path class="arr" d="M220 58 L320 58"/><path class="arr" d="M410 86 L160 160"/><path class="arr" d="M410 86 L660 160"/><path class="arr" d="M160 240 L320 290"/><path class="arr" d="M660 240 L500 290"/><path class="arr" d="M340 346 L140 390"/><path class="arr" d="M410 346 L410 390"/><path class="arr" d="M480 346 L680 390"/><path class="arr" d="M680 450 Q400 470 160 240" stroke-dasharray="5 3"/>
+        <text class="sub" x="400" y="466" text-anchor="middle">점선: score + artifacts 피드백 경로</text>
+      </svg>
+    </figure>
+  </div>
+  <div class="slide-foot"><span>3. 아키텍처</span><div class="progress"><div class="progress-fill"></div></div><span>13 / 35</span></div>
+</section>
+
+<!-- ========== Slide 14: Iteration Steps ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">4. Iteration</span><h1>한 iteration의 생애 — 7단계</h1></div>
+  <div class="slide-body">
+    <figure class="figure">
+      <svg viewBox="0 0 880 380" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa5ad"/></marker>
+          <style>
+            .stp { fill: #1a2024; stroke: #5fc28a; stroke-width: 2; }
+            .stp.acc { fill: #2a2218; stroke: #f4a836; }
+            .num { font: 700 14px sans-serif; fill: #5fc28a; }
+            .num.acc { fill: #f4a836; }
+            .ttl { font: 600 13px sans-serif; fill: #e7ecef; }
+            .dsc { font: 11px sans-serif; fill: #9aa5ad; }
+            .arr { stroke: #9aa5ad; stroke-width: 1.5; fill: none; marker-end: url(#ar3); }
+          </style>
+        </defs>
+        <rect class="stp" x="20" y="80" width="115" height="80" rx="8"/><text class="num" x="78" y="100" text-anchor="middle">①</text><text class="ttl" x="78" y="120" text-anchor="middle">Sample</text><text class="dsc" x="78" y="138" text-anchor="middle">island 타겟</text><text class="dsc" x="78" y="152" text-anchor="middle">+ inspirations</text>
+        <rect class="stp" x="155" y="80" width="115" height="80" rx="8"/><text class="num" x="213" y="100" text-anchor="middle">②</text><text class="ttl" x="213" y="120" text-anchor="middle">Build Prompt</text><text class="dsc" x="213" y="138" text-anchor="middle">코드 + 과거</text><text class="dsc" x="213" y="152" text-anchor="middle">+ top + artifact</text>
+        <rect class="stp acc" x="290" y="80" width="115" height="80" rx="8"/><text class="num acc" x="348" y="100" text-anchor="middle">③</text><text class="ttl" x="348" y="120" text-anchor="middle">LLM Generate</text><text class="dsc" x="348" y="138" text-anchor="middle">모델 선택</text><text class="dsc" x="348" y="152" text-anchor="middle">diff or rewrite</text>
+        <rect class="stp" x="425" y="80" width="115" height="80" rx="8"/><text class="num" x="483" y="100" text-anchor="middle">④</text><text class="ttl" x="483" y="120" text-anchor="middle">Parse Code</text><text class="dsc" x="483" y="138" text-anchor="middle">SEARCH/REPLACE</text><text class="dsc" x="483" y="152" text-anchor="middle">블록 적용</text>
+        <rect class="stp acc" x="560" y="80" width="115" height="80" rx="8"/><text class="num acc" x="618" y="100" text-anchor="middle">⑤</text><text class="ttl" x="618" y="120" text-anchor="middle">Cascade Eval</text><text class="dsc" x="618" y="138" text-anchor="middle">stage1→2→3</text><text class="dsc" x="618" y="152" text-anchor="middle">임계 컷</text>
+        <rect class="stp" x="695" y="80" width="115" height="80" rx="8"/><text class="num" x="753" y="100" text-anchor="middle">⑥</text><text class="ttl" x="753" y="120" text-anchor="middle">Insert</text><text class="dsc" x="753" y="138" text-anchor="middle">island 추가</text><text class="dsc" x="753" y="152" text-anchor="middle">best 갱신</text>
+        <path class="arr" d="M135 120 L155 120"/><path class="arr" d="M270 120 L290 120"/><path class="arr" d="M405 120 L425 120"/><path class="arr" d="M540 120 L560 120"/><path class="arr" d="M675 120 L695 120"/>
+        <rect class="stp" x="335" y="240" width="170" height="60" rx="8"/><text class="num" x="418" y="260" text-anchor="middle">⑦</text><text class="ttl" x="418" y="278" text-anchor="middle">Cycle Island</text><text class="dsc" x="418" y="294" text-anchor="middle">다음은 옆 island</text>
+        <path class="arr" d="M753 160 Q753 240 505 270"/><path class="arr" d="M335 270 Q78 250 78 160"/>
+        <text class="dsc" x="440" y="345" text-anchor="middle" fill="#f4a836">⑤의 score + artifacts 가 ②의 다음 prompt 에 자동 주입</text>
+      </svg>
+    </figure>
+  </div>
+  <div class="slide-foot"><span>4. Iteration</span><div class="progress"><div class="progress-fill"></div></div><span>14 / 35</span></div>
+</section>
+
+<!-- ========== Slide 15: LLM Ensemble ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">5. LLM</span><h1>Ensemble — 모델 여러 개를 가중치로</h1></div>
+  <div class="slide-body">
+    <p>한 모델만 쓰면 그 모델 편향에 묶임. <strong>Ensemble</strong>이 매 iteration마다 가중치에 비례해 모델 1개 샘플링.</p>
+
+<pre><code>llm:
+  models:
+    - name: "claude-sonnet-4-6"
+      weight: 0.80
+    - name: "claude-haiku-4-5"
+      weight: 0.20
+  temperature: 0.7</code></pre>
+
+    <div class="callout ok">
+      <strong>LLM = 코드 문맥을 이해하는 mutation 연산자.</strong><br>
+      무작위 변형 대신 의미 있는 변형 생성.
+    </div>
+  </div>
+  <div class="slide-foot"><span>5. LLM</span><div class="progress"><div class="progress-fill"></div></div><span>15 / 35</span></div>
+</section>
+
+<!-- ========== Slide 16: Prompt channels ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">5. LLM</span><h1>Prompt에 들어가는 5가지 채널</h1></div>
+  <div class="slide-body">
+    <table>
+      <thead><tr><th>채널</th><th>내용</th><th>왜 필요한가</th></tr></thead>
+      <tbody>
+        <tr><td>현재 타겟 코드</td><td>변형 대상 EVOLVE-BLOCK</td><td>변경 베이스</td></tr>
+        <tr><td>과거 시도 3개</td><td>코드 + 점수 + improved/regressed 라벨</td><td>같은 실수 반복 방지</td></tr>
+        <tr><td>Top elite 5개</td><td>전체 점수 높은 프로그램</td><td>성공 패턴 학습</td></tr>
+        <tr><td>Inspirations</td><td>다양성 강제용 무작위 1~5개</td><td>지역 최적해 탈출</td></tr>
+        <tr><td>Artifacts</td><td>직전 평가의 stderr·traceback·profiling</td><td>실패 원인 직접 보고 수정</td></tr>
+      </tbody>
+    </table>
+    <p class="tag" style="margin-top:18px;">단순히 부모 코드 하나가 아니다 — 5개 채널이 한 prompt로 합쳐짐.</p>
+  </div>
+  <div class="slide-foot"><span>5. LLM</span><div class="progress"><div class="progress-fill"></div></div><span>16 / 35</span></div>
+</section>
+
+<!-- ========== Slide 17: Diff vs Rewrite ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">5. LLM</span><h1>응답 형식 — Diff vs Full Rewrite</h1></div>
+  <div class="slide-body">
+    <div class="two-col">
+      <div>
+        <h3 class="sub">(a) Diff 모드 — 작은 변경</h3>
+<pre><code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH
+"search_branching": "AUTO",
+=======
+"search_branching": "PSEUDO_COST",
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code></pre>
+        <p class="tag">토큰 효율적, 큰 코드도 OK.</p>
+      </div>
+      <div>
+        <h3 class="sub">(b) Full Rewrite — 구조적 변경</h3>
+        <p>EVOLVE-BLOCK 전체를 통째로 새로 작성한 코드 블록.</p>
+        <p>작은 코드에서 자유로운 재설계가 필요할 때.</p>
+        <pre><code>```python
+# new code from scratch
+GLOBAL_OVERRIDES = {...}
+```</code></pre>
+      </div>
+    </div>
+    <p class="tag" style="text-align:center; margin-top:8px;"><code>diff_based_evolution: true</code> 설정으로 모드 선택.</p>
+  </div>
+  <div class="slide-foot"><span>5. LLM</span><div class="progress"><div class="progress-fill"></div></div><span>17 / 35</span></div>
+</section>
+
+<!-- ========== Slide 18: Z3 Result Intro ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">6. Z3 최적화 결과</span><h1>실제 EDA 워크플로우 적용 — Cell Characterization</h1></div>
+  <div class="slide-body">
+    <p class="lead">OpenEvolve가 튜닝한 Z3 파라미터를 axion-cell 라이브러리 셀에 적용한 실제 결과.</p>
+
+    <h3 class="sub">실험 조건</h3>
+    <ul>
+      <li><strong>베이스라인</strong>: <code>axion-cell-v.0.1.0 (5.8)</code> 기본 Z3 설정</li>
+      <li><strong>비교 대상</strong>: OpenEvolve가 진화시킨 Z3 파라미터 dict</li>
+      <li><strong>측정</strong>: 셀별 캐릭터라이제이션 runtime (ms)</li>
+      <li><strong>GAIN</strong> = baseline ÷ optimized 비율 (백분율). 100% 초과 = 가속</li>
+    </ul>
+
+    <div class="callout ok">
+      <strong>요약.</strong> 8개 셀 모두에서 GAIN &gt; 100% (일관된 개선). 기하평균 약 <strong>176%</strong>, 최대 <strong>559.54%</strong> (XNOR3_D2 — 5.6배 가속).
+    </div>
+  </div>
+  <div class="slide-foot"><span>6. Z3 최적화 결과</span><div class="progress"><div class="progress-fill"></div></div><span>18 / 35</span></div>
+</section>
+
+<!-- ========== Slide 19: Z3 Result Table ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">6. Z3 최적화 결과</span><h1>셀별 GAIN 표</h1></div>
+  <div class="slide-body">
+    <table>
+      <thead>
+        <tr>
+          <th>Cell</th>
+          <th style="text-align:right;">baseline axion-cell-v0.1.0(5.8)</th>
+          <th style="text-align:right;">Z3 optimization</th>
+          <th style="text-align:right;">GAIN</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>SDFFSQRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">16779.7</td><td style="text-align:right;">12842.017</td><td style="text-align:right; color: var(--accent); font-weight: 700;">130.66%</td></tr>
+        <tr><td><code>SDFFRPQRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">16718.8</td><td style="text-align:right;">11917.475</td><td style="text-align:right; color: var(--accent); font-weight: 700;">140.29%</td></tr>
+        <tr><td><code>SDFFRPQNRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">16514.3</td><td style="text-align:right;">11492.625</td><td style="text-align:right; color: var(--accent); font-weight: 700;">143.69%</td></tr>
+        <tr><td><code>SDFFQRLV_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">9240.2</td><td style="text-align:right;">6972.733</td><td style="text-align:right; color: var(--accent); font-weight: 700;">132.52%</td></tr>
+        <tr><td><code>ADDF_D1_N_S6P25TL_C54L04</code></td><td style="text-align:right;">7554.4</td><td style="text-align:right;">3752.992</td><td style="text-align:right;">201.29%</td></tr>
+        <tr><td><code>XOR3_D2_N_S6P25TL_C54L04</code></td><td style="text-align:right;">4745.7</td><td style="text-align:right;">2840.486</td><td style="text-align:right;">167.07%</td></tr>
+        <tr><td><code>XNOR3_D2_N_S6P25TL_C54L04</code></td><td style="text-align:right;">4089.8</td><td style="text-align:right;">730.925</td><td style="text-align:right; color: var(--highlight); font-weight: 700;">559.54%</td></tr>
+        <tr><td><code>PREICG_D4_N_S6P25TL_C54L04</code></td><td style="text-align:right;">3889.6</td><td style="text-align:right;">3771.472</td><td style="text-align:right;">103.13%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slide-foot"><span>6. Z3 최적화 결과</span><div class="progress"><div class="progress-fill"></div></div><span>19 / 35</span></div>
+</section>
+
+<!-- ========== Slide 20: Log example intro ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">7. 실전 로그</span><h1>CP-SAT phase2 진화 로그 읽기</h1></div>
+  <div class="slide-body">
+    <p class="lead">이론은 끝. 실제 phase2 로그를 따라가며 LLM이 CP-SAT presolve 파라미터를 미세 조정하는 과정 관찰.</p>
+
+    <p class="tag" style="font-family: monospace;">
+      로그: <code>input/cpsat-bench/evolve/phase2_presolve/openevolve_output/logs/openevolve_20260527_154008.log</code>
+    </p>
+
+    <h3 class="sub">실행 환경</h3>
+    <table>
+      <tbody>
+        <tr><td>LLM Ensemble</td><td><code>claude-sonnet-4-6</code> (0.80) + <code>claude-haiku-4-5</code> (0.20)</td></tr>
+        <tr><td>Random seed</td><td>42 (재현성)</td></tr>
+        <tr><td>Island</td><td>3개</td></tr>
+        <tr><td>총 iteration</td><td>20</td></tr>
+        <tr><td>LOCKED 파라미터</td><td><code>random_seed=0</code>, <code>num_search_workers=1</code></td></tr>
+        <tr><td>Phase 위치</td><td>phase1 best 상속 → presolve 표면 튜닝</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slide-foot"><span>7. 실전 로그</span><div class="progress"><div class="progress-fill"></div></div><span>20 / 35</span></div>
+</section>
+
+<!-- ========== Slide 21: Initial Program High Baseline ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.2 시작점</span><h1>이미 높은 baseline — score 0.9976</h1></div>
+  <div class="slide-body">
+    <p>Phase2 초기 프로그램은 phase1에서 검증된 minimum 설정만 들고 시작.</p>
+
+<pre><code>GLOBAL_OVERRIDES = {
+    "cp_model_probing_level": 1,
+}
+
+SIZE_BUCKETS = [
+    (50_000,         {}),
+    (150_000,        {}),
+    (float("inf"),   {}),
+]
+
+STAGE3_OVERRIDES = {}</code></pre>
+
+    <div class="callout ok">
+      <strong>평가 결과:</strong><br>
+      combined_score = <strong>0.9976</strong> (시작부터 매우 높음)<br>
+      geomean_speedup = 1.0409 (dtime 4.1% 단축)<br>
+      geomean_wall_speedup = 1.2351 (wall 23.5% 빠름)<br>
+      solved_rate = 1.0 (10/10 OPTIMAL)<br>
+      efficiency = 0.8802 (일부 문제 conflicts 약간 증가)
+    </div>
+  </div>
+  <div class="slide-foot"><span>7.2 시작점</span><div class="progress"><div class="progress-fill"></div></div><span>21 / 35</span></div>
+</section>
+
+<!-- ========== Slide 22: Phase1 vs Phase2 ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.2 시작점</span><h1>Phase1과의 큰 차이</h1></div>
+  <div class="slide-body">
+    <table>
+      <thead><tr><th>항목</th><th>Phase1</th><th>Phase2</th></tr></thead>
+      <tbody>
+        <tr><td>초기 점수</td><td>0.0000 (망가짐)</td><td><strong>0.9976</strong> (이미 좋음)</td></tr>
+        <tr><td>탐색 공간</td><td>search/subsolvers (큰 공간)</td><td>presolve/probing (좁은 공간)</td></tr>
+        <tr><td>변형 방향</td><td>"근본 수정" (멀티워커 옵션 제거)</td><td>"미세 조정" (SIZE_BUCKETS 채우기)</td></tr>
+        <tr><td>기대 진행</td><td>큰 점프 (0→1.0)</td><td>점진적 (0.9976→1.0)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Phase2의 본질.</strong> phase1이 잘 작동해 미세 조정만 남은 상태. 어설픈 욕심은 오히려 regression. LLM은 conservative 영역에서 surf해야 함.
+    </div>
+  </div>
+  <div class="slide-foot"><span>7.2 시작점</span><div class="progress"><div class="progress-fill"></div></div><span>22 / 35</span></div>
+</section>
+
+<!-- ========== Slide 23: Iter 1 LLM Thinking ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.3 Iteration 1</span><h1>LLM의 진단 (thinking 로그 번역)</h1></div>
+  <div class="slide-body">
+    <div class="callout">
+      <ol>
+        <li>"score 0.9976 — 이미 매우 높음. 큰 점프 대신 점진적 개선이 필요."</li>
+        <li>"<code>cp_model_probing_level=1</code>은 글로벌 기본인데, <em>작은 문제(&lt;50k)</em>는 SAT-유사라 probing을 더 높게 가져도 안전."</li>
+        <li>"<code>SIZE_BUCKETS</code> 첫 버킷에 <code>cp_model_probing_level: 2</code> 추가. 중/대 버킷은 그대로 — LP-heavy 인스턴스 회귀 방지."</li>
+        <li>"Outlier(stage3 전용)는 더 공격적: <code>probing_level: 3</code>, <code>symmetry_level: 3</code>. STAGE3_OVERRIDES는 outlier에만 적용되니 stage1/2 손해 없음."</li>
+      </ol>
+    </div>
+    <p class="tag" style="text-align:center;">LLM이 buckets별로 다른 강도를 적용하는 layered tuning 전략 채택.</p>
+  </div>
+  <div class="slide-foot"><span>7.3 Iteration 1</span><div class="progress"><div class="progress-fill"></div></div><span>23 / 35</span></div>
+</section>
+
+<!-- ========== Slide 24: Iter 1 result ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.3 Iteration 1</span><h1>변형 적용 → 미세 개선</h1></div>
+  <div class="slide-body">
+<pre><code>GLOBAL_OVERRIDES = {
+    "cp_model_probing_level": 1,    # 글로벌 보수적 유지
+}
+
+SIZE_BUCKETS = [
+    (50000,  {"cp_model_probing_level": 2}),   # 작은 문제만 올림
+    (150000, {}),                              # 중간 — 그대로
+    (inf,    {}),                              # 큰 문제 — 그대로
+]
+
+STAGE3_OVERRIDES = {
+    "cp_model_probing_level": 3,               # outlier — 강력
+    "symmetry_level": 3,
+    "probing_num_combinations_limit": 35000,
+}</code></pre>
+
+    <div class="callout ok">
+      <strong>평가 결과:</strong><br>
+      combined_score: 0.9976 → <strong>1.0000</strong> (+0.0024)<br>
+      efficiency: 0.8802 → <strong>1.0000</strong> (페널티 사라짐)<br>
+      wall_speedup 1.2351 → 1.1226 (살짝 하락하지만 score는 상승)<br>
+      🌟 New best solution found at iteration 1
+    </div>
+  </div>
+  <div class="slide-foot"><span>7.3 Iteration 1</span><div class="progress"><div class="progress-fill"></div></div><span>24 / 35</span></div>
+</section>
+
+<!-- ========== Slide 25: Iter 5-6 efficiency penalty ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.4 Iter 5~6</span><h1>욕심내다 efficiency 페널티</h1></div>
+  <div class="slide-body">
+<pre><code>iter 5: combined_score=0.7969  geomean_speedup=0.8460  efficiency=0.8356
+iter 6: combined_score=0.6964  geomean_speedup=0.7689  efficiency=0.7427</code></pre>
+
+    <p><strong>OPTIMAL은 다 맞췄는데 점수 큰 폭 하락.</strong> 원인 둘:</p>
+
+    <ul>
+      <li><code>geomean_speedup &lt; 1.0</code> — variant가 baseline보다 dtime 더 씀</li>
+      <li><code>efficiency</code> 하락 — conflicts 5,221 → 7,817~8,670 (솔버 헤맴)</li>
+    </ul>
+
+    <div class="callout">
+      <strong>학습 포인트.</strong> 이미 1.0인 상태에서 추가 개선은 매우 어렵다. 어설픈 욕심이 오히려 후퇴. Score 식 자체가 안정성을 강조.
+    </div>
+  </div>
+  <div class="slide-foot"><span>7.4 Iter 5~6</span><div class="progress"><div class="progress-fill"></div></div><span>25 / 35</span></div>
+</section>
+
+<!-- ========== Slide 26: Iter 7-13 Regression Spike ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.5 Iter 7~13</span><h1>Regression 폭주 — 같은 문제 반복</h1></div>
+  <div class="slide-body">
+<pre><code>iter 7:  combined_score=0.0000  error="3e69d6f5b7: OPTIMAL→UNKNOWN"
+iter 8:  combined_score=0.0000  error="3e69d6f5b7: OPTIMAL→UNKNOWN"
+iter 10: combined_score=0.0000  error="3e69d6f5b7: OPTIMAL→UNKNOWN"
+iter 11: combined_score=0.0000  error="3e69d6f5b7: OPTIMAL→UNKNOWN"
+iter 12: combined_score=0.0000  error="3e69d6f5b7: OPTIMAL→UNKNOWN"
+iter 13: combined_score=0.0000  error="3e69d6f5b7: OPTIMAL→UNKNOWN"</code></pre>
+
+    <p>같은 문제(SHA <code>3e69d6f5b7</code>, constraints=28938)에서 반복적 OPTIMAL → UNKNOWN. 매 iteration LLM이 다른 변형 시도하지만 자꾸 이 한 문제가 무너짐.</p>
+
+    <div class="callout danger">
+      <strong>Phase2의 어려움.</strong> 가능한 변형 공간이 이미 좋은 baseline에 비해 좁다. 한 발만 잘못 디뎌도 핵심 문제 구조를 깬다. LLM이 conservative 영역에서 surf해야 함.
+    </div>
+  </div>
+  <div class="slide-foot"><span>7.5 Iter 7~13</span><div class="progress"><div class="progress-fill"></div></div><span>26 / 35</span></div>
+</section>
+
+<!-- ========== Slide 27: Iter 14 Recovery ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.6 Iter 14</span><h1>Artifact 학습으로 복구</h1></div>
+  <div class="slide-body">
+<pre><code>iter 14: combined_score = 0.9690
+         geomean_speedup = 1.0113
+         geomean_wall_speedup = 1.2008
+         efficiency = 0.8794
+         solved_rate = 1.0
+         parent = iter 4 (04718c2f, score=0.7969)</code></pre>
+
+    <p>여러 차례 regression 후 iter 14에서 다시 OPTIMAL 회복. Parent는 iter 4의 자식이지만 iter 1의 검증된 SIZE_BUCKETS 패턴으로 회귀.</p>
+
+    <div class="callout ok">
+      <strong>핵심.</strong> LLM이 artifact <code>error</code> 메시지("<code>3e69d6f5b7: OPTIMAL→UNKNOWN</code>")를 반복적으로 보면서 "이 영역은 위험"이라는 신호를 학습. 안전 영역으로 자율 회귀.
+    </div>
+
+    <p class="tag" style="text-align:center;">점수만 줬을 때는 불가능한 인과적 디버깅 — artifact 피드백의 가치 실증.</p>
+  </div>
+  <div class="slide-foot"><span>7.6 Iter 14</span><div class="progress"><div class="progress-fill"></div></div><span>27 / 35</span></div>
+</section>
+
+<!-- ========== Slide 28: Log summary ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">7.7 종합</span><h1>Phase2 로그가 보여준 동작 양상</h1></div>
+  <div class="slide-body">
+    <table>
+      <thead><tr><th>특징</th><th>로그 증거</th></tr></thead>
+      <tbody>
+        <tr><td>Phase 체이닝</td><td>phase1 best이 phase2 initial로 import. 시작 점수 이미 0.9976</td></tr>
+        <tr><td>점진적 개선</td><td>iter 1: 0.9976 → 1.0000. 점프 아닌 미세 조정</td></tr>
+        <tr><td>Efficiency vs Wall</td><td>iter 1: wall 살짝 느려도 efficiency 개선으로 종합 점수 상승</td></tr>
+        <tr><td>Layered tuning</td><td>SIZE_BUCKETS + STAGE3_OVERRIDES로 문제 크기별/outlier별 분리 적용</td></tr>
+        <tr><td>반복 동일 실패</td><td>iter 7~13: 같은 문제(<code>3e69d6f5b7</code>) 반복 UNKNOWN</td></tr>
+        <tr><td>Artifact 학습 복구</td><td>iter 14에서 LLM이 위험 영역 회피, 안전 영역으로 자율 회귀</td></tr>
+      </tbody>
+    </table>
+
+    <p class="tag" style="text-align:center; margin-top:14px;">20 iteration 후 best = <strong>iter 1</strong> (<code>combined_score=1.0000</code>). 이 best가 phase3의 시작점으로 import.</p>
+
+    <div class="callout ok" style="margin-top:8px;">
+      <strong>Phase1 vs Phase2.</strong> Phase1은 0 → 1.0822 큰 도약 (탐색). Phase2는 0.9976 → 1.0000 미세 조정 (수렴). multi-phase cascade가 단계마다 다른 최적화 양상을 보임.
+    </div>
+  </div>
+  <div class="slide-foot"><span>7.7 종합</span><div class="progress"><div class="progress-fill"></div></div><span>28 / 35</span></div>
+</section>
+
+<!-- ========== Slide 29: Bench dir structure ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">8. repo 활용</span><h1>z3-bench / cpsat-bench 디렉토리 구조</h1></div>
+  <div class="slide-body">
+    <figure class="figure">
+      <svg viewBox="0 0 760 380" xmlns="http://www.w3.org/2000/svg">
+        <defs><style>
+          .root { fill: #2a2218; stroke: #f4a836; stroke-width: 2; }
+          .dir { fill: #1f3a2a; stroke: #5fc28a; stroke-width: 1.5; }
+          .file { fill: #1a2024; stroke: #7fb6e8; stroke-width: 1.5; }
+          .lbl { font: 600 13px sans-serif; fill: #e7ecef; }
+          .lbl-s { font: 500 11px sans-serif; fill: #e7ecef; }
+          .sub { font: 10px sans-serif; fill: #9aa5ad; }
+          .line { stroke: #4a5560; stroke-width: 1; fill: none; }
+        </style></defs>
+        <rect class="root" x="20" y="20" width="200" height="40" rx="6"/><text class="lbl" x="120" y="44" text-anchor="middle">input/&lt;bench&gt;/</text>
+        <rect class="dir" x="260" y="20" width="200" height="40" rx="6"/><text class="lbl-s" x="360" y="40" text-anchor="middle">raw-data/</text><text class="sub" x="360" y="54" text-anchor="middle">원본 문제 + meta.jsonl</text>
+        <rect class="file" x="260" y="75" width="200" height="40" rx="6"/><text class="lbl-s" x="360" y="95" text-anchor="middle">problems.jsonl</text><text class="sub" x="360" y="109" text-anchor="middle">통합 baseline 데이터</text>
+        <rect class="dir" x="260" y="130" width="200" height="40" rx="6"/><text class="lbl-s" x="360" y="155" text-anchor="middle">evolve/</text>
+        <rect class="file" x="500" y="130" width="240" height="40" rx="6"/><text class="lbl-s" x="620" y="150" text-anchor="middle">config.yaml</text><text class="sub" x="620" y="164" text-anchor="middle">LLM·iteration·cascade 설정</text>
+        <rect class="dir" x="500" y="180" width="240" height="40" rx="6"/><text class="lbl-s" x="620" y="200" text-anchor="middle">shared/</text><text class="sub" x="620" y="214" text-anchor="middle">evaluator·score·runner·baseline</text>
+        <rect class="file" x="500" y="230" width="240" height="40" rx="6"/><text class="lbl-s" x="620" y="250" text-anchor="middle">build_samples.py</text><text class="sub" x="620" y="264" text-anchor="middle">stage1/2/3 샘플 선정</text>
+        <rect class="file" x="500" y="280" width="240" height="40" rx="6"/><text class="lbl-s" x="620" y="300" text-anchor="middle">run_phase.sh</text><text class="sub" x="620" y="314" text-anchor="middle">phase 체이닝</text>
+        <rect class="dir" x="500" y="330" width="240" height="40" rx="6"/><text class="lbl-s" x="620" y="350" text-anchor="middle">phase{1..4}_&lt;name&gt;/</text><text class="sub" x="620" y="364" text-anchor="middle">initial_program.py (EVOLVE-BLOCK)</text>
+        <path class="line" d="M220 40 L260 40"/><path class="line" d="M220 40 L240 95 L260 95"/><path class="line" d="M220 40 L240 150 L260 150"/>
+        <path class="line" d="M460 150 L500 150"/><path class="line" d="M460 150 L480 200 L500 200"/><path class="line" d="M460 150 L480 250 L500 250"/><path class="line" d="M460 150 L480 300 L500 300"/><path class="line" d="M460 150 L480 350 L500 350"/>
+      </svg>
+    </figure>
+  </div>
+  <div class="slide-foot"><span>8. repo 활용</span><div class="progress"><div class="progress-fill"></div></div><span>29 / 35</span></div>
+</section>
+
+<!-- ========== Slide 30: 4-phase cascade ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">8. repo 활용</span><h1>4-Phase Cascade — 점진적으로 좁히기</h1></div>
+  <div class="slide-body">
+    <figure class="figure">
+      <svg viewBox="0 0 820 240" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5fc28a"/></marker>
+          <style>
+            .ph { fill: #1a2024; stroke: #5fc28a; stroke-width: 2; }
+            .ph4 { fill: #2a2218; stroke: #f4a836; stroke-width: 2; }
+            .lbl { font: 700 14px sans-serif; fill: #e7ecef; }
+            .sub { font: 11px sans-serif; fill: #9aa5ad; }
+            .arr { stroke: #5fc28a; stroke-width: 2; fill: none; marker-end: url(#ar4); }
+          </style>
+        </defs>
+        <rect class="ph" x="20" y="60" width="180" height="100" rx="8"/><text class="lbl" x="110" y="90" text-anchor="middle">Phase 1</text><text class="sub" x="110" y="110" text-anchor="middle">작은 표면 단독</text><text class="sub" x="110" y="126" text-anchor="middle">z3: opt.* + sls.*</text><text class="sub" x="110" y="142" text-anchor="middle">cpsat: search/subsolvers</text>
+        <rect class="ph" x="220" y="60" width="180" height="100" rx="8"/><text class="lbl" x="310" y="90" text-anchor="middle">Phase 2</text><text class="sub" x="310" y="110" text-anchor="middle">phase1 best 고정</text><text class="sub" x="310" y="126" text-anchor="middle">z3: sat.*</text><text class="sub" x="310" y="142" text-anchor="middle">cpsat: presolve</text>
+        <rect class="ph" x="420" y="60" width="180" height="100" rx="8"/><text class="lbl" x="510" y="90" text-anchor="middle">Phase 3</text><text class="sub" x="510" y="110" text-anchor="middle">phase1+2 best 고정</text><text class="sub" x="510" y="126" text-anchor="middle">z3: smt.*</text><text class="sub" x="510" y="142" text-anchor="middle">cpsat: lp/cuts</text>
+        <rect class="ph4" x="620" y="60" width="180" height="100" rx="8"/><text class="lbl" x="710" y="90" text-anchor="middle">Phase 4</text><text class="sub" x="710" y="110" text-anchor="middle">통합 미세조정</text><text class="sub" x="710" y="126" text-anchor="middle">모든 best 결합</text><text class="sub" x="710" y="142" text-anchor="middle">전체 표면</text>
+        <path class="arr" d="M200 110 L220 110"/><path class="arr" d="M400 110 L420 110"/><path class="arr" d="M600 110 L620 110"/>
+        <text class="sub" x="410" y="200" text-anchor="middle">탐색 공간을 점진적으로 좁히면서 앞 phase의 우승 dict을 다음 phase 시작점으로 사용</text>
+      </svg>
+    </figure>
+  </div>
+  <div class="slide-foot"><span>8. repo 활용</span><div class="progress"><div class="progress-fill"></div></div><span>30 / 35</span></div>
+</section>
+
+<!-- ========== Slide 31: Scoring formula ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">8. repo 활용</span><h1>Scoring 공식 — LLM이 최대화할 숫자</h1></div>
+  <div class="slide-body">
+<pre style="border-color: var(--highlight); background: rgba(244,168,54,0.06);"><code>combined_score
+  = geomean(speedup_per_problem, weight=baseline_ms)   ← 큰 문제일수록 가중치 ↑
+    × solved_rate²                                       ← 정답률 떨어지면 큰 페널티
+    × efficiency^0.333                                   ← conflict/decision/propagation 개선</code></pre>
+
+    <ul>
+      <li><strong>geomean(speedup)</strong>: 문제별 (baseline_ms ÷ variant_ms)의 기하평균. baseline_ms 가중 → 오래 걸리는 문제가 점수 좌우.</li>
+      <li><strong>solved_rate²</strong>: 한 문제라도 OPTIMAL 못 맞히면 제곱 페널티. 속도 위해 정확성 희생 못 함.</li>
+      <li><strong>efficiency^0.333</strong>: 솔버 내부 카운터(conflicts, decisions, propagations)의 베이스라인 대비 개선 정도.</li>
+    </ul>
+
+    <p class="tag">z3-bench: wall-clock speedup / cpsat-bench: deterministic_time(작업 카운터) cost mode.</p>
+  </div>
+  <div class="slide-foot"><span>8. repo 활용</span><div class="progress"><div class="progress-fill"></div></div><span>31 / 35</span></div>
+</section>
+
+<!-- ========== Slide 32: Checklist Part 1 ========== -->
+<section class="slide section-slide">
+  <div class="slide-head"><span class="chap">9. 적용 가이드</span><h1>새 솔버에 적용하려면 (1/2)</h1></div>
+  <div class="slide-body">
+    <ol>
+      <li><strong><code>raw-data/</code> + <code>problems.jsonl</code></strong> — 베이스라인 실행 결과 (problem_sha256, baseline_ms, baseline_result, features, solver_stats)</li>
+      <li><strong><code>shared/&lt;solver&gt;_runner.py</code></strong> — 서브프로세스 솔버 호출 래퍼 (timeout, stderr 캡처, stats 파싱)</li>
+      <li><strong><code>shared/baseline_params.py</code></strong> — <code>BASELINE</code> dict(기본값) + <code>LOCKED</code> dict(절대 변경 금지: random_seed, num_workers)</li>
+      <li><strong><code>shared/score.py</code></strong> — scoring 공식 구현. <code>combined_score</code> 반환 함수. 불일치 시 큰 페널티</li>
+      <li><strong><code>shared/evaluator.py</code></strong> — <code>evaluate_stage1/2/3</code> 함수. stage별 임계값, 적응적 timeout</li>
+    </ol>
+  </div>
+  <div class="slide-foot"><span>9. 적용 가이드</span><div class="progress"><div class="progress-fill"></div></div><span>32 / 35</span></div>
+</section>
+
+<!-- ========== Slide 33: Checklist Part 2 ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">9. 적용 가이드</span><h1>새 솔버에 적용하려면 (2/2)</h1></div>
+  <div class="slide-body">
+    <ol start="6">
+      <li><strong><code>build_samples.py</code></strong> — 문제집 stage 분배 (보통 stage1=5 빠른, stage2=50 대표, stage3=5 어려운)</li>
+      <li><strong><code>phase{N}_&lt;name&gt;/initial_program.py</code></strong> — EVOLVE-BLOCK 안에 튜닝 파라미터 dict</li>
+      <li><strong><code>config.yaml</code></strong> — LLM models, <code>max_iterations</code>, <code>cascade_thresholds</code>, prompt system_message</li>
+      <li><strong><code>run_phase.sh</code></strong> — phase 체이닝 스크립트 (phase N best → phase N+1 import)</li>
+      <li><strong>(선택)</strong> <code>extract_best.py</code>, <code>Statistics/</code> outlier 분석</li>
+    </ol>
+
+    <div class="callout ok">
+      <strong>가장 빠르게 시작:</strong> <code>input/z3-bench/evolve/</code>를 통째로 복사 → runner, baseline_params dict 키, problems.jsonl만 새 도메인으로 교체. 나머지 구조는 그대로.
+    </div>
+  </div>
+  <div class="slide-foot"><span>9. 적용 가이드</span><div class="progress"><div class="progress-fill"></div></div><span>33 / 35</span></div>
+</section>
+
+<!-- ========== Slide 34: Glossary ========== -->
+<section class="slide">
+  <div class="slide-head"><span class="chap">10. 용어 사전</span><h1>한 줄씩 용어 정리</h1></div>
+  <div class="slide-body">
+    <table>
+      <tbody>
+        <tr><td><strong>Program</strong></td><td>진화의 기본 단위. 코드 + 점수 + parent + artifact 한 묶음</td></tr>
+        <tr><td><strong>MAP-Elites</strong></td><td>"특성 격자별 1등을 동시에 보존"하는 Quality-Diversity 알고리즘</td></tr>
+        <tr><td><strong>Island</strong></td><td>격리 진화하는 부분 집단. ring topology 주기적 migration</td></tr>
+        <tr><td><strong>Cascade Evaluation</strong></td><td>stage1→2→3 단계 평가. 약한 후보 조기 컷</td></tr>
+        <tr><td><strong>Artifact</strong></td><td>평가 사이드 채널 데이터 (stderr·stats). 다음 prompt에 자동 주입</td></tr>
+        <tr><td><strong>EVOLVE-BLOCK</strong></td><td><code># EVOLVE-BLOCK-START</code> ~ <code># EVOLVE-BLOCK-END</code> 마커. LLM 수정 영역</td></tr>
+        <tr><td><strong>Combined Score</strong></td><td>주 fitness 스칼라. geomean × solved_rate² × efficiency^0.333</td></tr>
+        <tr><td><strong>Ensemble</strong></td><td>여러 LLM을 가중치로 섞어 매 호출마다 하나를 샘플링</td></tr>
+        <tr><td><strong>Feature Dimension</strong></td><td>MAP-Elites 그리드 축. complexity, execution_time 같은 비-fitness 특성</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="slide-foot"><span>10. 용어 사전</span><div class="progress"><div class="progress-fill"></div></div><span>34 / 35</span></div>
+</section>
+
+<!-- ========== Slide 35: End ========== -->
+<section class="slide title-slide">
+  <div class="slide-body">
+    <h2 class="big" style="color: var(--highlight);">감사합니다</h2>
+    <p class="lead">질문은 언제든.</p>
+    <p class="tag" style="margin-top:32px;">자세한 문서: <code>docs/openevolve-intro/index.html</code></p>
+    <p class="tag">로그 예시 원본: <code>input/cpsat-bench/evolve/phase1_search/openevolve_output/logs/</code></p>
+    <p class="tag" style="margin-top:24px;">키보드 <kbd style="background:var(--bg-soft);padding:2px 8px;border-radius:4px;border:1px solid var(--border);font-family:monospace;">Home</kbd> 으로 처음부터 다시 보기.</p>
+  </div>
+  <div class="slide-foot"><span>End</span><div class="progress"><div class="progress-fill"></div></div><span>35 / 35</span></div>
+</section>
+
+<script>
+const slides = document.querySelectorAll('.slide');
+const counter = document.getElementById('counter');
+const help = document.getElementById('help');
+let idx = 0;
+
+function updateCounter() {
+  counter.textContent = `${idx + 1} / ${slides.length}`;
+  document.querySelectorAll('.progress-fill').forEach(f => {
+    f.style.width = `${((idx + 1) / slides.length) * 100}%`;
+  });
+}
+
+function go(i) {
+  idx = Math.max(0, Math.min(slides.length - 1, i));
+  slides[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  updateCounter();
+}
+
+function toggleHelp() {
+  help.classList.toggle('show');
+}
+
+document.addEventListener('keydown', e => {
+  if (help.classList.contains('show')) {
+    if (e.key === 'Escape' || e.key === '?') { toggleHelp(); e.preventDefault(); }
+    return;
+  }
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(idx + 1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(idx - 1); }
+  else if (e.key === 'Home') { e.preventDefault(); go(0); }
+  else if (e.key === 'End') { e.preventDefault(); go(slides.length - 1); }
+  else if (e.key === '?') { e.preventDefault(); toggleHelp(); }
+});
+
+// Track current slide via IntersectionObserver
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting && e.intersectionRatio > 0.5) {
+      idx = [...slides].indexOf(e.target);
+      updateCounter();
+    }
+  });
+}, { threshold: [0.5] });
+slides.forEach(s => obs.observe(s));
+
+updateCounter();
+</script>
+
+</body>
+</html>
