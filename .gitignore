@@ -51,7 +51,8 @@ htmlcov/
 # Misc
 .DS_Store
 .venv
-.claude
+.claude/*
+!.claude/skills/
 
 # For SR
 secrets.yaml

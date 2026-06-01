@@ -1,0 +1,104 @@
+"""
+Solve one problem via the <solver> Python binding.
+Subprocess worker invoked by _lib.subprocess_runner.
+
+argv:
+    sys.argv[1]  JSON dict of {key: value}     (params)
+    sys.argv[2]  problem file path
+    sys.argv[3]  per-problem timeout in seconds
+
+stdout: one JSON line on the LAST non-empty line. Schemas:
+    success:        {"result": "Sat"|"Unsat"|"Unknown"|..., "elapsed_ms": int,
+                     "stats": {<k>: <numeric>, ...}, "objective": <num>?}
+    invalid_param:  {"invalid_param": "<key>", "error": "<msg>",
+                     "result": "Unknown", "elapsed_ms": 0}
+    crash:          {"result": "Unknown", "elapsed_ms": 0, "error": "<msg>"}
+
+Timeout is enforced by _lib.subprocess_runner — the worker does NOT need
+to implement it (but may pass it to the solver as a hint).
+"""
+import json
+import sys
+import time
+
+
+def emit(d):
+    print(json.dumps(d))
+    sys.stdout.flush()
+
+
+def main():
+    if len(sys.argv) != 4:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": "bad argv"})
+        return
+
+    try:
+        params = json.loads(sys.argv[1])
+    except Exception as e:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": f"params json: {e}"})
+        return
+
+    problem_path = sys.argv[2]
+    timeout_s = int(sys.argv[3])
+
+    try:
+        import <solver_pkg>
+    except ImportError as e:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": f"<solver_pkg> import: {e}"})
+        return
+
+    # 1. Instantiate + apply params.
+    try:
+        solver = <solver_pkg>.Solver()
+        for k, v in params.items():
+            try:
+                solver.set_param(k, v)
+            except <solver_pkg>.InvalidParamError as e:
+                # MUST emit this — otherwise evaluator can't tell mutated key was illegal.
+                emit({"invalid_param": k, "error": str(e),
+                      "result": "Unknown", "elapsed_ms": 0})
+                return
+    except Exception as e:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": f"init: {e}"})
+        return
+
+    # 2. Load problem.
+    try:
+        with open(problem_path) as f:
+            solver.parse(f.read())
+    except Exception as e:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": f"parse: {e}"})
+        return
+
+    # 3. Solve.
+    t0 = time.monotonic()
+    try:
+        result = solver.solve(timeout_s)   # <- "Sat" | "Unsat" | "Unknown" | ...
+    except Exception as e:
+        emit({"result": "Unknown",
+              "elapsed_ms": int((time.monotonic() - t0) * 1000),
+              "error": str(e), "stats": {}})
+        return
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    stats = {}
+    try:
+        raw_stats = solver.statistics()      # dict-like; keep numeric only
+        for k, v in raw_stats.items():
+            if isinstance(v, (int, float)):
+                stats[k] = v
+    except Exception:
+        pass
+
+    out = {"result": str(result), "elapsed_ms": elapsed_ms, "stats": stats}
+    try:
+        obj = solver.objective()             # may not exist; OPTIONAL
+        if obj is not None:
+            out["objective"] = float(obj)
+    except Exception:
+        pass
+    emit(out)
+
+
+if __name__ == "__main__":
+    main()

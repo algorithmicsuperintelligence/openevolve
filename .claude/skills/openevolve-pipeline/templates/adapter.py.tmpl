@@ -1,0 +1,36 @@
+"""<BENCH>-bench solver hooks. Consumed by every _lib module via
+bench_paths.load_adapter()."""
+
+SOLVER_NAME = "<solver>"
+
+# problems.jsonl field paths.
+PROBLEM_FILE_FIELD = "<solver>_filename"     # top-level key holding the problem file path
+STATUS_FIELD = "<solver>_status"             # nested {"result", "elapsed_ms", ...}
+STATS_FIELD = "<solver>_response_stats"      # nested counters dict; None if baseline has none
+FEATURES_FIELD = "features"                  # nested {"num_*": int, ...}
+OBJECTIVE_FIELD = None                       # path inside STATUS_FIELD; None for SAT/UNSAT problems
+
+# Result categorization.
+DECISIVE_RESULTS = ("Sat", "Unsat")          # "solver gave an answer"
+DECIDED_RESULTS  = ("Sat", "Unsat")          # "baseline was conclusive → regression comparable"
+
+# Solver counters to surface as metrics / artifacts.
+KEY_STATS = ("conflicts", "decisions", "propagations")
+
+# Efficiency-factor weight per stat key.
+STATS_WEIGHTS = {
+    "conflicts": 2.0,
+    "decisions": 1.5,
+    "propagations": 0.5,
+}
+
+# Score mode default (config.yaml evaluation.score_mode wins if set).
+SCORE_MODE = "speedup"
+
+# Worker-count knob this solver uses. None when not applicable.
+WORKERS_KEY = None                           # e.g. cpsat: "num_search_workers"
+
+
+def get_problem_size(features):
+    """Feature used by clustering + SIZE_BUCKETS surface."""
+    return int((features or {}).get("num_constraints") or 0)

@@ -1,0 +1,98 @@
+"""
+Solve one problem via the <solver> CLI binary.
+Subprocess worker invoked by _lib.subprocess_runner.
+
+argv:
+    sys.argv[1]  JSON dict of {key: value}     (params)
+    sys.argv[2]  problem file path
+    sys.argv[3]  per-problem timeout in seconds
+
+stdout: one JSON line on the LAST non-empty line. See _solve_worker_py.tmpl
+for the success/invalid_param/crash schemas.
+"""
+import json
+import re
+import subprocess
+import sys
+import time
+
+
+SOLVER_BINARY = "<solver_binary>"  # absolute path if not on PATH
+
+
+def emit(d):
+    print(json.dumps(d))
+    sys.stdout.flush()
+
+
+def params_to_argv(params):
+    """Translate {key:value} → CLI flags. Adapt per solver's CLI convention.
+    Common conventions:
+      - z3-style:   key=value           (e.g. sat.threads=1)
+      - GNU long:   --key=value         (e.g. --threads=8)
+      - GNU short:  -k value            (rarely)
+    """
+    argv = []
+    for k, v in params.items():
+        if isinstance(v, bool):
+            v = "true" if v else "false"
+        argv.append(f"{k}={v}")
+    return argv
+
+
+def parse_result(stdout):
+    """Solver-specific. Extract result token + stats counters."""
+    last = stdout.strip().splitlines()[-1] if stdout.strip() else ""
+    # Examples — adapt:
+    if "unsat" in last.lower():
+        return "Unsat", {}
+    if "sat" in last.lower():
+        return "Sat", {}
+    return "Unknown", {}
+
+
+def main():
+    if len(sys.argv) != 4:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": "bad argv"})
+        return
+
+    try:
+        params = json.loads(sys.argv[1])
+    except Exception as e:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": f"params json: {e}"})
+        return
+
+    problem_path = sys.argv[2]
+    timeout_s = int(sys.argv[3])
+
+    cmd = [SOLVER_BINARY, *params_to_argv(params), problem_path]
+    t0 = time.monotonic()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout_s + 5)  # _lib enforces hard limit
+    except subprocess.TimeoutExpired:
+        emit({"result": "Unknown",
+              "elapsed_ms": int((time.monotonic() - t0) * 1000),
+              "timeout": True, "stats": {}})
+        return
+    except Exception as e:
+        emit({"result": "Unknown", "elapsed_ms": 0, "error": f"spawn: {e}"})
+        return
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+    # Detect unknown param if solver complains on stderr/stdout.
+    # Adapt the regex to your solver's diagnostic.
+    m = re.search(r"unknown\s+(?:parameter|option)\s+['\"]?([\w.\-]+)['\"]?",
+                  proc.stderr + proc.stdout, re.IGNORECASE)
+    if m:
+        emit({"invalid_param": m.group(1), "error": m.group(0),
+              "result": "Unknown", "elapsed_ms": 0})
+        return
+
+    result, stats = parse_result(proc.stdout)
+    emit({"result": result, "elapsed_ms": elapsed_ms, "stats": stats})
+
+
+if __name__ == "__main__":
+    main()

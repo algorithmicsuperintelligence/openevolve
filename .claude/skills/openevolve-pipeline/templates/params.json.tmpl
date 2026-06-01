@@ -1,0 +1,55 @@
+{
+  "solver": "<SOLVER_NAME>",
+  "version": "<SOLVER_VERSION>",
+
+  "_comment_defaults": "BASELINE. Phase modules pull this via params_catalog.load_for_bench().defaults",
+  "defaults": {
+    "<key1>": 0,
+    "<key2>": true,
+    "<seed_key>": 0
+  },
+
+  "_comment_locked": "LLM mutating any of these → combined_score=0",
+  "locked": {
+    "<seed_key>": 0
+  },
+
+  "groups": {
+    "search": {
+      "description": "Branching / restart strategy.",
+      "params": {
+        "<enum_key>": {
+          "type": "enum",
+          "values": ["a", "b", "c"],
+          "default": "a",
+          "desc": "What this knob does."
+        },
+        "<int_key>": {
+          "type": "int",
+          "default": 100,
+          "range": [0, 10000],
+          "desc": "..."
+        },
+        "<float_key>": {
+          "type": "float",
+          "default": 0.5,
+          "range": [0.0, 1.0],
+          "desc": "..."
+        },
+        "<bool_key>": {
+          "type": "bool",
+          "default": true,
+          "desc": "..."
+        },
+        "<list_key>": {
+          "type": "list",
+          "element_type": "subsolver",
+          "default": [],
+          "desc": "Optional list-typed param. element_type:subsolver validates against subsolver_names below."
+        }
+      }
+    }
+  },
+
+  "subsolver_names": []
+}
