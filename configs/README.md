@@ -13,7 +13,7 @@ The main configuration file containing all available options with sensible defau
 Use this file as a template for your own configurations.
 
 ### `minimax_config.yaml`
-A complete configuration for using [MiniMax](https://www.minimaxi.com/) models (MiniMax-M2.7, MiniMax-M2.7-highspeed) with OpenEvolve. MiniMax provides an OpenAI-compatible API with 204K context window support.
+A complete configuration for using [MiniMax](https://www.minimaxi.com/) models (MiniMax-M3, MiniMax-M2.7, MiniMax-M2.7-highspeed) with OpenEvolve. MiniMax provides an OpenAI-compatible API with up to 512K context window support.
 
 ### `island_config_example.yaml`
 A practical example configuration demonstrating proper island-based evolution setup. Shows:
