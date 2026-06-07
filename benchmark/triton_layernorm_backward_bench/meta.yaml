@@ -1,0 +1,91 @@
+task_name: triton_layernorm_backward_bench
+operator: layernorm
+difficulty_level: 4
+difficulty_label: normalization_backward
+description: >
+  Forward-to-backward Triton benchmark task for row-wise LayerNorm. The backward
+  implementation must return dx, dweight, and dbias using a naive decomposed
+  Triton baseline for reference.
+
+forward:
+  formula: "y = ((x - mean(x)) / sqrt(var(x) + eps)) * weight + bias"
+  reduction_axis: last_dimension
+  inputs:
+    x:
+      shape: "[rows, hidden]"
+      layout: contiguous
+    weight:
+      shape: "[hidden]"
+      layout: contiguous
+    bias:
+      shape: "[hidden]"
+      layout: contiguous
+  output:
+    y:
+      shape: "[rows, hidden]"
+
+backward:
+  upstream_gradient: dy
+  required_gradients:
+    - dx
+    - dweight
+    - dbias
+  formulas:
+    xhat: "(x - mean(x)) / sqrt(var(x) + eps)"
+    one: "dy * weight"
+    dx: "(one - mean(one) - xhat * mean(xhat * one)) / sqrt(var(x) + eps)"
+    dweight: "sum(dy * xhat, dim=0)"
+    dbias: "sum(dy, dim=0)"
+  saved_tensors:
+    - x
+    - weight
+    - bias
+  eps: 1.0e-5
+
+workloads:
+  correctness:
+    shapes:
+      - [8, 64]
+      - [17, 128]
+      - [32, 256]
+      - [64, 512]
+    dtypes:
+      - float32
+      - float16
+  benchmark:
+    shapes:
+      - [1, 768]
+      - [8, 1024]
+      - [32, 1536]
+      - [8, 4096]
+      - [1, 8192]
+      - [17, 127]
+      - [17, 513]
+      - [17, 1000]
+    dtypes:
+      - float32
+      - float16
+
+tolerances:
+  float32:
+    atol: 2.0e-5
+    rtol: 2.0e-5
+  float16:
+    atol: 5.0e-2
+    rtol: 5.0e-2
+
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+  expert_triton_backward: liger-kernel
+
+metrics:
+  - compile_success
+  - runtime_success
+  - backward_correctness
+  - dx_correctness
+  - dweight_correctness
+  - dbias_correctness
+  - autograd_integration_success
+  - backward_latency_ms
+  - speedup_vs_pytorch_autograd

@@ -1,0 +1,63 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+# CUDA cannot be reinitialized safely in forked subprocesses. On Python 3.10,
+# OpenEvolve switches its ProcessPoolExecutor to spawn when this is set.
+max_tasks_per_child: 1
+
+llm:
+  primary_model: "gemini-2.5-flash-lite"
+  primary_model_weight: 0.8
+  secondary_model: "gemini-2.5-flash"
+  secondary_model_weight: 0.2
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  temperature: 0.5
+  max_tokens: 16000
+  timeout: 180
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer optimizing a row-wise softmax backward kernel.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK to make softmax_backward_triton(dy, y) faster.
+    The kernel must compute:
+
+        dx = y * (dy - sum(dy * y, axis=-1, keepdim=True))
+
+    Correctness is a hard requirement. Any incorrect candidate receives a very large negative score.
+
+    Fixed API constraints:
+    - Do not change the public function softmax_backward_triton(dy, y).
+    - Do not change tensor shapes or output semantics.
+    - Do not require extra inputs or outputs.
+    - Keep support for 2D CUDA tensors shaped [rows, cols].
+    - Keep numerically stable fp32 accumulation for row reductions.
+
+    Allowed optimization areas:
+    - Triton BLOCK_SIZE selection.
+    - num_warps and num_stages.
+    - Load/store masking.
+    - Reducing redundant address arithmetic.
+    - Vectorized row processing within one Triton program.
+    - Reduction strategy for sum(dy * y).
+    - Special casing power-of-two and non-power-of-two row widths.
+
+    The evaluator tests multiple shapes and dtypes, then benchmarks latency only after all
+    correctness tests pass. Optimize for speedup over the baseline implementation.
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 120
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 24000

@@ -188,12 +188,12 @@ class AtenIRComposeBackend:
 
 
 class LayerNormAtenIRBackend:
-    """Adapter backend for examples/triton_layernorm_backward_bench/backward_atenir.py."""
+    """Adapter backend for benchmark/triton_layernorm_backward_bench/backward_atenir.py."""
 
     name = "layernorm_atenir"
 
     def run(self, grad_out: torch.Tensor, inputs: Sequence[torch.Tensor]):
-        from examples.triton_layernorm_backward_bench.backward_atenir import (
+        from benchmark.triton_layernorm_backward_bench.backward_atenir import (
             layernorm_backward_triton,
         )
 

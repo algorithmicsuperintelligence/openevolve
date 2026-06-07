@@ -1,0 +1,88 @@
+stage: stage1_forward_to_backward_construction
+task_name: triton_bias_relu_backward_bench
+operator: bias_relu
+difficulty:
+  level: 2
+  label: broadcasting_backward
+description: Minimal forward-to-backward Triton benchmark task for y = relu(x + bias).
+  The backward implementation must return both dx and dbias.
+semantic_source:
+  forward_ref: forward_ref.py
+  forward_formula: y = relu(x + bias)
+inputs:
+- name: x
+  shape: '[rows, cols]'
+  layout: contiguous
+  differentiable: true
+- name: bias
+  shape: '[cols]'
+  layout: contiguous
+  differentiable: true
+output:
+  name: y
+  shape: '[rows, cols]'
+backward_target:
+  upstream_gradient: dy
+  required_gradients:
+  - dx
+  - dbias
+  saved_tensors:
+  - x
+  - bias
+  formula_hints:
+    dx: dy * ((x + bias) > 0)
+    dbias: sum(dx, dim=0)
+oracle_policy:
+  ground_truth: PyTorch autograd over forward_ref.py
+  llm_generated_code_is_not_ground_truth: true
+workloads:
+  correctness:
+    shapes:
+    - - 17
+      - 31
+    - - 128
+      - 256
+    - - 129
+      - 257
+    - - 512
+      - 1024
+    dtypes:
+    - float32
+    - float16
+  benchmark:
+    shapes:
+    - - 512
+      - 1024
+    - - 1024
+      - 1024
+    - - 1024
+      - 2048
+    dtypes:
+    - float16
+tolerances:
+  float32:
+    atol: 1.0e-05
+    rtol: 1.0e-05
+  float16:
+    atol: 0.02
+    rtol: 0.02
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+  expert_triton_backward: null
+metrics:
+- compile_success
+- runtime_success
+- backward_correctness
+- dx_correctness
+- dbias_correctness
+- autograd_integration_success
+- backward_latency_ms
+- speedup_vs_naive_triton_baseline
+construction_outputs:
+  autograd_oracle: backward_ref.py
+  naive_triton_candidate: backward_naive_triton.py
+  prompts:
+  - prompts/backward_formula_prompt.md
+  - prompts/naive_triton_backward_prompt.md
+  - prompts/repair_prompt_template.md

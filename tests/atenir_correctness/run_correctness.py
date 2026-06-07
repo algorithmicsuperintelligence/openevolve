@@ -3,8 +3,8 @@
 Example:
 
     python -m tests.atenir_correctness.run_correctness \
-      --forward examples.triton_layernorm_backward_bench.forward_ref:layernorm_forward_ref \
-      --backward examples.triton_layernorm_backward_bench.backward_naive_triton:layernorm_backward_naive_triton \
+      --forward benchmark.triton_layernorm_backward_bench.forward_ref:layernorm_forward_ref \
+      --backward benchmark.triton_layernorm_backward_bench.backward_naive_triton:layernorm_backward_naive_triton \
       --shape 17,127 --shape 127 --shape 127 \
       --scalar 1e-5 \
       --dtype float32 \
@@ -13,8 +13,8 @@ Example:
 Or use a built-in suite:
 
     python -m tests.atenir_correctness.run_correctness \
-      --forward examples.triton_layernorm_backward_bench.forward_ref:layernorm_forward_ref \
-      --backward examples.triton_layernorm_backward_bench.backward_atenir:layernorm_backward_triton \
+      --forward benchmark.triton_layernorm_backward_bench.forward_ref:layernorm_forward_ref \
+      --backward benchmark.triton_layernorm_backward_bench.backward_atenir:layernorm_backward_triton \
       --mode dynamic \
       --scalar 1e-5
 

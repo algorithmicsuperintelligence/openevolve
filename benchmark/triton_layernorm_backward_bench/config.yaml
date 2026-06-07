@@ -1,0 +1,83 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+# CUDA cannot be reinitialized safely in forked subprocesses. On Python 3.10,
+# OpenEvolve switches its ProcessPoolExecutor to spawn when this is set.
+max_tasks_per_child: 1
+
+llm:
+  primary_model: "gemini-2.5-flash-lite"
+  primary_model_weight: 0.8
+  secondary_model: "gemini-2.5-flash"
+  secondary_model_weight: 0.2
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  temperature: 0.5
+  max_tokens: 20000
+  timeout: 180
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer implementing and optimizing backward kernels.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK to make layernorm_backward_triton(dy, x, weight, bias, eps)
+    faster. This is a forward-to-backward synthesis task. The forward operator is row-wise LayerNorm:
+
+        mean = mean(x, axis=-1, keepdim=True)
+        var = mean((x - mean)^2, axis=-1, keepdim=True)
+        xhat = (x - mean) / sqrt(var + eps)
+        y = xhat * weight + bias
+
+    where x has shape [rows, hidden], and weight and bias have shape [hidden].
+    The backward kernel must return:
+
+        one = dy * weight
+        dx = (one - mean(one) - xhat * mean(xhat * one)) / sqrt(var + eps)
+        dweight = sum(dy * xhat, dim=0)
+        dbias = sum(dy, dim=0)
+
+    Correctness is a hard requirement. Any incorrect candidate receives a very large negative score.
+
+    Fixed API constraints:
+    - Do not change the public function layernorm_backward_triton(dy, x, weight, bias, eps).
+    - Return exactly a tuple (dx, dweight, dbias).
+    - Do not change tensor shapes or output semantics.
+    - Do not require extra inputs or outputs.
+    - Keep support for contiguous 2D CUDA tensors x and dy shaped [rows, hidden].
+    - Keep support for contiguous 1D CUDA tensors weight and bias shaped [hidden].
+    - Keep numerically stable fp32 accumulation for reductions.
+
+    Allowed optimization areas:
+    - Fusing the naive decomposition kernels.
+    - Reusing xhat, rstd, and intermediate reductions.
+    - BLOCK_SIZE and BLOCK_ROWS selection.
+    - num_warps and num_stages.
+    - Load/store masking.
+    - Row-wise reductions for mean and variance.
+    - Column-wise reductions for dweight and dbias.
+
+    Generalization requirements:
+    - Do not hard-code shape-specific branches or special-case only benchmark shapes.
+    - Implementations must work for all tested shapes and dtypes, including non-power-of-two
+      hidden sizes and large hidden dimensions.
+    - Prefer generic tiling/masking over fixed-shape assumptions.
+
+    The evaluator tests multiple shapes and dtypes, then benchmarks latency only after all
+    correctness tests pass. Optimize for speedup over PyTorch autograd backward across the
+    full benchmark suite (dynamic and nontile shapes, float32 and float16).
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 300
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 30000

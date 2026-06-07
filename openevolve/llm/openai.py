@@ -8,6 +8,7 @@ to a task queue directory and the system waits for a corresponding *.answer.json
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,41 @@ import openai
 from openevolve.llm.base import LLMInterface
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_api_parameter_fallback(params: Dict[str, Any], exc: Exception) -> bool:
+    """Apply known OpenAI-compatible parameter fallbacks after 400 errors.
+
+    Returns True when params were changed and the caller should retry
+    immediately. This keeps config files portable across models with slightly
+    different parameter names/limits.
+    """
+    msg = str(exc)
+    lowered = msg.lower()
+
+    if "max_tokens" in msg and "max_completion_tokens" in msg and "max_tokens" in params:
+        params["max_completion_tokens"] = params.pop("max_tokens")
+        logger.info("Retrying LLM call with max_completion_tokens")
+        return True
+
+    limit_match = re.search(r"supports at most (\d+)", msg)
+    if "max_tokens" in msg and "too large" in lowered and limit_match:
+        limit = int(limit_match.group(1))
+        token_key = "max_tokens" if "max_tokens" in params else "max_completion_tokens"
+        if token_key in params and int(params[token_key]) > limit:
+            params[token_key] = limit
+            logger.info("Retrying LLM call with %s=%s", token_key, limit)
+            return True
+
+    if "temperature" in msg and (
+        "unsupported" in lowered or "only the default" in lowered
+    ):
+        if "temperature" in params:
+            params.pop("temperature", None)
+            logger.info("Retrying LLM call with default temperature")
+            return True
+
+    return False
 
 
 def _iso_now() -> str:
@@ -200,6 +236,8 @@ class OpenAILLM(LLMInterface):
                     logger.error(f"All {retries + 1} attempts failed with timeout")
                     raise
             except Exception as e:
+                if _apply_api_parameter_fallback(params, e):
+                    continue
                 if attempt < retries:
                     logger.warning(
                         f"Error on attempt {attempt + 1}/{retries + 1}: {str(e)}. Retrying..."

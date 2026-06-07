@@ -29,7 +29,7 @@ This package lives at the repo root (`openevolve/atenir/`) so any bench can
 import it as `from atenir.compose import run_graph` once `openevolve` is on
 the import path.  LayerNorm-specific glue (the worked-example adapter) lives
 at the bench root as
-`examples/triton_layernorm_backward_bench/backward_atenir.py`, alongside the
+`benchmark/triton_layernorm_backward_bench/backward_atenir.py`, alongside the
 existing `backward_naive_triton.py`.
 
 ## Extract
@@ -98,7 +98,7 @@ particular API.  All of that lives in adapters.
 
 ## Adapters
 
-`examples/triton_layernorm_backward_bench/backward_atenir.py` is the worked
+`benchmark/triton_layernorm_backward_bench/backward_atenir.py` is the worked
 example.  It implements the bench's frozen public function
 `layernorm_backward_triton(dy, x, weight, bias, eps)`, does the LayerNorm-
 specific prep (mean/rstd recompute, dtype casting, N-shape override), builds

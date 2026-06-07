@@ -1,0 +1,70 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+# CUDA cannot be reinitialized safely in forked subprocesses. On Python 3.10,
+# OpenEvolve switches its ProcessPoolExecutor to spawn when this is set.
+max_tasks_per_child: 1
+
+llm:
+  primary_model: "gemini-2.5-flash-lite"
+  primary_model_weight: 0.8
+  secondary_model: "gemini-2.5-flash"
+  secondary_model_weight: 0.2
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  temperature: 0.5
+  max_tokens: 16000
+  timeout: 180
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer implementing and optimizing backward kernels.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK to make bias_relu_backward_triton(dy, x, bias)
+    faster. This is a forward-to-backward synthesis task: the forward operator is:
+
+        y = relu(x + bias)
+
+    where x has shape [rows, cols] and bias has shape [cols]. The backward kernel must return:
+
+        dx = dy * ((x + bias) > 0)
+        dbias = sum(dx, dim=0)
+
+    Correctness is a hard requirement. Any incorrect candidate receives a very large negative score.
+
+    Fixed API constraints:
+    - Do not change the public function bias_relu_backward_triton(dy, x, bias).
+    - Return exactly a tuple (dx, dbias).
+    - Do not change tensor shapes or output semantics.
+    - Do not require extra inputs or outputs.
+    - Keep support for contiguous 2D CUDA tensors x and dy shaped [rows, cols].
+    - Keep support for contiguous 1D CUDA tensor bias shaped [cols].
+    - Accumulate dbias in fp32 before storing to the bias dtype.
+
+    Allowed optimization areas:
+    - Fusing or restructuring dx and dbias computation.
+    - BLOCK_SIZE and BLOCK_ROWS selection.
+    - num_warps and num_stages.
+    - Load/store masking.
+    - Reducing redundant address arithmetic.
+    - Column-wise reduction strategy for dbias.
+    - Special casing common benchmark shapes.
+
+    The evaluator tests multiple shapes and dtypes, then benchmarks latency only after all
+    correctness tests pass. Optimize for speedup over PyTorch autograd backward.
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 120
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 26000

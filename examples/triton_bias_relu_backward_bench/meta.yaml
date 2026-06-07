@@ -1,0 +1,73 @@
+task_name: triton_bias_relu_backward_bench
+operator: bias_relu
+difficulty_level: 2
+difficulty_label: broadcasting_backward
+description: >
+  Minimal forward-to-backward Triton benchmark task for y = relu(x + bias).
+  The backward implementation must return both dx and dbias.
+
+forward:
+  formula: "y = relu(x + bias)"
+  inputs:
+    x:
+      shape: "[rows, cols]"
+      layout: contiguous
+    bias:
+      shape: "[cols]"
+      layout: contiguous
+  output:
+    y:
+      shape: "[rows, cols]"
+
+backward:
+  upstream_gradient: dy
+  required_gradients:
+    - dx
+    - dbias
+  formulas:
+    dx: "dy * ((x + bias) > 0)"
+    dbias: "sum(dx, dim=0)"
+  saved_tensors:
+    - x
+    - bias
+
+workloads:
+  correctness:
+    shapes:
+      - [17, 31]
+      - [128, 256]
+      - [129, 257]
+      - [512, 1024]
+    dtypes:
+      - float32
+      - float16
+  benchmark:
+    shapes:
+      - [512, 1024]
+      - [1024, 1024]
+      - [1024, 2048]
+    dtypes:
+      - float16
+
+tolerances:
+  float32:
+    atol: 1.0e-5
+    rtol: 1.0e-5
+  float16:
+    atol: 2.0e-2
+    rtol: 2.0e-2
+
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+  expert_triton_backward: null
+
+metrics:
+  - compile_success
+  - runtime_success
+  - backward_correctness
+  - dx_correctness
+  - dbias_correctness
+  - autograd_integration_success
+  - backward_latency_ms
+  - speedup_vs_pytorch_autograd

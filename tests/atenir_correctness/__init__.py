@@ -1,1 +1,1 @@
-"""Unified correctness harness for AtenIR-backed Triton experiments."""
+"""Unified correctness harness for AtenIR-backed Triton workflows."""

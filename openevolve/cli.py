@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import os
+import shutil
 import sys
 from typing import Dict, List, Optional
 
@@ -28,6 +29,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", "-c", help="Path to configuration file (YAML)", default=None)
 
     parser.add_argument("--output", "-o", help="Output directory for results", default=None)
+
+    parser.add_argument(
+        "--save-best-to",
+        help=(
+            "Optional path to copy the final best program to after evolution. "
+            "Useful for preserving /tmp outputs inside an example directory, e.g. "
+            "--save-best-to evolved_best_program.py"
+        ),
+        default=None,
+    )
 
     parser.add_argument(
         "--iterations", "-i", help="Maximum number of iterations", type=int, default=None
@@ -160,6 +171,20 @@ async def main_async() -> int:
         if latest_checkpoint:
             print(f"\nLatest checkpoint saved at: {latest_checkpoint}")
             print(f"To resume, use: --checkpoint {latest_checkpoint}")
+
+        if args.save_best_to:
+            best_program_path = os.path.join(
+                openevolve.output_dir,
+                "best",
+                f"best_program{openevolve.file_extension}",
+            )
+            save_best_to = os.path.abspath(args.save_best_to)
+            if not os.path.exists(best_program_path):
+                print(f"\nWarning: best program file not found at {best_program_path}")
+            else:
+                os.makedirs(os.path.dirname(save_best_to) or ".", exist_ok=True)
+                shutil.copyfile(best_program_path, save_best_to)
+                print(f"\nCopied final best program to: {save_best_to}")
 
         return 0
 
