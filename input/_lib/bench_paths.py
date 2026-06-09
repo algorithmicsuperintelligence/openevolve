@@ -5,6 +5,7 @@ A "bench root" is the absolute path to `input/<bench>/evolve/`. Modules take
 either the bench name (e.g. `"cpsat-bench"`) or an already-resolved bench
 root path.
 """
+
 import importlib.util
 import os
 import pathlib
@@ -27,8 +28,26 @@ def resolve_bench(bench_name_or_root):
     return root.resolve()
 
 
+def solver_mode(bench_root):
+    """`bench.solver_mode` from config.yaml. Selects the solver path / pipeline
+    variant (e.g. z3-bench: "optimize" default vs "sat"). The value also drives
+    cache + final_program suffixing so multiple modes coexist on disk."""
+    m = (load_config(bench_root).get("bench") or {}).get("solver_mode")
+    return m or "optimize"
+
+
+def variant_suffix(bench_root):
+    """Disk suffix for the active solver_mode. "" for the default ("optimize")
+    so existing benches keep `cache/` + `final_program.py` unchanged; otherwise
+    the mode name (e.g. "sat" → `cache-sat/`, `final_program_sat.py`)."""
+    m = solver_mode(bench_root)
+    return "" if m == "optimize" else m
+
+
 def cache_dir(bench_root):
-    return pathlib.Path(bench_root).resolve() / "cache"
+    base = pathlib.Path(bench_root).resolve() / "cache"
+    s = variant_suffix(bench_root)
+    return base.with_name(f"cache-{s}") if s else base
 
 
 def raw_dir(bench_root):
@@ -51,7 +70,7 @@ def worker_path(bench_root):
     """Resolve `bench.worker_path` from config.yaml (relative to bench_root)."""
     bench_root = pathlib.Path(bench_root).resolve()
     cfg = load_config(bench_root)
-    wp = ((cfg.get("bench") or {}).get("worker_path") or "_solve_worker.py")
+    wp = (cfg.get("bench") or {}).get("worker_path") or "_solve_worker.py"
     p = bench_root / wp
     if not p.exists():
         raise SystemExit(f"worker_path not found: {p}")
@@ -59,13 +78,11 @@ def worker_path(bench_root):
 
 
 def evaluation_cfg(bench_root):
-    return ((load_config(bench_root).get("bench") or {})
-            .get("evaluation") or {})
+    return (load_config(bench_root).get("bench") or {}).get("evaluation") or {}
 
 
 def clustering_cfg(bench_root):
-    return ((load_config(bench_root).get("bench") or {})
-            .get("clustering") or {})
+    return (load_config(bench_root).get("bench") or {}).get("clustering") or {}
 
 
 _yaml_cache = {}
@@ -81,6 +98,7 @@ def load_config(bench_root):
         _yaml_cache[key] = {}
         return _yaml_cache[key]
     import yaml
+
     _yaml_cache[key] = yaml.safe_load(path.read_text()) or {}
     return _yaml_cache[key]
 

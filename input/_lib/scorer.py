@@ -86,7 +86,7 @@ def _score_speedup(per_problem, decided_set):
         weights.append(w)
         if match:
             solved += 1
-            speedups.append(p["baseline_ms"] / max(p["elapsed_ms"], 1))
+            speedups.append(max(p["baseline_ms"], 1) / max(p["elapsed_ms"], 1))
         else:
             speedups.append(1e-6)
             if baseline_decided and p["result"] in decided_set:
@@ -109,7 +109,7 @@ def _time_ratio(p, metric):
         v_dt = vs.get("deterministic_time")
         if b_dt and v_dt and b_dt > 0 and v_dt > 0:
             return float(b_dt) / float(v_dt), "dtime"
-    return p["baseline_ms"] / max(p["elapsed_ms"], 1), "wall"
+    return max(p["baseline_ms"], 1) / max(p["elapsed_ms"], 1), "wall"
 
 
 def _score_cost(per_problem, decisive_set, time_metric, cost_weight):
@@ -132,7 +132,7 @@ def _score_cost(per_problem, decisive_set, time_metric, cost_weight):
         b_cost = p.get("baseline_objective")
         v_cost = p.get("objective")
         time_r, src = _time_ratio(p, time_metric)
-        wall_r = p["baseline_ms"] / max(p["elapsed_ms"], 1)
+        wall_r = max(p["baseline_ms"], 1) / max(p["elapsed_ms"], 1)
         if time_metric == "dtime":
             if src == "dtime":
                 dtime_used += 1

@@ -90,14 +90,16 @@ llm:
     - name: "claude-sonnet-4-6"
       provider: "claude_code"
       weight: 0.8
-      timeout: 180
+      timeout: 300              # raised from 180: a capped query needs ~180-250s; no retry on timeout now (see claude_code.py)
       retries: 2
       retry_delay: 10
       reasoning_effort: "medium"
+      max_thinking_tokens: 4000  # cap extended thinking; uncapped it overflowed the timeout and burned a 2nd retry for nothing
     - name: "claude-haiku-4-5"
       provider: "claude_code"
       weight: 0.2
-      timeout: 120
+      timeout: 300
+      max_thinking_tokens: 4000
 
 prompt:
   system_message: |

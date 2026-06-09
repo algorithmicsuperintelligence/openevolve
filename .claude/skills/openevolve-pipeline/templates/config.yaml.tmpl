@@ -23,8 +23,22 @@ bench:
   params_catalog: params.json
   worker_path: _solve_worker.py
 
+  # OPTIONAL variant mode (default unset == "optimize"). When set to any other
+  # value, _lib suffixes on-disk artifacts so multiple modes coexist:
+  #   <unset>/optimize → cache/,       final_program.py
+  #   sat (or <X>)     → cache-<X>/,   final_program_<X>.py
+  # The worker reads this same field to branch behavior (e.g. z3 sat = Solver
+  # over parse_smt2_file, no objective). _lib.evaluator_core warns if
+  # solver_mode == optimize but score_mode != cost (objective guard inactive).
+  # Switch modes by editing this + score_mode, then re-run sampler/rebaseline.
+  # solver_mode: optimize
+
   # Clustering — consumed by _lib.sampler.
   clustering:
+    # OPTIONAL: `mode` selects a clustering.modes.<name> override (shallow-merged
+    # over this block). ORTHOGONAL to solver_mode — set independently to switch
+    # the sample profile (e.g. focus on large instances) in any solver mode.
+    # mode: large
     method: kmeans                          # kmeans | quintile | thresholds
     feature: features.num_constraints       # dotted path into problems.jsonl record
     n_clusters: 5
@@ -36,6 +50,15 @@ bench:
       stage2: [2, 3]
       stage3: [4]
       stage4: [0, 1, 2, 3, 4]
+    # OPTIONAL override profiles selected by `clustering.mode` above. Each is
+    # shallow-merged over the base block. Example: a `large` profile that focuses
+    # on constraint-heavy instances via threshold bucketing, top bucket only.
+    # modes:
+    #   large:
+    #     method: thresholds
+    #     thresholds: [15000]               # bucket 1 = >=15k
+    #     stage_clusters: {stage1: [1], stage2: [1], stage3: [1], stage4: [1]}
+    #     stage_sizes:    {stage1: 6, stage2: 10, stage3: 12, stage4: 38}
 
   # Evaluation behavior — consumed by _lib.evaluator_core.
   evaluation:

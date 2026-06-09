@@ -1,0 +1,88 @@
+{
+  "selection": "10 SAT runtime Q1+2 (fastest 40%)",
+  "source": "z3-bench/problems.jsonl",
+  "sha256": [
+    "2a465c36fe213a9c72c781832dfb561ffae3691905af41289a39ec08f585dbf2",
+    "5166f0ebaa5fe05e62ea4ed44f517f9d3cd44171362e99356dd6e33889cc5d81",
+    "23efdccb9e57a41897053370a5b6ad6b367e216afbfba952ded0a68b7ee7d4ae",
+    "1c18f0ae6b70612542d6269bb8736b100331a42f18b375afba1da9b92c8548ba",
+    "17cc4d349ce3ebeba20934b5f0c14c6716bd918a6bcf47bad7a684c2d1162f9a",
+    "2f2003b96aa2bff75f9a8792a4817a23ff4e1e4ac247d2edf9cf8f0cf3907fed",
+    "05c7f64a1db7d611df8501a987ca276e96cc2735993e171468b740f3babbb34e",
+    "1a35f6de8ab4447aec26efb9e44f59fb1943fc4b2569d1ab2eccbeac279c1063",
+    "4efdf6c97e97e17eb3147929ad909d803a37e51a691fee016c6456bf6efe6c83",
+    "0c0ae51029de74681437b42a8f8a23f5045a9bbe1e60f4d18ef0e004d9b9b983"
+  ],
+  "summary": [
+    {
+      "sha": "2a465c36fe21",
+      "num_hard_constraints": 25278,
+      "num_variables": 5888,
+      "baseline_result": "Sat",
+      "baseline_ms": 319
+    },
+    {
+      "sha": "5166f0ebaa5f",
+      "num_hard_constraints": 31265,
+      "num_variables": 6503,
+      "baseline_result": "Sat",
+      "baseline_ms": 358
+    },
+    {
+      "sha": "23efdccb9e57",
+      "num_hard_constraints": 31258,
+      "num_variables": 6503,
+      "baseline_result": "Sat",
+      "baseline_ms": 364
+    },
+    {
+      "sha": "1c18f0ae6b70",
+      "num_hard_constraints": 31260,
+      "num_variables": 6502,
+      "baseline_result": "Sat",
+      "baseline_ms": 365
+    },
+    {
+      "sha": "17cc4d349ce3",
+      "num_hard_constraints": 15243,
+      "num_variables": 3932,
+      "baseline_result": "Sat",
+      "baseline_ms": 366
+    },
+    {
+      "sha": "2f2003b96aa2",
+      "num_hard_constraints": 31158,
+      "num_variables": 6465,
+      "baseline_result": "Sat",
+      "baseline_ms": 368
+    },
+    {
+      "sha": "05c7f64a1db7",
+      "num_hard_constraints": 31358,
+      "num_variables": 6541,
+      "baseline_result": "Sat",
+      "baseline_ms": 412
+    },
+    {
+      "sha": "1a35f6de8ab4",
+      "num_hard_constraints": 31358,
+      "num_variables": 6541,
+      "baseline_result": "Sat",
+      "baseline_ms": 426
+    },
+    {
+      "sha": "4efdf6c97e97",
+      "num_hard_constraints": 31358,
+      "num_variables": 6541,
+      "baseline_result": "Sat",
+      "baseline_ms": 427
+    },
+    {
+      "sha": "0c0ae51029de",
+      "num_hard_constraints": 20030,
+      "num_variables": 6088,
+      "baseline_result": "Sat",
+      "baseline_ms": 530
+    }
+  ]
+}

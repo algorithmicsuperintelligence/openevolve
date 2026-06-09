@@ -1,0 +1,5 @@
+{
+  "opt.maxsat_engine": "pd-maxres",
+  "opt.optsmt_engine": "basic",
+  "opt.priority": "box"
+}

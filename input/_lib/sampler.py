@@ -29,6 +29,7 @@ Outputs (under `<bench>/evolve/cache/`):
 The decisive-baseline filter is driven by the adapter
 (`DECISIVE_RESULTS` + `STATUS_FIELD`).
 """
+
 import argparse
 import json
 import pathlib
@@ -130,7 +131,7 @@ def _pick_spread(pool, n_pick, mode):
         return list(pool)
     if mode == "center":
         start = (len(pool) - n_pick) // 2
-        return pool[start:start + n_pick]
+        return pool[start : start + n_pick]
     # default: quintile spread within the pool
     if n_pick == 1:
         return [pool[len(pool) // 2]]
@@ -164,14 +165,14 @@ def _fmt_ms(v):
     return f"{int(v)}ms"
 
 
-def _print_stage_report(stage_name, picks, pool, cluster_ids,
-                        feature_path, baseline_ms, baseline_result, fname):
+def _print_stage_report(
+    stage_name, picks, pool, cluster_ids, feature_path, baseline_ms, baseline_result, fname
+):
     pool_n = len(pool)
     picks_n = len(picks)
 
     if picks_n == 0:
-        print(f"  {stage_name} ({fname}): 0 picks from clusters "
-              f"{cluster_ids} (pool={pool_n})")
+        print(f"  {stage_name} ({fname}): 0 picks from clusters " f"{cluster_ids} (pool={pool_n})")
         return
 
     pick_ms = [baseline_ms(r) for r in picks]
@@ -191,25 +192,27 @@ def _print_stage_report(stage_name, picks, pool, cluster_ids,
     result_str = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
 
     print()
-    print(f"  {stage_name} ({fname}): {picks_n} picks from "
-          f"clusters {cluster_ids} (pool={pool_n})")
+    print(
+        f"  {stage_name} ({fname}): {picks_n} picks from " f"clusters {cluster_ids} (pool={pool_n})"
+    )
     print(f"    results:        {result_str}")
-    print(f"    picks  baseline_ms:  min={_fmt_ms(p_lo)} p25={_fmt_ms(p_q1)} "
-          f"median={_fmt_ms(p_med)} p75={_fmt_ms(p_q3)} max={_fmt_ms(p_hi)}")
-    print(f"    pool   baseline_ms:  min={_fmt_ms(o_lo)} p25={_fmt_ms(o_q1)} "
-          f"median={_fmt_ms(o_med)} p75={_fmt_ms(o_q3)} max={_fmt_ms(o_hi)}")
-    print(f"    picks  {feature_path}: min={int(f_lo)} median={int(f_med)} "
-          f"max={int(f_hi)}")
-    print(f"    pool   {feature_path}: min={int(of_lo)} median={int(of_med)} "
-          f"max={int(of_hi)}")
+    print(
+        f"    picks  baseline_ms:  min={_fmt_ms(p_lo)} p25={_fmt_ms(p_q1)} "
+        f"median={_fmt_ms(p_med)} p75={_fmt_ms(p_q3)} max={_fmt_ms(p_hi)}"
+    )
+    print(
+        f"    pool   baseline_ms:  min={_fmt_ms(o_lo)} p25={_fmt_ms(o_q1)} "
+        f"median={_fmt_ms(o_med)} p75={_fmt_ms(o_q3)} max={_fmt_ms(o_hi)}"
+    )
+    print(f"    picks  {feature_path}: min={int(f_lo)} median={int(f_med)} " f"max={int(f_hi)}")
+    print(f"    pool   {feature_path}: min={int(of_lo)} median={int(of_med)} " f"max={int(of_hi)}")
     print("    picks:")
     for r in picks:
         sha = r["problem_sha256"][:12]
         ms = baseline_ms(r)
         feat = int(_dotted(r, feature_path) or 0)
         res = baseline_result(r)
-        print(f"      {sha}  {res:<10}  {_fmt_ms(ms):>8}  "
-              f"{feature_path}={feat}")
+        print(f"      {sha}  {res:<10}  {_fmt_ms(ms):>8}  " f"{feature_path}={feat}")
 
 
 def build_samples(bench_root, *, adapter=None):
@@ -220,6 +223,18 @@ def build_samples(bench_root, *, adapter=None):
     cluster_cfg = (cfg.get("bench") or {}).get("clustering") or {}
     if not cluster_cfg:
         raise SystemExit("bench.clustering missing from config.yaml")
+
+    # Clustering-mode override: `clustering.modes.<mode>` is shallow-merged over
+    # the base block when `clustering.mode` selects it. This is ORTHOGONAL to
+    # bench.solver_mode — e.g. `mode: large` switches to threshold sampling of
+    # constraint-heavy instances regardless of optimize/sat. Unset → base block.
+    mode = cluster_cfg.get("mode")
+    mode_overrides = (cluster_cfg.get("modes") or {}).get(mode) if mode else None
+    if mode_overrides:
+        cluster_cfg = {**cluster_cfg, **mode_overrides}
+        print(f"clustering: applied modes.{mode} override")
+    elif mode:
+        print(f"clustering: mode={mode!r} has no modes.{mode} block — using base")
 
     if adapter is None:
         adapter = bench_paths.load_adapter(bench_root)
@@ -265,8 +280,7 @@ def build_samples(bench_root, *, adapter=None):
     feature_vals = [_dotted(r, feature_path) for r in pool]
     if any(v is None for v in feature_vals):
         missing = sum(1 for v in feature_vals if v is None)
-        print(f"warning: {missing} problems missing {feature_path}; treating as 0",
-              file=sys.stderr)
+        print(f"warning: {missing} problems missing {feature_path}; treating as 0", file=sys.stderr)
         feature_vals = [v if v is not None else 0 for v in feature_vals]
     feature_vals = [float(v) for v in feature_vals]
 
@@ -282,8 +296,7 @@ def build_samples(bench_root, *, adapter=None):
     elif method == "thresholds":
         thr = list(cluster_cfg.get("thresholds") or [])
         if not thr:
-            raise SystemExit("clustering.method=thresholds requires "
-                             "non-empty `thresholds` list")
+            raise SystemExit("clustering.method=thresholds requires " "non-empty `thresholds` list")
         labels = _threshold_labels(feature_vals, thr)
         n_buckets = len(thr) + 1
     else:
@@ -300,12 +313,13 @@ def build_samples(bench_root, *, adapter=None):
     def _range(b):
         if not b:
             return "empty"
-        return (f"feat={int(_dotted(b[0], feature_path) or 0)}.."
-                f"{int(_dotted(b[-1], feature_path) or 0)} "
-                f"ms={int(_baseline_ms(b[0]))}..{int(_baseline_ms(b[-1]))}")
-    print("buckets: " + " | ".join(
-        f"c{i}({len(b)},{_range(b)})" for i, b in enumerate(buckets)
-    ))
+        return (
+            f"feat={int(_dotted(b[0], feature_path) or 0)}.."
+            f"{int(_dotted(b[-1], feature_path) or 0)} "
+            f"ms={int(_baseline_ms(b[0]))}..{int(_baseline_ms(b[-1]))}"
+        )
+
+    print("buckets: " + " | ".join(f"c{i}({len(b)},{_range(b)})" for i, b in enumerate(buckets)))
 
     stage_sizes = cluster_cfg.get("stage_sizes") or {}
     stage_clusters = cluster_cfg.get("stage_clusters") or {}
@@ -324,26 +338,39 @@ def build_samples(bench_root, *, adapter=None):
         merged.sort(key=_baseline_ms)
         picks = _pick_spread(merged, n_pick, spread)
         sample_path = cache_dir / f"{stage_name}_sample.json"
-        criteria = (f"{method}-clusters={cluster_ids} feature={feature_path} "
-                    f"spread={spread}")
+        criteria = f"{method}-clusters={cluster_ids} feature={feature_path} " f"spread={spread}"
         sample_path.write_text(
-            json.dumps({
-                "selection": f"{len(picks)} from {len(merged)} candidates",
-                "criteria": criteria,
-                "source": str(problems_jsonl.relative_to(bench_root.parent.parent)),
-                "sha256": [r["problem_sha256"] for r in picks],
-                "summary": [{
-                    "sha": r["problem_sha256"][:12],
-                    "baseline_result": _baseline_result(r),
-                    "baseline_ms": _baseline_ms(r),
-                    feature_path: _dotted(r, feature_path),
-                } for r in picks],
-            }, indent=2) + "\n"
+            json.dumps(
+                {
+                    "selection": f"{len(picks)} from {len(merged)} candidates",
+                    "criteria": criteria,
+                    "source": str(problems_jsonl.relative_to(bench_root.parent.parent)),
+                    "sha256": [r["problem_sha256"] for r in picks],
+                    "summary": [
+                        {
+                            "sha": r["problem_sha256"][:12],
+                            "baseline_result": _baseline_result(r),
+                            "baseline_ms": _baseline_ms(r),
+                            feature_path: _dotted(r, feature_path),
+                        }
+                        for r in picks
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
         )
 
-        _print_stage_report(stage_name, picks, merged, cluster_ids,
-                            feature_path, _baseline_ms, _baseline_result,
-                            sample_path.name)
+        _print_stage_report(
+            stage_name,
+            picks,
+            merged,
+            cluster_ids,
+            feature_path,
+            _baseline_ms,
+            _baseline_result,
+            sample_path.name,
+        )
 
 
 def main(argv=None):

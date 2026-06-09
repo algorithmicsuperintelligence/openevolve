@@ -1,3 +1,13 @@
+# ============================================================================
+# EXAMPLE — OPTIMIZE mode (z3.Optimize, full soft-constraint optimization).
+# To use:  cp config.optimize.example.yaml config.yaml
+# Pairs solver_mode: optimize + score_mode: cost (objective guard active).
+# Artifacts: cache/, final_program.py. After copying:
+#   python -m _lib.sampler z3-bench && python -m _lib.rebaseline z3-bench \
+#     && ./run_phase.sh z3-bench --pin 2-7 \
+#     && python -m _lib.final_verify z3-bench input/z3-bench/evolve/final_program.py
+# ============================================================================
+#
 # Single config for z3-bench. Read by openevolve (dacite, ignores unknown
 # top-level keys like `bench` / `parallel_solvers`) AND by input/run_phase.sh
 # (via _lib/load_bench_config.py) for shell-side phase orchestration.
@@ -29,14 +39,14 @@ bench:
   # The value also suffixes on-disk artifacts so both modes coexist:
   #   optimize → cache/,      final_program.py
   #   sat      → cache-sat/,  final_program_sat.py
-  solver_mode: sat
+  solver_mode: optimize
 
   # === Clustering / stage sampling. ===
   clustering:
     # `mode` selects a clustering.modes.<mode> override (shallow-merged over the
     # base block below). ORTHOGONAL to solver_mode — set `mode: large` to focus
     # on constraint-heavy instances in EITHER optimize or sat. Unset → base.
-    mode: large
+    # mode: large
     method: kmeans
     # reboot baselines are "Skipped" (elapsed_ms=0 placeholder), so cluster on
     # problem size — num_hard_constraints spans 2.5k–41k with good spread.
@@ -61,17 +71,17 @@ bench:
     modes:
       large:
         method: thresholds
-        thresholds: [25000]            # bucket 0 = <15k (dropped), bucket 1 = >=15k (38 of 89)
+        thresholds: [15000]            # bucket 0 = <15k (dropped), bucket 1 = >=15k (38 of 89)
         stage_sizes:
-          stage1: 0
-          stage2: 0
-          stage3: 6
-          stage4: 0                   # "임계값 이상 전부"
+          stage1: 6
+          stage2: 10
+          stage3: 12
+          stage4: 38                   # "임계값 이상 전부"
         stage_clusters:
-          stage1: [2]
-          stage2: [2]
+          stage1: [1]
+          stage2: [1]
           stage3: [1]
-          stage4: [1,2]
+          stage4: [1]
         spread: quintile
 
   # === Evaluation behavior. ===
@@ -79,7 +89,7 @@ bench:
     repeats: 5
     timeout_factor: 1.3
     min_timeout_s: 5
-    score_mode: speedup            # z3-sat: speedup mode (no objective in sat — Solver drops assert-soft)
+    score_mode: cost               # z3-optimize: cost mode (objective guard via cost_ratio)
     time_metric: wall              # speedup signal = wall-clock ratio (baseline_ms/variant_ms),
                                    # NOT deterministic_time. rlimit was too noisy/unreflective on
                                    # this reboot workload. wall noise is tamed by repeats-averaging

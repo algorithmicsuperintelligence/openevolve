@@ -1,0 +1,51 @@
+{
+  "selection": "6 from 9 candidates",
+  "criteria": "thresholds-clusters=[1] feature=features.num_hard_constraints spread=quintile",
+  "source": "z3-bench/problems.jsonl",
+  "sha256": [
+    "045c333ae6fd91a71357d95ad26153ca619bd0a8962abe25dc5f8c34a6a914c4",
+    "66d2dfbc087cf000fe202e30540b4b365e400acd3c67c634f1101c2868bd823d",
+    "843647feb551627f095d0c2fffd9eb19a84804e56891ea9700102bdf81dd5d79",
+    "9239a79679d8985e2412724d31b1813c4ef653709972b56529697526dc50031b",
+    "97decd1d8f2187deb5ae064730e9f9a4fb3ab461cf957b0a9e2ebcf30fc46dfb",
+    "bb108a8ed4b71427fdc2171b551df6039eb024db48d2fe488f504d655aa7097c"
+  ],
+  "summary": [
+    {
+      "sha": "045c333ae6fd",
+      "baseline_result": "Sat",
+      "baseline_ms": 1000,
+      "features.num_hard_constraints": 31928
+    },
+    {
+      "sha": "66d2dfbc087c",
+      "baseline_result": "Sat",
+      "baseline_ms": 1000,
+      "features.num_hard_constraints": 31548
+    },
+    {
+      "sha": "843647feb551",
+      "baseline_result": "Sat",
+      "baseline_ms": 1000,
+      "features.num_hard_constraints": 29052
+    },
+    {
+      "sha": "9239a79679d8",
+      "baseline_result": "Sat",
+      "baseline_ms": 1000,
+      "features.num_hard_constraints": 40999
+    },
+    {
+      "sha": "97decd1d8f21",
+      "baseline_result": "Sat",
+      "baseline_ms": 1000,
+      "features.num_hard_constraints": 30755
+    },
+    {
+      "sha": "bb108a8ed4b7",
+      "baseline_result": "Sat",
+      "baseline_ms": 1000,
+      "features.num_hard_constraints": 29052
+    }
+  ]
+}

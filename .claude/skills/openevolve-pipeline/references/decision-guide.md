@@ -48,11 +48,49 @@ across phases. z3-bench is single-threaded.
 | `quintile` | Rank-based equal-count splits. Use when boundary consistency across runs matters more than natural breaks. |
 | `thresholds` | User-specified cut-offs (e.g. `[50000, 150000]` → 3 buckets). Use when you have domain knowledge of regimes. |
 
+## clustering.mode (optional sample-profile override)
+
+Generic `_lib.sampler` feature. `clustering.mode: <name>` selects a
+`clustering.modes.<name>` block that is **shallow-merged over the base clustering
+block**. Lets one config carry several sample profiles and switch by one field.
+Unset → base block only.
+
+- ORTHOGONAL to `solver_mode` — a sample profile (e.g. `large` = focus on
+  constraint-heavy instances) applies in any solver mode. Do NOT key the override
+  off solver_mode; keep the two knobs independent.
+- Only the keys present in the override are replaced (e.g. just `method` +
+  `thresholds` + `stage_sizes`); everything else falls through to base.
+- z3-bench uses `modes.large` (threshold bucketing, top bucket only) to focus on
+  the biggest instances when the speedup signal is dominated by them.
+
+## solver_mode (optional variant suffix)
+
+Generic `_lib.bench_paths` feature. `bench.solver_mode` (default unset ==
+`optimize`) does two things:
+
+1. **Artifact suffixing** so multiple modes coexist on disk:
+   `cache/`+`final_program.py` (optimize) vs `cache-<X>/`+`final_program_<X>.py`.
+   Every `_lib` CLI (sampler/rebaseline/extract_best/prepare_phase/final_verify/
+   finalize) routes through `bench_paths.cache_dir` / `variant_suffix`, so the two
+   modes' baselines and outputs never collide.
+2. **Worker branching** — `_solve_worker.py` reads the SAME sibling `config.yaml`
+   field and changes solver behavior (z3: `sat` = `z3.Solver` over
+   `parse_smt2_file`, drops `assert-soft`, no objective, `opt.*` params silently
+   dropped). `_lib.evaluator_core` warns if `optimize` + `score_mode != cost`.
+
+Use when one workload has two ways to be solved (full optimize vs feasibility-only)
+and you want both tunable without copying the bench dir. Switching = edit
+`solver_mode` + `score_mode`, then re-run sampler/rebaseline/phases (per-mode
+`cache-<X>/` keeps a dedicated baseline — **rebaseline is mandatory after switch**).
+
 ## Existing solver reference
 
 | Solver | score_mode | Worker axis | Size buckets | Phases |
 |---|---|---|---|---|
-| z3 (`z3-bench`) | speedup | NO | NO | 4 (opt_sls + sat + smt + unified) |
+| z3 (`z3-bench`) | cost (optimize) / speedup (sat) | NO | NO | 4 (opt_sls + sat + smt + unified) |
 | CP-SAT (`cpsat-bench`) | cost (dtime + cost_ratio) | YES (W=1, W=8) | YES | 5 (search + presolve + lp_cuts + unified + custom_subsolvers) |
+
+z3-bench also demonstrates the optional `solver_mode` (optimize/sat) +
+`clustering.mode` (base/large) knobs above — both default-off, both config-only.
 
 Use whichever matches the new solver's profile as the structural template.

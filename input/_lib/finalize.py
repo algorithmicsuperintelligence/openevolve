@@ -28,6 +28,7 @@ Source priority:
   2. `<last_phase>/openevolve_output/checkpoints/checkpoint_*/best_program.py`
      (highest combined_score)
 """
+
 import argparse
 import json
 import pathlib
@@ -74,9 +75,7 @@ def _resolve_load_prev(src, cache_dir, replaced):
             return f"{indent}{name} = {{}}"
         data = json.loads(path.read_text())
         replaced.append((name, fname, "dict"))
-        return f"{indent}{name} = " + pprint.pformat(
-            data, width=100, sort_dicts=True
-        )
+        return f"{indent}{name} = " + pprint.pformat(data, width=100, sort_dicts=True)
 
     def repl_buckets(m):
         indent, name, fname = m.group(1), m.group(2), m.group(3)
@@ -103,8 +102,9 @@ def _pick_from_checkpoints(phase_dir):
         if not info.exists() or not prog.exists():
             continue
         try:
-            sc = float(json.loads(info.read_text())
-                       .get("metrics", {}).get("combined_score", float("-inf")))
+            sc = float(
+                json.loads(info.read_text()).get("metrics", {}).get("combined_score", float("-inf"))
+            )
         except (json.JSONDecodeError, ValueError, TypeError):
             continue
         if sc > best_score:
@@ -127,8 +127,7 @@ def finalize(bench_root, from_checkpoints=False):
         best_py, score, ck = _pick_from_checkpoints(last_phase)
         if best_py is None:
             raise SystemExit(f"no checkpoint best_program.py under {last_phase}")
-        print(f"[finalize] from-checkpoints: picked {ck.name} "
-              f"(combined_score={score:.4f})")
+        print(f"[finalize] from-checkpoints: picked {ck.name} " f"(combined_score={score:.4f})")
     else:
         best_py = last_phase / "openevolve_output" / "best" / "best_program.py"
         if not best_py.exists():
@@ -139,8 +138,10 @@ def finalize(bench_root, from_checkpoints=False):
                     f"{last_phase / 'openevolve_output' / 'checkpoints'}"
                 )
             best_py = best_py_alt
-            print(f"[finalize] best/best_program.py missing — using checkpoint "
-                  f"{ck.name} (combined_score={score:.4f})")
+            print(
+                f"[finalize] best/best_program.py missing — using checkpoint "
+                f"{ck.name} (combined_score={score:.4f})"
+            )
 
     src = best_py.read_text()
     header = (
@@ -159,11 +160,13 @@ def finalize(bench_root, from_checkpoints=False):
         # Insert header AFTER the module docstring.
         match = re.match(r'^(?P<q>"""|\'\'\')(.*?)(?P=q)\s*\n', resolved_src, re.S)
         if match:
-            out_src = resolved_src[:match.end()] + "\n" + header + resolved_src[match.end():]
+            out_src = resolved_src[: match.end()] + "\n" + header + resolved_src[match.end() :]
         else:
             out_src = header + resolved_src
 
-    out = bench_root / "final_program.py"
+    suffix = bench_paths.variant_suffix(bench_root)
+    final_name = f"final_program_{suffix}.py" if suffix else "final_program.py"
+    out = bench_root / final_name
     out.write_text(out_src)
     rel_src = best_py.relative_to(bench_root)
 
@@ -172,19 +175,22 @@ def finalize(bench_root, from_checkpoints=False):
         for name, fname, kind in replaced:
             print(f"   {name} ← cache/{fname} ({kind})")
     else:
-        print("[finalize] no _load_prev*() calls to inline "
-              "(EVOLVE-BLOCK already self-contained)")
-    print(f"[finalize] {rel_src} → final_program.py ({out.stat().st_size} bytes)")
+        print(
+            "[finalize] no _load_prev*() calls to inline " "(EVOLVE-BLOCK already self-contained)"
+        )
+    print(f"[finalize] {rel_src} → {final_name} ({out.stat().st_size} bytes)")
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("bench", help="bench dir name (e.g. cpsat-bench)")
-    ap.add_argument("--from-checkpoints", action="store_true",
-                    help="scan checkpoint_*/ dirs and pick highest combined_score")
+    ap.add_argument(
+        "--from-checkpoints",
+        action="store_true",
+        help="scan checkpoint_*/ dirs and pick highest combined_score",
+    )
     args = ap.parse_args(argv)
-    finalize(bench_paths.resolve_bench(args.bench),
-             from_checkpoints=args.from_checkpoints)
+    finalize(bench_paths.resolve_bench(args.bench), from_checkpoints=args.from_checkpoints)
 
 
 if __name__ == "__main__":

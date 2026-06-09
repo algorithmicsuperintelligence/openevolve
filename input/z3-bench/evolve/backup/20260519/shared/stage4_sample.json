@@ -1,0 +1,328 @@
+{
+  "selection": "40 SAT+UNSAT broad, dedup vs stage1-3",
+  "source": "z3-bench/problems.jsonl",
+  "sha256": [
+    "1ea44fa504f1d53e3940de8d91ee10b5048fd1062e6761c55d39c51415d3d847",
+    "2314d64da1b6d3ee9ada61974f6c4cb8f0a677a6c95a6df4d9d1c8dc38a33a66",
+    "273bb808171103f0ad5be543c56b668dabe90046b661c467985c3e234225d942",
+    "389fd7729c73dbf56d084e10fcfdd77917195159f64f3f11c6af6a476426969b",
+    "037a45901c1e15d666701de863dfcc00f5b35bb8da52a03fde8161ed3a0b47f6",
+    "4ff9d45ccb1e038c7a0f3fbb2d97ef091718be487340483f2776df46478bd511",
+    "4323ecfd94c6453381e752dd1023d9c3feed0f91f60326ed716cb6e5e65b585d",
+    "312ad6712268239f49965147a6b73850f685b72845588649975005c5083d1cc1",
+    "4419b795af1847562e9c35be5535c08f9582079084cebe62f1f85c925624667a",
+    "505a2e36055c971b7ff50c806430e09386fbd2fac5645d1480df806c1fdfbf2e",
+    "25025d341f86cbcf9038666e523ef8ab9593954558e36e42df8d5784ef0c8a62",
+    "07db09a3dacb493c0acc1cb5cfe106613e9d9ca1990ad21d96c3fcd528b5def9",
+    "1cd3cd6f6f1799616500d7ae97f46c13ac97fad2a5650a4267fa728718d6c45e",
+    "311ce11d1fd8d876cdc797fe9ea39055fb644352cfcd442a92c96625cc0ff969",
+    "3d9704766d76e47234b3a1742997f17846162020b631a39c46d05faba418be97",
+    "2302d78a584311ce70cbfd625101a08704a76c6e205e3e84e6850781736d47eb",
+    "54f3ffda93934157ff428a4143e2b2946c8e6dca6074c8a52678b4f622422dd0",
+    "0c18c62bb9cd847041b708fea996e4c4f039bb537e268a838a1352722305c716",
+    "1eadea88d320dce4a4b9b8fe724d215c89c66591ac61e51ad3822a0f45a3f021",
+    "56b2f7e062c385b199567fa507f9723f8eef92fac629c28c947c690110508868",
+    "48ba4e9efa030819c2a38d4f5b33f08b38bd8a7a5fdddc0ecd6b85eff1c8d716",
+    "043e86d34f47f4f81c918163838508de3f3c368208a5126c828a7b467b5eec7b",
+    "2c80d26974732941d7f04d454c5dba4a56e967f30f45775a35373bb60be7164a",
+    "20d9b61a0b0bea39b9507de6a5d76e41d46d303a2bc140c1dbc30e1e45d5a4cc",
+    "24b0f9d635f110184c196a1e5e849a4a4c2e088516e1faa3e058c69e6d8b6bf1",
+    "52279df319ed088fdca1321385bee2352530ad3fdcbe92ea82d3a61158019a1d",
+    "04731b4c69952d7a0d2b7c69fbb0ef512239e09fbbcae6fe4553e09e5e966844",
+    "2df16cb0bc5584c4044521a5d57afbf401d893f4e241f1bf5cb2425a5dd502a9",
+    "d8d5ffa7d82453487927cb6588bf547b89fa3149bb1b8865bac16dcc2516af84",
+    "2de9f07a7bd7d34d18efa566f5cf0d799ef07bf0499928807f6ba8c635b1d766",
+    "51d8a28c260d1c105f43f19cbee7e0a17dfbf8fb2ff6a5b78029f5a8bbe1d2be",
+    "519ce8d31fa5d52edf4c3db0219713193457fd8a069329c1c4ee0c332620ce10",
+    "46bd96aba2874a423d4349726ef65aef5af3e1a9385c4592d7532b26327f94ff",
+    "0b900874b1fc0340c8c1ff5f8f62093926ef541289d4d118495a782764e1b1da",
+    "56d5b7cbf50bf3a3117f42b1a37eeaf64459957daf9db11a0f003775befca840",
+    "4e8f9f03e736e5ed6a8defc624d75197cb7b3e12783f2cf4a8ddcbe7d5c7873d",
+    "29efe6d38d7b8fcf41ed69b73f5a0bb370f782ab61ffe564fbe41512ea75ce5f",
+    "7ac5a84f68bc6e1488f9c6074a42505a6c95fa8df4f615c4a0ae54359dd3b416",
+    "37b6d012f0c252781d07ef5ceaaf458e559853f9c1b13e9b2399bc8209bae47d",
+    "be1c308d797798dce2f3663ad9790822ce632331f6d9c7309a738ab8e438804e"
+  ],
+  "summary": [
+    {
+      "sha": "1ea44fa504f1",
+      "num_hard_constraints": 7455,
+      "num_variables": 2119,
+      "baseline_result": "Unsat",
+      "baseline_ms": 20
+    },
+    {
+      "sha": "2314d64da1b6",
+      "num_hard_constraints": 5542,
+      "num_variables": 1870,
+      "baseline_result": "Sat",
+      "baseline_ms": 34
+    },
+    {
+      "sha": "273bb8081711",
+      "num_hard_constraints": 14932,
+      "num_variables": 3797,
+      "baseline_result": "Unsat",
+      "baseline_ms": 51
+    },
+    {
+      "sha": "389fd7729c73",
+      "num_hard_constraints": 15038,
+      "num_variables": 3843,
+      "baseline_result": "Unsat",
+      "baseline_ms": 87
+    },
+    {
+      "sha": "037a45901c1e",
+      "num_hard_constraints": 7609,
+      "num_variables": 2197,
+      "baseline_result": "Sat",
+      "baseline_ms": 147
+    },
+    {
+      "sha": "4ff9d45ccb1e",
+      "num_hard_constraints": 15179,
+      "num_variables": 4583,
+      "baseline_result": "Sat",
+      "baseline_ms": 188
+    },
+    {
+      "sha": "4323ecfd94c6",
+      "num_hard_constraints": 24258,
+      "num_variables": 5779,
+      "baseline_result": "Sat",
+      "baseline_ms": 223
+    },
+    {
+      "sha": "312ad6712268",
+      "num_hard_constraints": 30673,
+      "num_variables": 6294,
+      "baseline_result": "Unsat",
+      "baseline_ms": 261
+    },
+    {
+      "sha": "4419b795af18",
+      "num_hard_constraints": 24797,
+      "num_variables": 5701,
+      "baseline_result": "Unsat",
+      "baseline_ms": 261
+    },
+    {
+      "sha": "505a2e36055c",
+      "num_hard_constraints": 24937,
+      "num_variables": 5752,
+      "baseline_result": "Sat",
+      "baseline_ms": 307
+    },
+    {
+      "sha": "25025d341f86",
+      "num_hard_constraints": 24807,
+      "num_variables": 5701,
+      "baseline_result": "Unsat",
+      "baseline_ms": 407
+    },
+    {
+      "sha": "07db09a3dacb",
+      "num_hard_constraints": 32856,
+      "num_variables": 7636,
+      "baseline_result": "Sat",
+      "baseline_ms": 657
+    },
+    {
+      "sha": "1cd3cd6f6f17",
+      "num_hard_constraints": 17584,
+      "num_variables": 6289,
+      "baseline_result": "Sat",
+      "baseline_ms": 787
+    },
+    {
+      "sha": "311ce11d1fd8",
+      "num_hard_constraints": 17611,
+      "num_variables": 6311,
+      "baseline_result": "Sat",
+      "baseline_ms": 890
+    },
+    {
+      "sha": "3d9704766d76",
+      "num_hard_constraints": 30948,
+      "num_variables": 8235,
+      "baseline_result": "Sat",
+      "baseline_ms": 1041
+    },
+    {
+      "sha": "2302d78a5843",
+      "num_hard_constraints": 31258,
+      "num_variables": 6503,
+      "baseline_result": "Sat",
+      "baseline_ms": 1197
+    },
+    {
+      "sha": "54f3ffda9393",
+      "num_hard_constraints": 39326,
+      "num_variables": 9274,
+      "baseline_result": "Unsat",
+      "baseline_ms": 1202
+    },
+    {
+      "sha": "0c18c62bb9cd",
+      "num_hard_constraints": 68808,
+      "num_variables": 12293,
+      "baseline_result": "Sat",
+      "baseline_ms": 1387
+    },
+    {
+      "sha": "1eadea88d320",
+      "num_hard_constraints": 68808,
+      "num_variables": 12293,
+      "baseline_result": "Sat",
+      "baseline_ms": 1475
+    },
+    {
+      "sha": "56b2f7e062c3",
+      "num_hard_constraints": 68814,
+      "num_variables": 12293,
+      "baseline_result": "Sat",
+      "baseline_ms": 1580
+    },
+    {
+      "sha": "48ba4e9efa03",
+      "num_hard_constraints": 68820,
+      "num_variables": 12293,
+      "baseline_result": "Sat",
+      "baseline_ms": 1650
+    },
+    {
+      "sha": "043e86d34f47",
+      "num_hard_constraints": 23924,
+      "num_variables": 8604,
+      "baseline_result": "Sat",
+      "baseline_ms": 1796
+    },
+    {
+      "sha": "2c80d2697473",
+      "num_hard_constraints": 52724,
+      "num_variables": 12404,
+      "baseline_result": "Unsat",
+      "baseline_ms": 1932
+    },
+    {
+      "sha": "20d9b61a0b0b",
+      "num_hard_constraints": 65729,
+      "num_variables": 13913,
+      "baseline_result": "Unsat",
+      "baseline_ms": 2117
+    },
+    {
+      "sha": "24b0f9d635f1",
+      "num_hard_constraints": 65965,
+      "num_variables": 13989,
+      "baseline_result": "Sat",
+      "baseline_ms": 2173
+    },
+    {
+      "sha": "52279df319ed",
+      "num_hard_constraints": 65712,
+      "num_variables": 13913,
+      "baseline_result": "Unsat",
+      "baseline_ms": 2541
+    },
+    {
+      "sha": "04731b4c6995",
+      "num_hard_constraints": 49238,
+      "num_variables": 9250,
+      "baseline_result": "Unsat",
+      "baseline_ms": 2791
+    },
+    {
+      "sha": "2df16cb0bc55",
+      "num_hard_constraints": 112978,
+      "num_variables": 17097,
+      "baseline_result": "Unsat",
+      "baseline_ms": 2934
+    },
+    {
+      "sha": "d8d5ffa7d824",
+      "num_hard_constraints": 112812,
+      "num_variables": 17043,
+      "baseline_result": "Sat",
+      "baseline_ms": 3350
+    },
+    {
+      "sha": "2de9f07a7bd7",
+      "num_hard_constraints": 58465,
+      "num_variables": 11083,
+      "baseline_result": "Unsat",
+      "baseline_ms": 4105
+    },
+    {
+      "sha": "51d8a28c260d",
+      "num_hard_constraints": 68832,
+      "num_variables": 12293,
+      "baseline_result": "Sat",
+      "baseline_ms": 5953
+    },
+    {
+      "sha": "519ce8d31fa5",
+      "num_hard_constraints": 59033,
+      "num_variables": 11250,
+      "baseline_result": "Sat",
+      "baseline_ms": 7096
+    },
+    {
+      "sha": "46bd96aba287",
+      "num_hard_constraints": 218656,
+      "num_variables": 31528,
+      "baseline_result": "Sat",
+      "baseline_ms": 7167
+    },
+    {
+      "sha": "0b900874b1fc",
+      "num_hard_constraints": 227124,
+      "num_variables": 34685,
+      "baseline_result": "Unsat",
+      "baseline_ms": 8277
+    },
+    {
+      "sha": "56d5b7cbf50b",
+      "num_hard_constraints": 193354,
+      "num_variables": 29409,
+      "baseline_result": "Sat",
+      "baseline_ms": 9606
+    },
+    {
+      "sha": "4e8f9f03e736",
+      "num_hard_constraints": 193360,
+      "num_variables": 29409,
+      "baseline_result": "Sat",
+      "baseline_ms": 10483
+    },
+    {
+      "sha": "29efe6d38d7b",
+      "num_hard_constraints": 105784,
+      "num_variables": 32912,
+      "baseline_result": "Unsat",
+      "baseline_ms": 12712
+    },
+    {
+      "sha": "7ac5a84f68bc",
+      "num_hard_constraints": 105784,
+      "num_variables": 32912,
+      "baseline_result": "Unsat",
+      "baseline_ms": 14992
+    },
+    {
+      "sha": "37b6d012f0c2",
+      "num_hard_constraints": 295682,
+      "num_variables": 39190,
+      "baseline_result": "Sat",
+      "baseline_ms": 20621
+    },
+    {
+      "sha": "be1c308d7977",
+      "num_hard_constraints": 1095737,
+      "num_variables": 99809,
+      "baseline_result": "Unsat",
+      "baseline_ms": 33752
+    }
+  ]
+}

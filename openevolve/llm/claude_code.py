@@ -78,13 +78,16 @@ class ClaudeCodeLLM(LLMInterface):
                     return await asyncio.wait_for(coro, timeout=timeout)
                 return await coro
             except asyncio.TimeoutError:
-                if attempt < retries:
-                    logger.warning(
-                        f"[claude_code] Timeout {attempt + 1}/{retries + 1}, retrying."
-                    )
-                    await asyncio.sleep(retry_delay)
-                    continue
-                logger.error(f"[claude_code] All {retries + 1} attempts timed out")
+                # Do NOT retry on timeout: a timeout means generation (usually
+                # extended thinking) exceeded the budget. The retry uses the same
+                # prompt and will time out again, burning another full `timeout`
+                # window for nothing. Fail fast instead. Cap latency with
+                # `max_thinking_tokens` rather than relying on retries.
+                logger.error(
+                    f"[claude_code] Timeout after {timeout}s on attempt "
+                    f"{attempt + 1}; not retrying (timeouts are not transient). "
+                    f"Lower `max_thinking_tokens` or raise `timeout`."
+                )
                 raise
             except Exception as e:
                 if attempt < retries:
@@ -121,8 +124,6 @@ class ClaudeCodeLLM(LLMInterface):
             opts_kwargs["system_prompt"] = system_message
         if self.model:
             opts_kwargs["model"] = self.model
-        if self.max_thinking_tokens is not None:
-            opts_kwargs["max_thinking_tokens"] = self.max_thinking_tokens
         effort = kwargs.get("reasoning_effort", self.reasoning_effort)
         if effort is not None:
             opts_kwargs["effort"] = effort
@@ -130,13 +131,30 @@ class ClaudeCodeLLM(LLMInterface):
             opts_kwargs["cli_path"] = self.cli_path
         if self.cwd is not None:
             opts_kwargs["cwd"] = self.cwd
-        # When reasoning is requested (effort or max_thinking_tokens), default
-        # to adaptive thinking with `display=summarized` so ThinkingBlock
-        # actually carries text — Opus 4.7+ defaults display to "omitted"
-        # (signature-only), which would zero-out our DEBUG reasoning log.
-        # User can still override via claude_code_options.thinking.
-        if (effort is not None or self.max_thinking_tokens is not None) \
-                and "thinking" not in self.extra_sdk_options:
+
+        # Thinking config. The SDK serializes only ONE of `thinking` /
+        # `max_thinking_tokens` (the `thinking` field wins via if/elif in
+        # subprocess_cli), so we must NOT pass both — doing so silently drops
+        # the budget and leaves thinking on `adaptive` (uncapped), which is
+        # exactly what made queries run 7min+ and hit the timeout.
+        #
+        # We translate `max_thinking_tokens` into the documented explicit form
+        # thinking={"type":"enabled","budget_tokens":N} rather than the
+        # deprecated bare field (which newer models treat as on/off only). This
+        # is a real hard cap — measured: budget 6000 -> ~150s, 2000 -> ~96s,
+        # vs uncapped adaptive -> 7min+.
+        #
+        # Priority: explicit user `thinking` > max_thinking_tokens (hard cap) >
+        # effort (adaptive, with display=summarized so ThinkingBlock carries
+        # text for the DEBUG log; Opus 4.7+ otherwise omits it).
+        if "thinking" in self.extra_sdk_options:
+            pass  # user override applied via opts_kwargs.update below
+        elif self.max_thinking_tokens is not None:
+            opts_kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": self.max_thinking_tokens,
+            }
+        elif effort is not None:
             opts_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
         opts_kwargs.update(self.extra_sdk_options)
 
@@ -147,22 +165,35 @@ class ClaudeCodeLLM(LLMInterface):
             f"prompt_chars={len(prompt_text)} "
             f"sys_chars={len(system_message) if system_message else 0} "
             f"effort={opts_kwargs.get('effort')} "
-            f"max_thinking_tokens={opts_kwargs.get('max_thinking_tokens')}"
+            f"thinking={opts_kwargs.get('thinking')}"
         )
 
         text_chunks: List[str] = []
         thinking_chunks: List[str] = []
         result_text: Optional[str] = None
 
-        async for msg in query(prompt=prompt_text, options=options):
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        text_chunks.append(block.text)
-                    elif ThinkingBlock is not None and isinstance(block, ThinkingBlock):
-                        thinking_chunks.append(block.thinking)
-            elif isinstance(msg, ResultMessage):
-                result_text = getattr(msg, "result", None) or result_text
+        try:
+            async for msg in query(prompt=prompt_text, options=options):
+                if isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        if isinstance(block, TextBlock):
+                            text_chunks.append(block.text)
+                        elif ThinkingBlock is not None and isinstance(block, ThinkingBlock):
+                            thinking_chunks.append(block.thinking)
+                elif isinstance(msg, ResultMessage):
+                    result_text = getattr(msg, "result", None) or result_text
+        except Exception as e:
+            # SDK errors (e.g. ProcessError / CLIConnectionError) often have an
+            # empty str() — the real cause sits in .stderr / .exit_code. Surface
+            # those so a CLI-rejected option doesn't show up as a blank
+            # "LLM generation failed:" upstream.
+            detail = (
+                f"{type(e).__name__}: {e!r}"
+                f" exit_code={getattr(e, 'exit_code', None)}"
+                f" stderr={getattr(e, 'stderr', None)!r}"
+            )
+            logger.error(f"[claude_code] query failed -> {detail}")
+            raise RuntimeError(f"claude_code query failed -> {detail}") from e
 
         final = result_text if result_text else "".join(text_chunks)
         thinking = "".join(thinking_chunks)

@@ -22,12 +22,16 @@ llm:
       provider: "claude_code"
       weight: 0.7
       system_message: "You are an expert code evolution assistant."
-      timeout: 180
+      timeout: 300
       retries: 2
       retry_delay: 10
       # Optional Claude Code-specific knobs:
       reasoning_effort: "medium"        # one of: low, medium, high, xhigh, max
-      max_thinking_tokens: null          # cap extended thinking budget
+      # Cap extended thinking. The CLI/model can emit thinking even with effort
+      # unset; left uncapped (null) it can run for many minutes and blow past
+      # `timeout`. Timeouts are NOT retried (a retry would just time out again),
+      # so keep `timeout` comfortably above the time a capped query needs.
+      max_thinking_tokens: 4000
       # cli_path: "/opt/homebrew/bin/claude"
       # claude_code_options:              # raw kwargs forwarded to ClaudeAgentOptions
       #   fallback_model: "claude-haiku-4-5"
@@ -35,13 +39,15 @@ llm:
     - name: "claude-haiku-4-5"
       provider: "claude_code"
       weight: 0.3
-      timeout: 120
+      timeout: 300
+      max_thinking_tokens: 4000
 
   evaluator_models:
     - name: "claude-haiku-4-5"
       provider: "claude_code"
       weight: 1.0
-      timeout: 120
+      timeout: 300
+      max_thinking_tokens: 4000
 
 prompt:
   system_message: "You are an expert code evolution assistant."

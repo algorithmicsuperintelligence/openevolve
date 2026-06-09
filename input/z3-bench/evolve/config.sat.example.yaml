@@ -1,3 +1,15 @@
+# ============================================================================
+# EXAMPLE — SAT mode (z3.Solver over parse_smt2_file: hard-only feasibility).
+# To use:  cp config.sat.example.yaml config.yaml
+# Pairs solver_mode: sat + score_mode: speedup (no objective; ~2x faster).
+# Focuses sampling on constraint-heavy instances (clustering.mode: large).
+# Artifacts isolate to cache-sat/, final_program_sat.py (optimize cache/ untouched).
+# After copying (rebaseline is MANDATORY — sat baseline ≠ optimize baseline):
+#   python -m _lib.sampler z3-bench && python -m _lib.rebaseline z3-bench \
+#     && ./run_phase.sh z3-bench --pin 2-7 \
+#     && python -m _lib.final_verify z3-bench input/z3-bench/evolve/final_program_sat.py
+# ============================================================================
+#
 # Single config for z3-bench. Read by openevolve (dacite, ignores unknown
 # top-level keys like `bench` / `parallel_solvers`) AND by input/run_phase.sh
 # (via _lib/load_bench_config.py) for shell-side phase orchestration.
@@ -61,17 +73,17 @@ bench:
     modes:
       large:
         method: thresholds
-        thresholds: [25000]            # bucket 0 = <15k (dropped), bucket 1 = >=15k (38 of 89)
+        thresholds: [15000]            # bucket 0 = <15k (dropped), bucket 1 = >=15k (38 of 89)
         stage_sizes:
-          stage1: 0
-          stage2: 0
-          stage3: 6
-          stage4: 0                   # "임계값 이상 전부"
+          stage1: 6
+          stage2: 10
+          stage3: 12
+          stage4: 38                   # "임계값 이상 전부"
         stage_clusters:
-          stage1: [2]
-          stage2: [2]
+          stage1: [1]
+          stage2: [1]
           stage3: [1]
-          stage4: [1,2]
+          stage4: [1]
         spread: quintile
 
   # === Evaluation behavior. ===
@@ -79,7 +91,8 @@ bench:
     repeats: 5
     timeout_factor: 1.3
     min_timeout_s: 5
-    score_mode: speedup            # z3-sat: speedup mode (no objective in sat — Solver drops assert-soft)
+    score_mode: speedup            # z3-sat: speedup mode (wall-clock ratio; no objective guard —
+                                   # parse_smt2_file drops assert-soft, Solver has no objective)
     time_metric: wall              # speedup signal = wall-clock ratio (baseline_ms/variant_ms),
                                    # NOT deterministic_time. rlimit was too noisy/unreflective on
                                    # this reboot workload. wall noise is tamed by repeats-averaging
@@ -126,21 +139,22 @@ llm:
 
 prompt:
   system_message: |
-    You tune Z3 parameters for a z3.Optimize (soft-constraint) workload — 89 "reboot"
-    SMT2 instances with ~1k Int / 3k Bool / 0.2k Real vars, 42–392 assert-soft + 2.5k–41k
-    hard constraints, opt.* engaged. Every instance's optimal objective is 0 (all soft
-    constraints satisfiable), reached in well under 5s by the baseline.
+    You tune Z3 parameters for a SAT-FEASIBILITY workload — 89 "reboot" SMT2 instances with
+    ~1k Int / 3k Bool / 0.2k Real vars and 2.5k–41k HARD constraints. This config runs z3.Solver
+    over parse_smt2_file, which DROPS all assert-soft constraints: there is NO objective and NO
+    optimization — Z3 only has to find ANY feasible model (every instance is satisfiable). This
+    sampling focuses on the constraint-heavy instances (num_hard_constraints >= 15000), where the
+    feasibility search dominates wall-time.
 
-    Scoring is COST mode with a WALL-CLOCK time signal: the optimization target is MINIMIZING
-    actual solve wall-time (baseline_ms / variant_ms speedup), which is the headroom that
-    matters on real hardware. The objective value is a CORRECTNESS GUARD: your variant
-    MUST still reach objective 0 on every instance (a worse/non-zero objective, or a
-    non-Sat result, is heavily penalized). Note that wall-time on this workload is short
-    and somewhat noisy, so favor changes with a clear, repeatable speedup over marginal ones.
+    Scoring is SPEEDUP mode on a WALL-CLOCK signal: the target is MINIMIZING solve wall-time
+    (baseline_ms / variant_ms speedup). There is no objective guard — correctness = the result
+    stays Sat (a non-Sat / Unknown result is heavily penalized). Wall-time is short and somewhat
+    noisy, so favor changes with a clear, repeatable speedup over marginal ones.
 
-    The initial_program.py exposes an EVOLVE-BLOCK dict (per phase: opt.*+sls.*, sat.*, smt.*,
-    or unified). Mutate this dict to cut solve wall-time while PRESERVING
-    correctness (result stays Sat, objective stays 0).
+    The initial_program.py exposes an EVOLVE-BLOCK dict (per phase: opt.*+sls.*, sat.*, smt.*, or
+    unified). Mutate it to cut feasibility-solve wall-time while keeping result Sat. IMPORTANT:
+    opt.* keys are OPTIMIZE-ONLY and are silently DROPPED in this mode — do not spend mutations on
+    them; they are inert here. Focus on sat.*, smt.*, and sls.* (local-search) knobs.
 
     Hard rules:
       - Do NOT modify sat.random_seed, smt.random_seed, sls.random_seed, parallel.enable
@@ -149,7 +163,7 @@ prompt:
         and surface the offending key in artifacts.
       - Respect types: bool=true/false, ints, floats, symbols (bare strings like "vsids").
 
-    Knob domains (non-exhaustive):
+    Knob domains (non-exhaustive) — opt.* OMITTED (inert in sat mode):
       sat.branching.heuristic in {vsids, lrb, chb}
       sat.restart in {luby, geometric, ema, static}
       sat.phase in {always_false, always_true, basic_caching, random, caching}
@@ -160,13 +174,10 @@ prompt:
       smt.case_split 0..6
       smt.restart_strategy in {0=geometric, 1=inner_outer, 2=luby, 3=fixed, 4=arithmetic}
       smt.arith.solver in {2=simplex, 5=infinitary_lra, 6=lra}
-      opt.maxsat_engine in {maxres, pd-maxres, wmax, sortmax, rc2, maxres-bin}
-      opt.optsmt_engine in {basic, farkas, symba}
-      opt.priority in {lex, pareto, box}
       sls.walksat_ucb_constant: float, sls.wp: percent 0..100
 
     Read the per_problem artifacts each round — they show speedup/regression per instance.
-    Look for patterns: which knob change helped the slow Unsat cases vs the fast Sat cases?
+    Look for patterns: which knob change helped the biggest (most-constrained) instances?
 
 database:
   population_size: 50

@@ -57,6 +57,16 @@ and confirm with user:
 - `evaluation.enable_size_buckets`: false default. true → use `initial_program_cpsat.py.tmpl`.
 - `evaluation.enable_outlier_stage`: false default.
 
+### Variant modes (optional — leave off unless user asks)
+- `bench.solver_mode`: does the workload have two ways to solve it (e.g. full
+  optimize vs feasibility-only) the user wants to tune separately? Default unset
+  (single mode). If yes → set the field, branch `_solve_worker.py` on it, and pair
+  with the right `score_mode` (optimize→cost, feasibility→speedup). Artifacts auto-
+  suffix to `cache-<mode>/` + `final_program_<mode>.py`. See [decision-guide.md](decision-guide.md).
+- `clustering.mode` + `clustering.modes.<name>`: want an alternate sample profile
+  (e.g. focus on large instances) switchable by one field? Orthogonal to
+  solver_mode. Default unset (base block only).
+
 ### KEY_STATS / STATS_WEIGHTS
 - Which counters from `solver.statistics()` to surface as metrics?
 - Weight per counter for efficiency factor (defaults: conflicts 2.0, decisions 1.5, propagations 0.5).

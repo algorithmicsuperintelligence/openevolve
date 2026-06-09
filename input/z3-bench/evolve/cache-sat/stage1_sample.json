@@ -1,0 +1,7 @@
+{
+  "selection": "0 from 0 candidates",
+  "criteria": "thresholds-clusters=[2] feature=features.num_hard_constraints spread=quintile",
+  "source": "z3-bench/problems.jsonl",
+  "sha256": [],
+  "summary": []
+}

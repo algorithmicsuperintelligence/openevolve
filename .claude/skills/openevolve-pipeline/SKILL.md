@@ -108,7 +108,7 @@ Report to user:
 - 4 files + N phase modules created at the paths above.
 - Verification results (catalog key count, sampler cluster sizes, self_test ratio).
 - Next command: `./input/run_phase.sh <bench> --pin <core-range>` for full chain.
-- `final_program.py` will land at `input/<bench>/evolve/final_program.py` after last phase (auto via `_lib.finalize`).
+- `final_program.py` will land at `input/<bench>/evolve/final_program.py` after last phase (auto via `_lib.finalize`). If `bench.solver_mode` is set to a non-default variant, output suffixes to `final_program_<mode>.py` and artifacts isolate to `cache-<mode>/`.
 
 ## Refuse / push back
 

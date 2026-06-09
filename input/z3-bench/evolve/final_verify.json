@@ -1,0 +1,26 @@
+{
+  "program": "/home/hdson/workspace/openevolve/input/z3-bench/evolve/final_program.py",
+  "bench": "z3-bench",
+  "metrics": {
+    "combined_score": 1.6882556964580462,
+    "geomean_speedup": 1.3946359196991822,
+    "geomean_wall_speedup": 1.3946359196991822,
+    "solved_rate": 1.0,
+    "regressions": 0,
+    "solved": 20,
+    "comparable": 20,
+    "total": 20,
+    "uncomparable": 0,
+    "efficiency": 1.7749303396253342,
+    "efficiency_pairs": 20,
+    "stats_weight": 0.333,
+    "dtime_used": 0,
+    "dtime_fallback": 0,
+    "stage": "stage4",
+    "total_decisions": 10251126.0,
+    "total_propagations": 7678550.0,
+    "total_conflicts": 1596.0,
+    "total_rlimit count": 154181064.0
+  },
+  "summary": "solved=20/20 regressions=0 geomean=1.395 efficiency=1.775 score=1.688"
+}

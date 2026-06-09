@@ -80,7 +80,23 @@ If baseline was captured single-threaded, running candidates with
 vs baseline → false regression. Either pin core ranges via `--pin` or
 recapture baseline at the same parallelism.
 
-### v4. Catalog `defaults` ≠ binding's real defaults
+### v4. solver_mode switch without re-baseline
+
+If the bench uses `bench.solver_mode` variants, each mode keeps its OWN baseline
+in `cache-<mode>/local_baseline.json` (optimize → plain `cache/`). After switching
+`solver_mode`, the new mode's `cache-<mode>/` has no baseline → `self_test`/scoring
+compare against a stale or empty baseline. ALWAYS re-run `_lib.rebaseline <bench>`
+after a switch. The suffix isolation is automatic (`bench_paths.cache_dir`), so the
+old mode's baseline is preserved — switching back needs no recapture.
+
+### v5. clustering.mode override silently ignored
+
+`clustering.mode: <name>` only applies if a matching `clustering.modes.<name>`
+block exists. A typo (mode set, no block) → sampler prints
+`mode=... has no modes.... — using base` and falls back to the base block. Check
+sampler stdout for `clustering: applied modes.<name> override` to confirm it took.
+
+### v6. Catalog `defaults` ≠ binding's real defaults
 
 If `params.json` `defaults` includes a key the binding's real default is
 different, the BASELINE phase modules send may diverge from what `_lib.rebaseline`

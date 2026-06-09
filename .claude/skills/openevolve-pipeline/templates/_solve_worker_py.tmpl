@@ -18,6 +18,7 @@ Timeout is enforced by _lib.subprocess_runner — the worker does NOT need
 to implement it (but may pass it to the solver as a hint).
 """
 import json
+import pathlib
 import sys
 import time
 
@@ -25,6 +26,21 @@ import time
 def emit(d):
     print(json.dumps(d))
     sys.stdout.flush()
+
+
+def _solver_mode():
+    """OPTIONAL — only if this bench uses bench.solver_mode variants. Reads the
+    sibling config.yaml so the worker branches WITHOUT an env var (config is the
+    single source of truth). Default "optimize". One parse/process is negligible
+    next to the solver import. Delete this + its use if the bench is single-mode."""
+    try:
+        import yaml
+
+        cfg_path = pathlib.Path(__file__).resolve().parent / "config.yaml"
+        cfg = yaml.safe_load(cfg_path.read_text()) or {}
+        return ((cfg.get("bench") or {}).get("solver_mode")) or "optimize"
+    except Exception:
+        return "optimize"
 
 
 def main():
@@ -40,6 +56,11 @@ def main():
 
     problem_path = sys.argv[2]
     timeout_s = int(sys.argv[3])
+
+    # OPTIONAL variant branch (see bench.solver_mode in config.yaml). Use `mode`
+    # to pick the engine (e.g. feasibility-only vs full optimize), drop mode-only
+    # params silently, and skip objective extraction in the lighter mode.
+    # mode = _solver_mode()
 
     try:
         import <solver_pkg>
