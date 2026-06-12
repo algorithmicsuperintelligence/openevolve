@@ -71,3 +71,57 @@ def mlp(x: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor) -> torch.Tensor:
     hidden = torch.matmul(x, w1)
     hidden = torch.nn.functional.gelu(hidden)
     return torch.matmul(hidden, w2)
+
+
+def silu_mlp(x: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor) -> torch.Tensor:
+    """Two-layer MLP with SiLU (Swish) activation — common in LLaMA/Mistral FFN layers.
+
+    Example shapes:
+      x  : [B, D]
+      w1 : [D, H]
+      w2 : [H, O]
+      output : [B, O]
+    """
+    hidden = torch.matmul(x, w1)
+    hidden = torch.nn.functional.silu(hidden)
+    return torch.matmul(hidden, w2)
+
+
+def mobilenet_block(x: torch.Tensor) -> torch.Tensor:
+    """HardSwish activation block — standard in MobileNetV3.
+
+    HardSwish = x * clamp((x + 3) / 6, 0, 1).
+    """
+    return torch.nn.functional.hardswish(x)
+
+
+def mish_block(x: torch.Tensor) -> torch.Tensor:
+    """Mish activation: x * tanh(softplus(x)).
+
+    Softplus + tanh path, both dispatched to Triton.
+    """
+    return x * torch.tanh(torch.nn.functional.softplus(x))
+
+
+def lerp_blend(a: torch.Tensor, b: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """Element-wise linear interpolation: a + weight * (b - a).
+
+    Common in EMA updates, diffusion-model blending, and style transfer.
+    """
+    return torch.lerp(a, b, weight)
+
+
+def erfc_gelu(x: torch.Tensor) -> torch.Tensor:
+    """GELU via erfc: 0.5 * x * erfc(-x / sqrt(2)).
+
+    Alternative GELU formula that exercises the erfc kernel instead of erf.
+    """
+    return 0.5 * x * torch.special.erfc(-x * 0.7071067811865476)
+
+
+def exp2_scale(x: torch.Tensor, exponent: torch.Tensor) -> torch.Tensor:
+    """Element-wise 2^exponent scaling applied to x.
+
+    Shows exp2 kernel usage; common in fixed-point and quantisation-aware ops.
+    """
+    return x * torch.exp2(exponent)

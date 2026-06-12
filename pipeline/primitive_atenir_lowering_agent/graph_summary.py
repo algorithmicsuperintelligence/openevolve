@@ -31,11 +31,12 @@ def summarize_graph(graph: dict[str, Any], max_nodes: int | None = None) -> str:
     lines.append("")
     lines.append("## Call Nodes")
     for index, node in enumerate(selected_calls):
-        preds = node.get("predecessor_ids") or []
-        scalar_args = node.get("scalar_args") or []
+        ao = node.get("args_ordered") or []
+        tensor_inputs = [e["name"] for e in ao if e.get("kind") == "node"]
+        scalar_values = [e["value"] for e in ao if e.get("kind") == "scalar" and e.get("value") is not None]
         lines.append(
             f"{index}. `{node['name']}` target=`{node.get('target')}` "
-            f"inputs={preds} scalars={scalar_args} "
+            f"inputs={tensor_inputs} scalars={scalar_values} "
             f"shape={node.get('output_shape')} dtype={node.get('output_dtype')}"
         )
     if max_nodes is not None and len(calls) > max_nodes:

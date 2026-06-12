@@ -190,6 +190,60 @@ class TestAtenIRTritonExamples(unittest.TestCase):
             rtol=1,
         )
 
+    def test_silu_mlp(self):
+        """LLaMA/Mistral-style MLP: matmul → silu → matmul."""
+        self._roundtrip(
+            "atenir._examples:silu_mlp",
+            input_shapes=[(2048, 4096), (4096, 8192), (8192, 2048)],
+            atol=1,
+            rtol=1,
+        )
+
+    def test_mobilenet_block(self):
+        """HardSwish activation: x * clamp((x+3)/6, 0, 1)."""
+        self._roundtrip(
+            "atenir._examples:mobilenet_block",
+            input_shapes=[(2048, 2048)],
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+    def test_mish_block(self):
+        """Mish activation: x * tanh(softplus(x))."""
+        self._roundtrip(
+            "atenir._examples:mish_block",
+            input_shapes=[(2048, 2048)],
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+    def test_lerp_blend(self):
+        """Element-wise lerp with tensor weight: a + w*(b-a)."""
+        self._roundtrip(
+            "atenir._examples:lerp_blend",
+            input_shapes=[(2048, 2048), (2048, 2048), (2048, 2048)],
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+    def test_erfc_gelu(self):
+        """GELU via erfc: 0.5 * x * erfc(-x / sqrt(2))."""
+        self._roundtrip(
+            "atenir._examples:erfc_gelu",
+            input_shapes=[(2048, 2048)],
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+    def test_exp2_scale(self):
+        """Element-wise 2^exponent scaling."""
+        self._roundtrip(
+            "atenir._examples:exp2_scale",
+            input_shapes=[(2048, 2048), (2048, 2048)],
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

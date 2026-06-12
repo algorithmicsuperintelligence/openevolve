@@ -1,8 +1,8 @@
 """AtenIR graph extraction CLI.
 
 Two modes — both produce JSON matching the schema of ``layernorm_bwd_graph.json``
-(placeholders, call_function nodes with input_nodes / scalar_args / reduction_dims /
-keepdim / predecessor_ids, and a single output node).
+(placeholders, call_function nodes with input_nodes / args_ordered / reduction_dims /
+keepdim, and a single output node).
 
 Named-aten-op mode:
     python -m atenir.extract \\
@@ -200,8 +200,6 @@ def _classify_args(node: fx.Node, meta):
 
     Returns:
         input_nodes   -- list of {name, shape, dtype} dicts for tensor predecessors
-        scalar_args   -- flat list of non-tensor args in *original* positional order
-                         (kept for backward compat; args_ordered is authoritative)
         reduction_dims, keepdim -- extracted from reduction ops
         args_ordered  -- full ordered arg list: each entry is either
                          {"kind": "node", "name": "..."} or
@@ -209,7 +207,7 @@ def _classify_args(node: fx.Node, meta):
                          Reduction-specific args (dims list, keepdim bool) are
                          consumed as metadata and do NOT appear here.
     """
-    input_nodes, scalar_args = [], []
+    input_nodes = []
     reduction_dims, keepdim = None, None
     args_ordered = []
 
@@ -226,14 +224,15 @@ def _classify_args(node: fx.Node, meta):
         elif isinstance(a, bool):
             if is_reduction:
                 keepdim = a
-                # consumed as metadata — not added to args_ordered
             else:
-                scalar_args.append(a)
                 args_ordered.append({"kind": "scalar", "value": a})
 
         elif isinstance(a, (int, float)):
-            scalar_args.append(a)
             args_ordered.append({"kind": "scalar", "value": a})
+
+        elif a is None:
+            # Preserve None slot so positional reads (e.g. clamp(t, None, max)) are correct.
+            args_ordered.append({"kind": "scalar", "value": None})
 
         elif isinstance(a, (list, tuple)):
             vals, ok = [], True
@@ -245,9 +244,7 @@ def _classify_args(node: fx.Node, meta):
             if ok:
                 if is_reduction:
                     reduction_dims = vals
-                    # consumed as metadata — not added to args_ordered
                 else:
-                    scalar_args.append(vals)
                     args_ordered.append({"kind": "scalar", "value": vals})
 
     for a in node.args:
@@ -255,7 +252,7 @@ def _classify_args(node: fx.Node, meta):
     for v in (node.kwargs or {}).values():
         _process(v)
 
-    return input_nodes, scalar_args, reduction_dims, keepdim, args_ordered
+    return input_nodes, reduction_dims, keepdim, args_ordered
 
 
 def _serialise(gm: fx.GraphModule) -> dict:
@@ -282,7 +279,7 @@ def _serialise(gm: fx.GraphModule) -> dict:
             )
         elif n.op == "call_function":
             m = meta.get(n.name, {})
-            input_nodes, scalar_args, red_dims, keepdim, args_ordered = _classify_args(n, meta)
+            input_nodes, red_dims, keepdim, args_ordered = _classify_args(n, meta)
             distinct_ops.add(str(n.target))
             nodes_json.append(
                 {
@@ -292,10 +289,8 @@ def _serialise(gm: fx.GraphModule) -> dict:
                     "output_shape": m.get("shape"),
                     "output_dtype": m.get("dtype"),
                     "input_nodes": input_nodes,
-                    "scalar_args": scalar_args,
                     "reduction_dims": red_dims,
                     "keepdim": keepdim,
-                    "predecessor_ids": [x["name"] for x in input_nodes],
                     "args_ordered": args_ordered,
                 }
             )

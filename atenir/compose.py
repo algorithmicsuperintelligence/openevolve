@@ -27,6 +27,7 @@ Returns a tuple of tensors in the order declared by the graph's output node
 from __future__ import annotations
 
 import json
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -37,19 +38,41 @@ def _load_graph(path: str) -> dict:
     return json.loads(Path(path).read_text())
 
 
+def _kernel_label(fn: Callable) -> str:
+    """Return a short human-readable label for a kernel, e.g. 'triton/elementwise:sin_'."""
+    module = getattr(fn, "__module__", "") or ""
+    qname = getattr(fn, "__qualname__", "") or getattr(fn, "__name__", repr(fn))
+    for seg in ("elementwise", "gemm", "reduction", "scatter_gather"):
+        if seg in module:
+            short = seg.replace("_gather", "")
+            return f"triton/{short}:{qname}"
+    tag = getattr(fn, "_dispatch_tag", None)
+    if tag:
+        return tag
+    return f"pytorch:{qname}"
+
+
 def run_graph(
     graph_json_path: str | Path,
     env: dict[str, Any],
     kernel_registry: dict[str, Callable],
     scalar_overrides: dict[str, list] | None = None,
+    verbose: bool = False,
 ) -> tuple:
     """Walk an AtenIR graph and dispatch each call_function node.
 
     See module docstring for the full contract.
+
+    When ``verbose=True``, prints each dispatched op and which kernel handles it.
     """
     graph = _load_graph(str(graph_json_path))
     env = dict(env)
     overrides = scalar_overrides or {}
+
+    if verbose:
+        print(f"\n[AtenIR] execution trace  ({graph_json_path})", file=sys.stderr, flush=True)
+        print(f"  {'node':45s} {'target':50s}  kernel", file=sys.stderr, flush=True)
+        print(f"  {'-'*45} {'-'*50}  {'-'*30}", file=sys.stderr, flush=True)
 
     for node in graph["nodes"]:
         op = node.get("op")
@@ -67,22 +90,18 @@ def run_graph(
 
         args_ordered = node.get("args_ordered")
         if args_ordered is not None:
-            # Reconstruct args in original interleaved order; apply scalar_overrides
-            # positionally (override[i] replaces the i-th scalar slot).
-            scalar_override = iter(overrides.get(name, []))
-            args = []
-            for entry in args_ordered:
-                if entry["kind"] == "node":
-                    args.append(env[entry["name"]])
-                else:
-                    try:
-                        args.append(next(scalar_override))
-                    except StopIteration:
-                        args.append(entry["value"])
+            # Only pass tensor inputs; scalars are baked into kernels at dispatch
+            # time (make_kernel reads node["scalar_args"]).  Passing traced
+            # scalar kwargs (device=cpu, dtype=float32, …) at GPU runtime would
+            # silently override device/dtype to CPU trace-time values.
+            args = [env[entry["name"]] for entry in args_ordered if entry["kind"] == "node"]
         else:
             # Backward compat: graphs serialised before args_ordered was added.
-            scalar_args = list(overrides.get(name, node.get("scalar_args") or []))
-            args = [env[p] for p in (node.get("predecessor_ids") or [])] + scalar_args
+            args = [env[p] for p in (node.get("predecessor_ids") or [])]
+
+        if verbose:
+            label = _kernel_label(kernel_registry[name])
+            print(f"  {name:45s} {node['target']:50s}  {label}", file=sys.stderr, flush=True)
 
         env[name] = kernel_registry[name](*args)
 
