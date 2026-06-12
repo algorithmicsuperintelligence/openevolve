@@ -1,0 +1,593 @@
+{
+  "nodes": [
+    {
+      "op": "placeholder",
+      "name": "arg0_1",
+      "shape": [
+        64,
+        128
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "arg1_1",
+      "shape": [
+        64,
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "arg2_1",
+      "shape": [
+        128,
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "arg3_1",
+      "shape": [
+        128
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "call_function",
+      "name": "alias",
+      "target": "aten.alias.default",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg1_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg1_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg1_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "alias_1",
+      "target": "aten.alias.default",
+      "output_shape": [
+        128,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg2_1",
+          "shape": [
+            128,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg2_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg2_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "alias_2",
+      "target": "aten.alias.default",
+      "output_shape": [
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg3_1",
+          "shape": [
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg3_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg3_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute",
+      "target": "aten.permute.default",
+      "output_shape": [
+        256,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "alias_1",
+          "shape": [
+            128,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "alias_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "alias_1"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "addmm",
+      "target": "aten.addmm.default",
+      "output_shape": [
+        64,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "alias_2",
+          "shape": [
+            128
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "alias",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "permute",
+          "shape": [
+            256,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "alias_2",
+        "alias",
+        "permute"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "alias_2"
+        },
+        {
+          "kind": "node",
+          "name": "alias"
+        },
+        {
+          "kind": "node",
+          "name": "permute"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute_1",
+      "target": "aten.permute.default",
+      "output_shape": [
+        128,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "permute",
+          "shape": [
+            256,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "permute"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "permute"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mm",
+      "target": "aten.mm.default",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg0_1",
+          "shape": [
+            64,
+            128
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "permute_1",
+          "shape": [
+            128,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg0_1",
+        "permute_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg0_1"
+        },
+        {
+          "kind": "node",
+          "name": "permute_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute_2",
+      "target": "aten.permute.default",
+      "output_shape": [
+        128,
+        64
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg0_1",
+          "shape": [
+            64,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg0_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg0_1"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mm_1",
+      "target": "aten.mm.default",
+      "output_shape": [
+        128,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "permute_2",
+          "shape": [
+            128,
+            64
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "alias",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "permute_2",
+        "alias"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "permute_2"
+        },
+        {
+          "kind": "node",
+          "name": "alias"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute_3",
+      "target": "aten.permute.default",
+      "output_shape": [
+        256,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "mm_1",
+          "shape": [
+            128,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "mm_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "mm_1"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "sum_1",
+      "target": "aten.sum.dim_IntList",
+      "output_shape": [
+        1,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg0_1",
+          "shape": [
+            64,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": [
+        0
+      ],
+      "keepdim": true,
+      "predecessor_ids": [
+        "arg0_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg0_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "view",
+      "target": "aten.view.default",
+      "output_shape": [
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "sum_1",
+          "shape": [
+            1,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          128
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "sum_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "sum_1"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            128
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute_4",
+      "target": "aten.permute.default",
+      "output_shape": [
+        128,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "permute_3",
+          "shape": [
+            256,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "permute_3"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "permute_3"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "output",
+      "args": [
+        [
+          "mm",
+          "permute_4",
+          "view"
+        ]
+      ]
+    }
+  ],
+  "distinct_ops": [
+    "aten.addmm.default",
+    "aten.alias.default",
+    "aten.mm.default",
+    "aten.permute.default",
+    "aten.sum.dim_IntList",
+    "aten.view.default"
+  ]
+}

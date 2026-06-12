@@ -56,7 +56,9 @@ def make_kernel(node: dict) -> Callable:
     if "aten.mul" in target:
         return elementwise.mul_tt if n_tensors >= 2 else elementwise.mul_scalar
 
-    if "aten.add" in target:
+    # "aten.add." (trailing dot) so this does NOT also match "aten.addmm.default";
+    # addmm is handled in the matmul group below.
+    if "aten.add." in target:
         if n_tensors >= 2:
 
             def add_with_alpha(a, b, *rest):
@@ -187,6 +189,13 @@ def make_kernel(node: dict) -> Callable:
         return _generic_fallback(target)
 
     # matmul
+    if "aten.addmm" in target:
+
+        def addmm_kernel(bias, mat1, mat2, *rest):
+            return torch.addmm(bias, mat1, mat2)
+
+        return addmm_kernel
+
     if "aten.mm" in target:
         return torch.mm
 

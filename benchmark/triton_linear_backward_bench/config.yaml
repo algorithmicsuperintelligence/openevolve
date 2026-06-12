@@ -1,0 +1,82 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+# CUDA cannot be reinitialized safely in forked subprocesses. On Python 3.10,
+# OpenEvolve switches its ProcessPoolExecutor to spawn when this is set.
+max_tasks_per_child: 1
+
+llm:
+  # Run evolution on GPT-5.5 (OpenAI). Requires OPENAI_API_KEY in the environment.
+  primary_model: "gpt-5.5"
+  primary_model_weight: 1.0
+  api_base: "https://api.openai.com/v1"
+  api_key: "${OPENAI_API_KEY}"
+  temperature: 0.5
+  max_tokens: 20000
+  timeout: 300
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer implementing and optimizing backward kernels.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK to make linear_backward_triton(dy, x, weight)
+    faster. This is a forward-to-backward synthesis task. The forward operator is a Linear
+    (fully-connected) layer:
+
+        y = x @ weight.T + bias
+
+    where x has shape [M, K], weight has shape [N, K], bias has shape [N], and y has
+    shape [M, N]. The backward kernel must return:
+
+        dx      = dy @ weight       # [M, K]
+        dweight = dy.T @ x          # [N, K]
+        dbias   = sum(dy, dim=0)    # [N]
+
+    Correctness is a hard requirement. Any incorrect candidate receives a very large negative score.
+
+    Fixed API constraints:
+    - Do not change the public function linear_backward_triton(dy, x, weight).
+    - Return exactly a tuple (dx, dweight, dbias).
+    - Do not change tensor shapes or output semantics.
+    - Do not require extra inputs or outputs (the bias value is not needed for the backward).
+    - Keep support for contiguous 2D CUDA tensors x [M, K], weight [N, K] and dy [M, N].
+    - Keep numerically stable fp32 accumulation for the matmul reductions.
+
+    This task is compute-bound. The performance baseline is PyTorch autograd, which is
+    backed by cuBLAS, so a naive tiled matmul will NOT trivially beat it. Real speedups
+    require good GEMM engineering.
+
+    Allowed optimization areas:
+    - Tile sizes (BLOCK_M, BLOCK_N, BLOCK_K) and triton.autotune over them.
+    - num_warps and num_stages, software pipelining of the K loop.
+    - Program-id swizzling / L2-friendly block ordering.
+    - Fusing dbias into the dweight reduction pass.
+    - Split-K or atomic accumulation for the contraction.
+    - Vectorized/contiguous loads and masking.
+
+    Generalization requirements:
+    - Do not hard-code shape-specific branches or special-case only benchmark shapes.
+    - Implementations must work for all tested shapes and dtypes, including non-power-of-two
+      and non-tile-aligned dimensions.
+    - Prefer generic tiling/masking over fixed-shape assumptions.
+
+    The evaluator tests multiple shapes and dtypes, then benchmarks latency only after all
+    correctness tests pass. Optimize for speedup over the PyTorch-autograd backward across
+    the full benchmark suite (float32 and float16).
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 300
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 30000

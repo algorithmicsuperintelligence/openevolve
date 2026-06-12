@@ -1,0 +1,84 @@
+task_name: triton_rmsnorm_backward_bench
+operator: rmsnorm
+difficulty_level: 3
+difficulty_label: normalization_backward
+description: >
+  Forward-to-backward Triton benchmark task for row-wise RMSNorm. The backward
+  implementation must return dx and dweight using a naive decomposed Triton
+  baseline for reference. RMSNorm has no mean-centering and no bias.
+
+forward:
+  formula: "y = (x / sqrt(mean(x^2) + eps)) * weight"
+  reduction_axis: last_dimension
+  inputs:
+    x:
+      shape: "[rows, hidden]"
+      layout: contiguous
+    weight:
+      shape: "[hidden]"
+      layout: contiguous
+  output:
+    y:
+      shape: "[rows, hidden]"
+
+backward:
+  upstream_gradient: dy
+  required_gradients:
+    - dx
+    - dweight
+  formulas:
+    rrms: "rsqrt(mean(x^2) + eps)"
+    xhat: "x * rrms"
+    g: "dy * weight"
+    dx: "(g - xhat * mean(g * xhat)) * rrms"
+    dweight: "sum(dy * xhat, dim=0)"
+  saved_tensors:
+    - x
+    - weight
+  eps: 1.0e-5
+
+workloads:
+  correctness:
+    shapes:
+      - [8, 64]
+      - [17, 128]
+      - [32, 256]
+      - [64, 512]
+    dtypes:
+      - float32
+      - float16
+  benchmark:
+    shapes:
+      - [1, 768]
+      - [8, 1024]
+      - [32, 1536]
+      - [8, 4096]
+      - [1, 8192]
+      - [17, 127]
+      - [17, 513]
+      - [17, 1000]
+    dtypes:
+      - float32
+      - float16
+
+tolerances:
+  float32:
+    atol: 2.0e-5
+    rtol: 2.0e-5
+  float16:
+    atol: 5.0e-2
+    rtol: 5.0e-2
+
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+
+metrics:
+  - compile_success
+  - runtime_success
+  - backward_correctness
+  - dx_correctness
+  - dweight_correctness
+  - autograd_integration_success
+  - backward_latency_ms
+  - speedup_vs_pytorch_autograd

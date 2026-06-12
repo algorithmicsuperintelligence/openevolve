@@ -1,0 +1,81 @@
+task_name: triton_matmul_backward_bench
+operator: matmul
+difficulty_level: 5
+difficulty_label: matmul_backward
+description: >
+  Forward-to-backward Triton benchmark task for a plain matmul c = a @ b. The
+  backward implementation must return da and db using a naive tiled Triton matmul
+  baseline for reference. This is the canonical compute-bound GEMM backward: the
+  autograd baseline is backed by cuBLAS, so a naive Triton backward does not
+  trivially win.
+
+forward:
+  formula: "c = a @ b"
+  inputs:
+    a:
+      shape: "[M, K]"
+      layout: contiguous
+    b:
+      shape: "[K, N]"
+      layout: contiguous
+  output:
+    y:
+      shape: "[M, N]"
+
+backward:
+  upstream_gradient: dc
+  required_gradients:
+    - da
+    - db
+  formulas:
+    da: "dc @ b.T"
+    db: "a.T @ dc"
+  saved_tensors:
+    - a
+    - b
+
+workloads:
+  correctness:
+    shapes:
+      - [64, 64, 64]
+      - [129, 257, 127]
+      - [128, 256, 128]
+      - [512, 512, 256]
+    dtypes:
+      - float32
+      - float16
+  benchmark:
+    shapes:
+      - [512, 512, 512]
+      - [1024, 1024, 1024]
+      - [2048, 1024, 1024]
+      - [1024, 2048, 1024]
+      - [2048, 2048, 1024]
+      - [4096, 1024, 1024]
+    dtypes:
+      - float32
+      - float16
+
+tolerances:
+  # fp32 path uses TF32 tensor-core matmul (A100 default) on both the Triton
+  # candidate and the cuBLAS autograd oracle; atol absorbs TF32 spread.
+  float32:
+    atol: 8.0e-2
+    rtol: 2.0e-2
+  float16:
+    atol: 1.0e-1
+    rtol: 2.0e-2
+
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+
+metrics:
+  - compile_success
+  - runtime_success
+  - backward_correctness
+  - da_correctness
+  - db_correctness
+  - autograd_integration_success
+  - backward_latency_ms
+  - speedup_vs_pytorch_autograd

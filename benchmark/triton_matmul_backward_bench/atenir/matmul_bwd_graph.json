@@ -1,0 +1,332 @@
+{
+  "nodes": [
+    {
+      "op": "placeholder",
+      "name": "arg0_1",
+      "shape": [
+        64,
+        128
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "arg1_1",
+      "shape": [
+        64,
+        256
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "placeholder",
+      "name": "arg2_1",
+      "shape": [
+        256,
+        128
+      ],
+      "dtype": "torch.float32"
+    },
+    {
+      "op": "call_function",
+      "name": "alias",
+      "target": "aten.alias.default",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg1_1",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg1_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg1_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "alias_1",
+      "target": "aten.alias.default",
+      "output_shape": [
+        256,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg2_1",
+          "shape": [
+            256,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg2_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg2_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mm",
+      "target": "aten.mm.default",
+      "output_shape": [
+        64,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "alias",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "alias_1",
+          "shape": [
+            256,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "alias",
+        "alias_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "alias"
+        },
+        {
+          "kind": "node",
+          "name": "alias_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute",
+      "target": "aten.permute.default",
+      "output_shape": [
+        256,
+        64
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "alias",
+          "shape": [
+            64,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "alias"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "alias"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mm_1",
+      "target": "aten.mm.default",
+      "output_shape": [
+        256,
+        128
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "permute",
+          "shape": [
+            256,
+            64
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "arg0_1",
+          "shape": [
+            64,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "permute",
+        "arg0_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "permute"
+        },
+        {
+          "kind": "node",
+          "name": "arg0_1"
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "permute_1",
+      "target": "aten.permute.default",
+      "output_shape": [
+        128,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "alias_1",
+          "shape": [
+            256,
+            128
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "alias_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "alias_1"
+        },
+        {
+          "kind": "scalar",
+          "value": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "op": "call_function",
+      "name": "mm_2",
+      "target": "aten.mm.default",
+      "output_shape": [
+        64,
+        256
+      ],
+      "output_dtype": "torch.float32",
+      "input_nodes": [
+        {
+          "name": "arg0_1",
+          "shape": [
+            64,
+            128
+          ],
+          "dtype": "torch.float32"
+        },
+        {
+          "name": "permute_1",
+          "shape": [
+            128,
+            256
+          ],
+          "dtype": "torch.float32"
+        }
+      ],
+      "scalar_args": [],
+      "reduction_dims": null,
+      "keepdim": null,
+      "predecessor_ids": [
+        "arg0_1",
+        "permute_1"
+      ],
+      "args_ordered": [
+        {
+          "kind": "node",
+          "name": "arg0_1"
+        },
+        {
+          "kind": "node",
+          "name": "permute_1"
+        }
+      ]
+    },
+    {
+      "op": "output",
+      "args": [
+        [
+          "mm_2",
+          "mm_1"
+        ]
+      ]
+    }
+  ],
+  "distinct_ops": [
+    "aten.alias.default",
+    "aten.mm.default",
+    "aten.permute.default"
+  ]
+}
