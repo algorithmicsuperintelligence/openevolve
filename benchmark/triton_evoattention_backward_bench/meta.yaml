@@ -1,0 +1,111 @@
+task_name: triton_evoattention_backward_bench
+operator: evoformer_attention
+difficulty_level: 7
+difficulty_label: attention_backward
+description: >
+  Forward-to-backward Triton benchmark for AlphaFold3-style EvoformerAttention
+  (3D EvoAttention), ported from the MegaFold project (arXiv:2506.20686). The
+  attention runs over a 5D tensor with an extra MSA (N_seq) axis, adds a trainable
+  pairwise bias broadcast over that axis, and applies an additive per-key residue
+  mask. The backward must return dq, dk, dv, and d_pair_bias. The naive seed
+  materializes the full [N_res, N_res] probability matrix; the evolve target is a
+  fused, flash-attention-style Triton backward that avoids that materialization.
+
+forward:
+  formula: "O = softmax(scale * Q @ K^T + pair_bias + res_mask) @ V"
+  reduction_axis: residue_key_dimension
+  scale: "Dim ** -0.5"
+  inputs:
+    q:
+      shape: "[B, N_seq, N_res, Head, Dim]"
+      layout: contiguous
+    k:
+      shape: "[B, N_seq, N_res, Head, Dim]"
+      layout: contiguous
+    v:
+      shape: "[B, N_seq, N_res, Head, Dim]"
+      layout: contiguous
+    res_mask:
+      shape: "[B, N_seq, 1, 1, N_res]"
+      layout: additive_key_mask
+      note: "0 where kept, large-negative where dropped; carries no gradient"
+    pair_bias:
+      shape: "[B, 1, Head, N_res, N_res]"
+      layout: contiguous
+      note: "trainable; broadcast over the N_seq axis"
+  output:
+    o:
+      shape: "[B, N_seq, N_res, Head, Dim]"
+
+backward:
+  upstream_gradient: do
+  required_gradients:
+    - dq
+    - dk
+    - dv
+    - d_pair_bias
+  formulas:
+    S: "scale * Q @ K^T + pair_bias + res_mask"
+    P: "softmax(S, axis=key_residue)"
+    dV: "P^T @ dO"
+    dP: "dO @ V^T"
+    dS: "P * (dP - rowsum(dP * P))"
+    dQ: "scale * dS @ K"
+    dK: "scale * dS^T @ Q"
+    d_pair_bias: "sum_over_Nseq(dS)"
+  saved_tensors:
+    - q
+    - k
+    - v
+    - res_mask
+    - pair_bias
+
+workloads:
+  correctness:
+    shapes:
+      # [B, N_seq, Head, N_res, Dim]
+      - [1, 1, 4, 23, 8]
+      - [1, 2, 4, 64, 16]
+      - [1, 1, 8, 80, 32]
+      - [2, 2, 4, 128, 64]
+    dtypes:
+      - float16
+      - bfloat16
+  benchmark:
+    shapes:
+      - [1, 1, 16, 128, 64]
+      - [1, 1, 16, 256, 64]
+      - [1, 1, 16, 384, 64]
+      - [1, 64, 4, 128, 32]
+      - [1, 64, 4, 256, 32]
+      - [1, 128, 4, 128, 32]
+    dtypes:
+      - float16
+      - bfloat16
+
+tolerances:
+  float16:
+    atol: 2.0e-2
+    rtol: 2.0e-2
+  bfloat16:
+    atol: 4.0e-2
+    rtol: 4.0e-2
+
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+  naive_backward: backward_naive.py
+  atenir_backward: backward_atenir.py
+  expert_triton_backward: MegaFold FusedEvoAttention (megafold.model.FusedEvoAttention)
+
+metrics:
+  - compile_success
+  - runtime_success
+  - backward_correctness
+  - dq_correctness
+  - dk_correctness
+  - dv_correctness
+  - d_pair_bias_correctness
+  - autograd_integration_success
+  - backward_latency_ms
+  - speedup_vs_pytorch_autograd

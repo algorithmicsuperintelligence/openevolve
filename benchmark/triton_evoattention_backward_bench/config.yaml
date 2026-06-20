@@ -1,0 +1,93 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+# CUDA cannot be reinitialized safely in forked subprocesses. On Python 3.10,
+# OpenEvolve switches its ProcessPoolExecutor to spawn when this is set.
+max_tasks_per_child: 1
+
+llm:
+  # Run evolution on GPT-5.5 (OpenAI). Requires OPENAI_API_KEY in the environment.
+  primary_model: "gpt-5.5"
+  primary_model_weight: 1.0
+  api_base: "https://api.openai.com/v1"
+  api_key: "${OPENAI_API_KEY}"
+  temperature: 0.5
+  max_tokens: 24000
+  timeout: 300
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer implementing and optimizing backward kernels
+    for AlphaFold3-style EvoformerAttention (3D EvoAttention), as in the MegaFold project.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK to make
+    evoattention_backward_triton(do, q, k, v, res_mask, pair_bias) faster while staying
+    correct. This is a forward-to-backward synthesis task. The forward operator is a
+    flash-attention over a 5D tensor with an extra MSA (N_seq) axis:
+
+        # q, k, v:   [B, N_seq, N_res, Head, Dim]      (transpose to [B, N_seq, Head, N_res, Dim])
+        # res_mask:  [B, N_seq, 1, 1, N_res]           additive: 0 keep, large-negative drop
+        # pair_bias: [B, 1, Head, N_res, N_res]        trainable, broadcast over N_seq
+        scale = Dim ** -0.5
+        S = scale * Q @ K^T + pair_bias + res_mask     # attention contracts over the residue axis
+        P = softmax(S, axis=key_residue)               # softmax in float32 for stability
+        O = P @ V                                       # [B, N_seq, Head, N_res, Dim] -> back to input layout
+
+    The backward kernel must return exactly (dq, dk, dv, d_pair_bias):
+
+        dV          = P^T @ dO
+        dP          = dO @ V^T
+        dS          = P * (dP - rowsum(dP * P))         # softmax jacobian, rowsum over key residue
+        dQ          = scale * dS @ K
+        dK          = scale * dS^T @ Q
+        d_pair_bias = sum over the N_seq axis of dS     # shape [B, 1, Head, N_res, N_res]
+
+    res_mask is additive and carries NO gradient.
+
+    Correctness is a hard requirement. Any incorrect candidate receives a very large negative score.
+
+    Fixed API constraints:
+    - Do not change the public function evoattention_backward_triton(do, q, k, v, res_mask, pair_bias).
+    - Return exactly a tuple (dq, dk, dv, d_pair_bias).
+    - dq, dk, dv must match q, k, v shapes/dtypes ([B, N_seq, N_res, Head, Dim]).
+    - d_pair_bias must have shape [B, 1, Head, N_res, N_res] (summed over N_seq) in float32.
+    - Do not require extra inputs or outputs.
+    - Keep numerically stable float32 accumulation for the softmax and reductions.
+
+    Optimization direction (this is the whole point):
+    - The seed materializes the full [N_res, N_res] probability matrix P (and dP, dS). That is
+      the memory bottleneck. Replace it with a FUSED, flash-attention-style Triton backward that
+      streams over key/query blocks and never materializes [N_res, N_res] in HBM.
+    - Recompute P block-by-block from the saved logsumexp (the M statistic) instead of storing it.
+    - Use the standard flash-attention backward decomposition: a preprocess pass for the
+      D = rowsum(dO * O) term, a dK/dV pass (fix KV block, stream Q), and a dQ pass (fix Q, stream KV).
+    - Accumulate d_pair_bias with atomic_add in float32.
+    - Parallelize the program grid over (B * N_seq * Head) and residue blocks.
+    - Tune BLOCK_SIZE_Q, BLOCK_SIZE_KV, num_warps, num_stages.
+
+    Generalization requirements:
+    - Do not hard-code shape-specific branches or special-case only benchmark shapes.
+    - Implementations must work for all tested shapes and dtypes, including non-power-of-two
+      N_res and small/large Dim, in both float16 and bfloat16.
+    - Prefer generic tiling/masking over fixed-shape assumptions.
+
+    The evaluator tests multiple shapes and dtypes, then benchmarks latency only after all
+    correctness tests pass. Optimize for speedup over the PyTorch autograd backward across the
+    full benchmark suite (attention-pair-bias and triangle-attention regimes, float16 and bfloat16).
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 600
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 40000

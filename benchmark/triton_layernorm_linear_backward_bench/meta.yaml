@@ -1,0 +1,109 @@
+task_name: triton_layernorm_linear_backward_bench
+operator: layernorm_linear
+difficulty_level: 6
+difficulty_label: fused_norm_matmul_backward
+description: >
+  Forward-to-backward Triton benchmark for a fused LayerNorm -> Linear operator,
+  ported from the MegaFold project (arXiv:2506.20686). MegaFold replaces a
+  LayerNorm(K) followed by Linear(K, N, bias=False) with a single fused kernel that
+  normalizes activation blocks inside the matmul. The backward must return dx,
+  dlinear_weight, dweight (LayerNorm gamma grad), and dbias (LayerNorm beta grad).
+  The naive seed is an unfused PyTorch backward; the evolve target is MegaFold's
+  fusion: fold the LayerNorm into the matmul epilogue, recompute x_hat in the
+  backward, and atomic-add the weight gradients.
+
+forward:
+  formula: "out = layer_norm(x, gamma, beta) @ B"
+  eps: 1.0e-5
+  inputs:
+    x:
+      shape: "[M, K]"
+      layout: contiguous
+    weight:
+      shape: "[K]"
+      layout: contiguous
+      note: "LayerNorm scale (gamma)"
+    bias:
+      shape: "[K]"
+      layout: contiguous
+      note: "LayerNorm shift (beta)"
+    linear_weight:
+      shape: "[K, N]"
+      layout: contiguous
+      note: "Linear weight B (no linear bias)"
+  output:
+    out:
+      shape: "[M, N]"
+
+backward:
+  upstream_gradient: dout
+  required_gradients:
+    - dx
+    - dlinear_weight
+    - dweight
+    - dbias
+  formulas:
+    x_hat: "(x - mean(x)) / sqrt(var(x) + eps)"
+    y_hat: "x_hat * gamma + beta"
+    dy_hat: "dout @ B^T"
+    dlinear_weight: "y_hat^T @ dout"
+    dweight: "sum(dy_hat * x_hat, dim=0)"
+    dbias: "sum(dy_hat, dim=0)"
+    dx: "(wdy - x_hat * mean(x_hat * wdy) - mean(wdy)) * rstd   where wdy = dy_hat * gamma"
+  saved_tensors:
+    - x
+    - weight
+    - bias
+    - linear_weight
+
+workloads:
+  correctness:
+    shapes:
+      # [M, K, N]
+      - [64, 64, 128]
+      - [129, 127, 257]
+      - [128, 128, 256]
+      - [512, 256, 512]
+    dtypes:
+      - float32
+      - float16
+  benchmark:
+    shapes:
+      - [4096, 128, 512]
+      - [8192, 128, 1024]
+      - [16384, 128, 256]
+      - [4096, 256, 1024]
+      - [2048, 512, 2048]
+      - [384, 768, 1536]
+    dtypes:
+      - float32
+      - float16
+
+tolerances:
+  # fp32 path uses TF32 tensor-core matmul on both the candidate and the autograd
+  # oracle; atol absorbs TF32 spread. dweight/dbias reduce over M (extra slack).
+  float32:
+    atol: 8.0e-2
+    rtol: 2.0e-2
+  float16:
+    atol: 1.0e-1
+    rtol: 2.0e-2
+
+baselines:
+  pytorch_autograd: backward_ref.py
+  naive_triton_backward: backward_naive_triton.py
+  naive_backward: backward_naive.py
+  atenir_backward: backward_atenir.py
+  expert_triton_backward: MegaFold FusedLayernormLinear (megafold.model.FusedLayernormLinear)
+
+metrics:
+  - compile_success
+  - runtime_success
+  - backward_correctness
+  - dx_correctness
+  - dlinear_weight_correctness
+  - dweight_correctness
+  - dbias_correctness
+  - autograd_integration_success
+  - backward_latency_ms
+  - speedup_vs_pytorch_autograd

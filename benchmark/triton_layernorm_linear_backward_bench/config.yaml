@@ -1,0 +1,88 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+# CUDA cannot be reinitialized safely in forked subprocesses. On Python 3.10,
+# OpenEvolve switches its ProcessPoolExecutor to spawn when this is set.
+max_tasks_per_child: 1
+
+llm:
+  # Run evolution on GPT-5.5 (OpenAI). Requires OPENAI_API_KEY in the environment.
+  primary_model: "gpt-5.5"
+  primary_model_weight: 1.0
+  api_base: "https://api.openai.com/v1"
+  api_key: "${OPENAI_API_KEY}"
+  temperature: 0.5
+  max_tokens: 24000
+  timeout: 300
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer implementing and optimizing backward kernels
+    for a fused LayerNorm -> Linear operator, as in the MegaFold project.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK to make
+    layernorm_linear_backward_triton(dout, x, weight, bias, linear_weight, eps) faster while
+    staying correct. This is a forward-to-backward synthesis task. The forward operator fuses a
+    row-wise LayerNorm over the last dimension K with a Linear (no linear bias):
+
+        # x [M, K], weight=gamma [K], bias=beta [K], linear_weight=B [K, N], out [M, N]
+        mean  = mean(x, axis=-1)
+        var   = mean((x - mean)^2, axis=-1)
+        rstd  = rsqrt(var + eps)
+        x_hat = (x - mean) * rstd
+        y_hat = x_hat * gamma + beta
+        out   = y_hat @ B
+
+    The backward kernel must return exactly (dx, dlinear_weight, dweight, dbias):
+
+        dy_hat         = dout @ B^T                      # [M, K]
+        dlinear_weight = y_hat^T @ dout                  # [K, N]
+        dweight        = sum(dy_hat * x_hat, axis=0)      # [K]   (gamma grad)
+        dbias          = sum(dy_hat, axis=0)              # [K]   (beta grad)
+        wdy            = dy_hat * gamma
+        dx             = (wdy - x_hat * mean(x_hat * wdy, axis=-1) - mean(wdy, axis=-1)) * rstd
+
+    Correctness is a hard requirement. Any incorrect candidate receives a very large negative score.
+
+    Fixed API constraints:
+    - Do not change the public function layernorm_linear_backward_triton(dout, x, weight, bias, linear_weight, eps).
+    - Return exactly a tuple (dx, dlinear_weight, dweight, dbias).
+    - dx matches x [M, K]; dlinear_weight matches linear_weight [K, N]; dweight, dbias are [K].
+    - Do not require extra inputs or outputs.
+    - Keep numerically stable float32 accumulation for the reductions.
+
+    Optimization direction (this is the MegaFold fusion):
+    - Recompute x_hat in the backward from saved mean/rstd (or recompute them) instead of
+      materializing the normalized activation in HBM.
+    - Fuse the dy_hat = dout @ B^T matmul with the LayerNorm-input backward so a single pass
+      produces wdy and the per-row reduction constants c1 = mean(x_hat*wdy), c2 = mean(wdy).
+    - Compute dlinear_weight = y_hat^T @ dout as a tiled matmul; atomic-add partial weight
+      gradients (dweight, dbias) in float32 across M-blocks.
+    - Use the standard GEMM toolbox: BLOCK_SIZE_M/N/K, GROUP_SIZE_M swizzling, num_warps, num_stages.
+
+    Generalization requirements:
+    - Do not hard-code shape-specific branches or special-case only benchmark shapes.
+    - Implementations must work for all tested shapes and dtypes, including non-power-of-two
+      K and N, in both float32 and float16.
+    - Prefer generic tiling/masking over fixed-shape assumptions.
+
+    The evaluator tests multiple shapes and dtypes, then benchmarks latency only after all
+    correctness tests pass. Optimize for speedup over the PyTorch autograd backward across the
+    full benchmark suite (AF3 Transition-like shapes, float32 and float16).
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 600
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 40000
