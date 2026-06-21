@@ -25,6 +25,8 @@ CORRECTNESS_CASES = [
     TestCase(17, 128, "float32", 2e-5, 2e-5),
     TestCase(32, 256, "float16", 5e-2, 5e-2),
     TestCase(64, 512, "float16", 5e-2, 5e-2),
+    TestCase(32, 256, "bfloat16", 8e-2, 8e-2),
+    TestCase(64, 512, "bfloat16", 8e-2, 8e-2),
 ]
 
 # Aligned with tests/atenir_correctness/run_correctness.py SHAPE_PRESETS["layernorm"].
@@ -47,6 +49,7 @@ def _make_benchmark_cases() -> list[TestCase]:
     for rows, cols in _LAYERNORM_BENCHMARK_SHAPES:
         cases.append(TestCase(rows, cols, "float32", 2e-5, 2e-5))
         cases.append(TestCase(rows, cols, "float16", 5e-2, 5e-2))
+        cases.append(TestCase(rows, cols, "bfloat16", 8e-2, 8e-2))
     return cases
 
 
@@ -58,6 +61,8 @@ def _dtype(torch_module, dtype_name: str):
         return torch_module.float32
     if dtype_name == "float16":
         return torch_module.float16
+    if dtype_name in ("bfloat16", "bf16"):
+        return torch_module.bfloat16
     raise ValueError(f"Unsupported dtype: {dtype_name}")
 
 

@@ -1,0 +1,75 @@
+max_iterations: 10
+checkpoint_interval: 5
+log_level: "INFO"
+max_tasks_per_child: 1
+
+llm:
+  primary_model: "gemini-2.5-flash-lite"
+  primary_model_weight: 0.8
+  secondary_model: "gemini-2.5-flash"
+  secondary_model_weight: 0.2
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  temperature: 0.5
+  max_tokens: 20000
+  timeout: 180
+
+prompt:
+  system_message: |
+    You are an expert Triton GPU programmer optimizing a LayerNorm autograd pair.
+
+    Task:
+    Improve the code inside the EVOLVE-BLOCK.  The public API is intentionally a
+    forward/backward pair with a flexible saved-tensor contract:
+
+        def layernorm_forward_with_saved(x, weight, bias, eps=1e-5):
+            return y, saved_tensors
+
+        def layernorm_backward_from_saved(dy, saved_tensors, eps=1e-5):
+            return dx, dweight, dbias
+
+    The seed may save only the original inputs.  You may modify the EVOLVE-BLOCK
+    so forward saves additional tensors, removes tensors, or changes their order,
+    as long as backward consumes the same saved_tensors contract and correctness
+    is preserved.
+
+    Forward semantics:
+        mean = mean(x, axis=-1, keepdim=True)
+        var = mean((x - mean)^2, axis=-1, keepdim=True)
+        xhat = (x - mean) / sqrt(var + eps)
+        y = xhat * weight + bias
+
+    Backward semantics:
+        one = dy * weight
+        dx = (one - mean(one) - xhat * mean(xhat * one)) / sqrt(var + eps)
+        dweight = sum(dy * xhat, dim=0)
+        dbias = sum(dy, dim=0)
+
+    Correctness is a hard requirement.  The evaluator verifies the autograd pair
+    against PyTorch autograd and reports saved tensor memory.
+
+    Optimization target:
+    - Improve backward_from_saved latency and forward+backward end-to-end latency.
+    - You may trade extra saved tensor memory for faster backward if beneficial.
+    - Keep support for contiguous 2D CUDA tensors x/dy shaped [rows, hidden].
+    - Keep support for contiguous 1D CUDA tensors weight/bias shaped [hidden].
+    - Support float32, float16, and bfloat16 benchmark cases.
+    - Use fp32 accumulation for reductions.
+
+    Do not call PyTorch autograd or high-level PyTorch LayerNorm in the generated
+    math.  Prefer Triton kernels for core forward/backward work.
+
+database:
+  population_size: 30
+  archive_size: 20
+  num_islands: 2
+  elite_selection_ratio: 0.25
+  exploitation_ratio: 0.75
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 300
+  parallel_evaluations: 1
+  cascade_evaluation: false
+
+diff_based_evolution: true
+max_code_length: 30000

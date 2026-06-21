@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 
@@ -65,6 +66,18 @@ def _apply_parameter_fallback(
     return False
 
 
+def _prefers_max_completion_tokens(model: str) -> bool:
+    """Models in newer OpenAI families reject legacy max_tokens."""
+    model_l = model.lower()
+    return model_l.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _requires_default_temperature(model: str) -> bool:
+    """Some newer OpenAI models only accept the default temperature."""
+    model_l = model.lower()
+    return model_l.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 def generate_with_openai_compatible_api(
     *,
     prompt: str,
@@ -78,8 +91,9 @@ def generate_with_openai_compatible_api(
     max_retries: int = 8,
     initial_delay: float = 2.0,
 ) -> str:
+    resolved_api_key = api_key or os.environ.get("OPENAI_API_KEY") or "none"
     client = openai.OpenAI(
-        api_key=api_key or "none",
+        api_key=resolved_api_key,
         base_url=api_base,
         timeout=timeout,
     )
@@ -89,9 +103,12 @@ def generate_with_openai_compatible_api(
             {"role": "system", "content": system_message},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": max_tokens,
     }
-    if temperature is not None:
+    if _prefers_max_completion_tokens(model):
+        params["max_completion_tokens"] = max_tokens
+    else:
+        params["max_tokens"] = max_tokens
+    if temperature is not None and not _requires_default_temperature(model):
         params["temperature"] = temperature
 
     delay = initial_delay

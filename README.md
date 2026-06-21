@@ -43,6 +43,13 @@ To run OpenEvolve on the LayerNorm seed:
 python -m openevolve.cli   benchmark/triton_layernorm_backward_bench/initial_program.py   benchmark/triton_layernorm_backward_bench/evaluator.py   --config benchmark/triton_layernorm_backward_bench/config.yaml   --iterations 10   --output /tmp/openevolve_triton_layernorm_backward_10   --save-best-to benchmark/triton_layernorm_backward_bench/evolved_best_program.py
 ```
 
+To run the LayerNorm autograd-pair saved-tensor experiment, where the candidate
+evolves both the forward saved tensors and the backward-from-saved kernel:
+
+```bash
+openevolve-run   benchmark/triton_layernorm_backward_bench/initial_program_autograd_pair.py   benchmark/triton_layernorm_backward_bench/evaluator_autograd_pair_speed_memory.py   --config benchmark/triton_layernorm_backward_bench/config_autograd_pair_speed_memory.yaml   --iterations 10   --output /tmp/openevolve_layernorm_autograd_pair_speed_memory_10   --save-best-to benchmark/triton_layernorm_backward_bench/evolved_best_autograd_pair_speed_memory.py
+```
+
 ## Pipelines
 
 `pipeline/` contains the three AtenIR-to-Triton synthesis paths:
