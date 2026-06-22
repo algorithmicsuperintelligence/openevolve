@@ -90,7 +90,7 @@ if HAS_TRITON:
         pid = tl.program_id(0)
         offs = pid * BLOCK + tl.arange(0, BLOCK)
         mask = offs < N
-        a = tl.load(a_ptr + offs, mask=mask, other=0.0)
+        a = tl.load(a_ptr + offs, mask=mask, other=0.0).to(tl.float32)
         tl.store(out_ptr + offs, tl.exp(a), mask=mask)
 
     # ── existing scalar ───────────────────────────────────────────────────────
@@ -896,10 +896,7 @@ def neg(a: torch.Tensor) -> torch.Tensor:
 
 
 def exp(a: torch.Tensor) -> torch.Tensor:
-    a = a.contiguous()
-    out = torch.empty_like(a)
-    _exp_kernel[_grid(a.numel())](a, out, N=a.numel(), BLOCK=_BLOCK)
-    return out
+    return _unary_f32(_exp_kernel, a)
 
 
 def mul_scalar(a: torch.Tensor, scalar) -> torch.Tensor:

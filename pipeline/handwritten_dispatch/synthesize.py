@@ -346,6 +346,18 @@ def synthesize_handwritten_dispatch(config: HandwrittenDispatchConfig) -> int:
     except Exception as exc:
         print(f"  Warning: context generation failed: {exc}")
 
+    print("[D] Generate dispatch program (dispatch_program.py — the optimized seed)")
+    try:
+        from pipeline.handwritten_dispatch.program_codegen import generate_dispatch_program
+
+        graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        program = generate_dispatch_program(graph)
+        program_path = config.output_dir / "dispatch_program.py"
+        program_path.write_text(program, encoding="utf-8")
+        print(f"  → {program_path} ({len(program)} chars)")
+    except Exception as exc:
+        print(f"  Warning: dispatch program generation failed: {exc}")
+
     reports = []
     for dtype_name in config.dtypes:
         is_fp16 = dtype_name in {"float16", "fp16", "bfloat16", "bf16"}
