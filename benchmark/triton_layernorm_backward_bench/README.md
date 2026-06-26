@@ -117,6 +117,84 @@ openevolve-run \
   --save-best-to evolved_best_program.py
 ```
 
+## NCU-Integrated Evaluator (optional)
+
+`evaluator_autograd_pair_ncu.py` wraps `evaluator_autograd_pair.py`: it runs the
+normal timing-based evaluation first, and -- only when a candidate becomes the
+new best score seen so far in this run -- profiles it with Nsight Compute
+(`ncu`) and folds the result back in:
+
+- The raw metrics are classified against `ncu-report-skill/reference/06-diagnosis-playbook.md`'s
+  documented thresholds in `ncu_profile.classify_patterns()` -- the four
+  patterns checkable from a `--metrics` pass without `--set source`/PM
+  sampling: **Pattern A** (small grid / SM idle), **Pattern E**
+  (latency-bound: `long_scoreboard_ratio > 3` and `dram_bytes_read_pct < 10`),
+  **Pattern J** (achieved occupancy far below theoretical), **Pattern K**
+  (register spill: `local_ld`/`local_st` instructions > 0, or
+  `registers_per_thread > 128`). Patterns C/D/F/G/H/I/L/M/N are not
+  implemented -- they need deeper profiling (`--set source`, PM-sampling
+  timelines) or don't apply to this kernel family (no matmul, no atomics,
+  fp32-accumulated by design).
+- Only Pattern K (register spill) feeds the score directly -- a penalty
+  (`AUTOGRAD_PAIR_NCU_SPILL_PENALTY`, default `0.1`) -- because it's the one
+  pattern here with an unambiguous "this is bad" reading. The others are
+  exposed as `ncu_pattern_*` metrics and in the `ncu_profile` artifact's
+  `patterns` field (each with an `evidence` string citing the exact values
+  that triggered it) without changing the score, since e.g. a small grid or
+  low occupancy isn't necessarily worse if the candidate is still fastest in
+  wall-clock terms.
+- The full metric set + Nsight's own rule-engine suggestion are attached as
+  the `ncu_profile` artifact, which OpenEvolve's prompt sampler renders into
+  the *next* LLM call -- so the model reads a pre-classified hardware
+  diagnosis (plus the supporting numbers) instead of guessing from latency
+  alone or re-deriving the diagnosis from raw metrics itself.
+
+This is a Triton-native re-implementation of the harness/collection/parsing
+workflow from a CUDA-oriented `ncu` profiling skill, not a copy of it: the
+"harness" is a throwaway Python script (no `nvcc`, no `-lineinfo` -- Triton
+embeds its own source debug metadata), warmup happens before `ncu` attaches to
+get past JIT compilation, and every kernel launched in one forward+backward
+call is captured and aggregated (a single candidate here can dispatch several
+Triton kernels, not one).
+
+Requirements (GPU node only): the `ncu` CLI, perf-counter access (see
+`ncu-report-skill/reference/09-common-issues.md` if you hit `ERR_NVGPUCTRPERM`),
+and the `ncu_report` Python module on `PYTHONPATH` or discoverable via
+`NCU_PYTHON_PATH` (auto-probed under `/usr/local/cuda*/nsight-compute-*/extras/python`).
+
+Smoke-test before trusting it in a real run:
+```bash
+python benchmark/triton_layernorm_backward_bench/ncu_profile.py \
+  benchmark/triton_layernorm_backward_bench/initial_program_autograd_pair.py \
+  8 4096 float16
+```
+
+Run with OpenEvolve:
+```bash
+openevolve-run \
+  initial_program_autograd_pair.py \
+  evaluator_autograd_pair_ncu.py \
+  --config config_autograd_pair_ncu.yaml \
+  --iterations 10 \
+  --output /tmp/openevolve_layernorm_ncu \
+  --save-best-to evolved_best_ncu.py
+```
+
+Env vars:
+
+| Var | Default | Meaning |
+|---|---|---|
+| `AUTOGRAD_PAIR_NCU_MODE` | `on_improve` | `off` \| `always` \| `on_improve` -- when to actually invoke `ncu` |
+| `AUTOGRAD_PAIR_NCU_SHAPE` | largest `BENCHMARK_CASES` entry | `"rows,cols,dtype"` override for which shape to profile |
+| `AUTOGRAD_PAIR_NCU_SPILL_PENALTY` | `0.1` | fractional score penalty applied when register spilling is detected |
+| `AUTOGRAD_PAIR_NCU_TIMEOUT` | `120` | seconds before the `ncu` subprocess is killed |
+| `AUTOGRAD_PAIR_NCU_STATE` | `.autograd_pair_ncu_state.json` next to this file | where the "best score seen" tracker lives -- set a distinct path per concurrent run to avoid two runs sharing one file |
+
+This whole evaluator is best-effort: if `ncu`/`ncu_report` aren't available or
+permission is denied, profiling fails into an `ncu_profile_error` artifact and
+scoring falls back to the unmodified timing-based result -- it never blocks or
+crashes the evolutionary loop.
+
 ## Strong Baseline Check
 
 After an OpenEvolve run:

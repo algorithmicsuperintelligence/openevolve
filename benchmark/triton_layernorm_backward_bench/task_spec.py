@@ -1,5 +1,6 @@
 """Task spec for the LayerNorm Triton backward benchmark."""
 
+import os
 from dataclasses import dataclass
 
 
@@ -30,7 +31,7 @@ CORRECTNESS_CASES = [
 ]
 
 # Aligned with tests/atenir_correctness/run_correctness.py SHAPE_PRESETS["layernorm"].
-_LAYERNORM_BENCHMARK_SHAPES = [
+_ALL_BENCHMARK_SHAPES = [
     # dynamic
     (1, 768),
     (8, 1024),
@@ -42,6 +43,34 @@ _LAYERNORM_BENCHMARK_SHAPES = [
     (17, 513),
     (17, 1000),
 ]
+
+# Small-batch / small-hidden-dim shapes: latency-dominated, fixed-cost sensitive.
+_SMALL_BENCHMARK_SHAPES = [
+    (1, 256),
+    (4, 512),
+    (8, 768),
+    (17, 127),
+]
+
+# Large-batch / large-hidden-dim shapes: throughput-dominated, bandwidth sensitive.
+_LARGE_BENCHMARK_SHAPES = [
+    (32, 1536),
+    (8, 4096),
+    (1, 8192),
+    (64, 8192),
+]
+
+# AUTOGRAD_PAIR_SHAPE_PROFILE selects which shape suite drives BENCHMARK_CASES
+# (and therefore combined_score during OpenEvolve). Default "all" preserves the
+# original unified dynamic + nontile suite. CORRECTNESS_CASES is untouched by
+# this switch on purpose -- it stays the hard pass/fail gate regardless of the
+# shape profile used for performance scoring.
+_SHAPE_PROFILE = os.environ.get("AUTOGRAD_PAIR_SHAPE_PROFILE", "all")
+_LAYERNORM_BENCHMARK_SHAPES = {
+    "all": _ALL_BENCHMARK_SHAPES,
+    "small": _SMALL_BENCHMARK_SHAPES,
+    "large": _LARGE_BENCHMARK_SHAPES,
+}[_SHAPE_PROFILE]
 
 
 def _make_benchmark_cases() -> list[TestCase]:
