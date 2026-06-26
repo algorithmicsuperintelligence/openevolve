@@ -27,24 +27,36 @@ class TestCase:
 # N_seq is kept small so the d_pair_bias reduction over the MSA axis stays
 # well-conditioned. Tolerances are attention-appropriate (many fp16/bf16
 # accumulations through two matmuls and a softmax jacobian).
+# Dim=128 case added: forces large accumulators even with small N_res, ensuring
+# candidates handle the high-register-pressure path correctly.
 CORRECTNESS_CASES = [
     TestCase(1, 1, 4, 23, 8, "float16", 2e-2, 2e-2),
     TestCase(1, 2, 4, 64, 16, "float16", 2e-2, 2e-2),
     TestCase(1, 1, 8, 80, 32, "bfloat16", 4e-2, 4e-2),
     TestCase(2, 2, 4, 128, 64, "bfloat16", 4e-2, 4e-2),
+    TestCase(1, 1, 4, 48, 128, "float16", 3e-2, 3e-2),
 ]
 
-# Benchmark: AF3-relevant shapes. Two regimes from MegaFold:
-#   - attention-pair-bias: N_seq=1, many heads, larger residue crop, Dim=64
-#   - triangle attention:  large N_seq, few heads, Dim=32
+# Benchmark: AF3-relevant shapes. Three regimes:
+#   - attention-pair-bias Dim=64:  N_seq=1, many heads, larger residue crop
+#   - triangle attention  Dim=32:  large N_seq, few heads
+#   - large-dim          Dim=128:  standard transformer Dim; dK/dV accumulator
+#     holds BLOCK_KV×128 fp32 values -- the primary register-spill trigger.
+#     With BLOCK_KV≥32, each thread exceeds 128 live registers and Pattern K
+#     fires reliably, even without an especially large N_res.
 _EVOATTN_BENCHMARK_SHAPES = [
     # (B, N_seq, Head, N_res, Dim)
+    # Dim=64 attention-pair-bias
     (1, 1, 16, 128, 64),
     (1, 1, 16, 256, 64),
     (1, 1, 16, 384, 64),
+    # Dim=32 triangle attention
     (1, 64, 4, 128, 32),
     (1, 64, 4, 256, 32),
     (1, 128, 4, 128, 32),
+    # Dim=128 — register-spill stress shapes
+    (1, 1, 8, 256, 128),
+    (1, 1, 8, 384, 128),
 ]
 
 

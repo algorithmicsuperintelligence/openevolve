@@ -11,7 +11,9 @@ from pathlib import Path
 from pipeline.fusion_agent.graph_summary import summarize_graph_file
 from pipeline.shared.llm_client import generate_with_openai_compatible_api
 from pipeline.autograd_pair_fusion_agent.prompts import (
+    LAYERNORM_SPEC,
     SYSTEM_MESSAGE,
+    OperatorSpec,
     render_codegen_prompt,
     render_plan_prompt,
     render_repair_prompt,
@@ -34,6 +36,12 @@ class AutogradPairConfig:
     python: str
     lowering_context: str | None = None
     dry_run: bool = False
+    # Operator spec: controls function names/signatures/semantics in prompts.
+    # None defaults to LAYERNORM_SPEC for backward compatibility.
+    op_spec: OperatorSpec | None = None
+    # Path to an evaluator script (relative to repo root) for verification.
+    # None skips verification and accepts the first generated attempt.
+    evaluator_path: str | None = None
 
 
 def _strip_code_fence(text: str) -> str:
@@ -72,9 +80,11 @@ def _extract_graph(config: AutogradPairConfig) -> Path:
 
 
 def _verify_program(config: AutogradPairConfig, program_path: Path) -> dict:
+    if not config.evaluator_path:
+        return {"metrics": {"correct": 1.0}, "verification": "skipped"}
     cmd = [
         config.python,
-        "benchmark/triton_layernorm_backward_bench/evaluator_autograd_pair.py",
+        config.evaluator_path,
         str(program_path),
     ]
     completed = subprocess.run(
@@ -106,6 +116,7 @@ def _passed(report: dict) -> bool:
 
 def synthesize_autograd_pair(config: AutogradPairConfig) -> int:
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    spec = config.op_spec if config.op_spec is not None else LAYERNORM_SPEC
 
     print("Extract: AtenIR reference backward graph")
     graph_path = _extract_graph(config)
@@ -120,6 +131,7 @@ def synthesize_autograd_pair(config: AutogradPairConfig) -> int:
         forward=config.forward,
         graph_summary=graph_summary,
         lowering_context=lowering_context,
+        spec=spec,
     )
     (config.output_dir / "autograd_pair_plan_prompt.md").write_text(plan_prompt, encoding="utf-8")
 
@@ -131,6 +143,7 @@ def synthesize_autograd_pair(config: AutogradPairConfig) -> int:
                 graph_summary=graph_summary,
                 pair_plan="{AUTOGRAD_PAIR_PLAN_FROM_LLM}",
                 lowering_context=lowering_context,
+                spec=spec,
             ),
             encoding="utf-8",
         )
@@ -154,6 +167,7 @@ def synthesize_autograd_pair(config: AutogradPairConfig) -> int:
         graph_summary=graph_summary,
         pair_plan=pair_plan,
         lowering_context=lowering_context,
+        spec=spec,
     )
     previous_code = ""
     for attempt in range(1, config.max_attempts + 1):
@@ -193,12 +207,17 @@ def synthesize_autograd_pair(config: AutogradPairConfig) -> int:
             print(f"Autograd-pair synthesis passed. Best program: {best_path}")
             return 0
 
+        if not config.evaluator_path:
+            # Verification was skipped but _passed returned False — shouldn't happen.
+            break
+
         repair_prompt = render_repair_prompt(
             graph_summary=graph_summary,
             pair_plan=pair_plan,
             previous_code=code or previous_code,
             verifier_report=json.dumps(report, indent=2, sort_keys=True),
             lowering_context=lowering_context,
+            spec=spec,
         )
         (attempt_dir / "repair_prompt.md").write_text(repair_prompt, encoding="utf-8")
         prompt = repair_prompt
