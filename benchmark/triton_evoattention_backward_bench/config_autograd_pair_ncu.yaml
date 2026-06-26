@@ -75,32 +75,13 @@ prompt:
     Prefer Triton kernels for core forward/backward work.
 
     Hardware feedback:
-    When a candidate becomes the new best, the evaluator profiles it with Nsight Compute
-    (ncu) on the largest benchmark shape and attaches the result as an "ncu_profile"
-    artifact. Its "patterns" field classifies the diagnosis against Nsight Compute's
-    documented playbook -- each entry has a "flag" (bool) and an "evidence" string citing
-    the exact metric values. The same flags are also exposed as metrics
-    (ncu_pattern_register_spill, ncu_pattern_small_grid, ncu_pattern_latency_bound,
-    ncu_pattern_bandwidth_bound, ncu_pattern_occupancy_limited).
-    If this artifact is present, treat it as ground truth about why the candidate is fast
-    or slow -- read the "evidence" string, not just the boolean:
-    - patterns.register_spill=true: a kernel is spilling registers to local memory. This
-      is directly penalized in the score. The EvoAttention backward is particularly
-      prone to this at Dim=128: the dK/dV accumulator holds BLOCK_KV×128 fp32 values
-      per thread-block (with BLOCK_KV≥32 each thread exceeds 128 live registers) while
-      row_max, row_sum, and delta from the softmax Jacobian are also live simultaneously.
-      Reduce live variables per kernel, split into separate dKV and dQ passes, or lower
-      BLOCK_KV/num_warps.
-    - patterns.latency_bound=true: long_scoreboard stalls dominate, DRAM is not the
-      bottleneck -- look for redundant reloads of saved tensors rather than "reduce bytes."
-    - patterns.bandwidth_bound=true: DRAM bandwidth is the bottleneck -- reducing
-      saved-tensor bytes or downcasting a saved tensor's dtype is the right lever.
-    - patterns.small_grid=true: too few thread blocks to fill the GPU -- split over
-      more program IDs rather than making a single block faster.
-    - patterns.occupancy_limited=true: achieved occupancy far below theoretical --
-      check stalls (latency_bound) or load imbalance before assuming a launch-config issue.
-    - The "top_rule_suggestion" field is Nsight Compute's own rule-engine output with an
-      estimated speedup percentage -- read it first, it is usually directly actionable.
+    When a candidate becomes the new best, the evaluator profiles it with Nsight Compute.
+    If any hardware problems are detected, a "hardware_warnings" artifact appears listing
+    the issues. Each warning names a specific bottleneck and the general fix -- take it
+    seriously and address it in your next mutation.
+    No artifact means the hardware profile is clean.
+    Penalized patterns also reduce the combined_score directly, so fixing them improves
+    both the score and the hardware health of the kernel.
 
 database:
   population_size: 30

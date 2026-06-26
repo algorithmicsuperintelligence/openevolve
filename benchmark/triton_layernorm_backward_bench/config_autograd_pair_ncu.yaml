@@ -4,9 +4,9 @@ log_level: "INFO"
 max_tasks_per_child: 1
 
 llm:
-  primary_model: "gpt-4o-mini"
+  primary_model: "gpt-5.5"
   primary_model_weight: 0.8
-  secondary_model: "gpt-4o"
+  secondary_model: "gpt-5.5"
   secondary_model_weight: 0.2
   api_base: "https://api.openai.com/v1"
   api_key: "${OPENAI_API_KEY}"
@@ -61,36 +61,12 @@ prompt:
 
     Hardware feedback:
     When a candidate becomes the new best, the evaluator profiles it with
-    Nsight Compute (ncu) on the largest benchmark shape and attaches the result
-    as an "ncu_profile" artifact. Its "patterns" field already classifies the
-    diagnosis against Nsight Compute's documented diagnosis playbook -- each
-    entry has a "flag" (bool) and an "evidence" string citing the exact metric
-    values that triggered it. The same flags are also exposed as metrics
-    (ncu_pattern_register_spill, ncu_pattern_small_grid,
-    ncu_pattern_latency_bound, ncu_pattern_bandwidth_bound,
-    ncu_pattern_occupancy_limited). If this artifact is present, treat it as
-    ground truth about *why* the candidate is fast or slow on real hardware --
-    prefer it over guessing, and read the "evidence" string rather than just
-    the boolean:
-    - patterns.register_spill=true: a kernel is spilling registers to local
-      memory. This is heavily penalized in the score directly. Reduce live
-      variables per kernel, split the kernel, or lower BLOCK_N/num_warps.
-    - patterns.latency_bound=true: the kernel is latency-bound on memory
-      (long_scoreboard stalls dominate, DRAM bandwidth is not the bottleneck)
-      -- look for redundant reloads of saved tensors or insufficient
-      instruction-level parallelism, not "reduce bytes read."
-    - patterns.bandwidth_bound=true: DRAM bandwidth genuinely is the
-      bottleneck -- reducing saved-tensor bytes or downcasting a saved
-      tensor's dtype is the right lever here, unlike the latency-bound case.
-    - patterns.small_grid=true: too few thread blocks to fill the GPU --
-      split a reduction across more program ids or fuse with an adjacent
-      kernel rather than trying to make the single block faster.
-    - patterns.occupancy_limited=true: achieved occupancy is far below
-      theoretical occupancy -- check whether stalls (see latency_bound) or
-      load imbalance is the cause before assuming it's a launch-config issue.
-    - The "top_rule_suggestion" field inside the ncu_profile artifact is
-      Nsight Compute's own rule-engine output (with an estimated speedup
-      percentage) -- read it first; it is usually directly actionable.
+    Nsight Compute. If any hardware problems are detected, a "hardware_warnings"
+    artifact appears listing the issues. Each warning names a specific bottleneck
+    and the general fix -- take it seriously and address it in your next mutation.
+    No artifact means the hardware profile is clean.
+    Penalized patterns also reduce the combined_score directly, so fixing them
+    improves both the score and the hardware health of the kernel.
 
 database:
   population_size: 30

@@ -49,10 +49,52 @@ NCU_MODE = os.environ.get("AUTOGRAD_PAIR_NCU_MODE", "on_improve")  # off | alway
 NCU_TIMEOUT = int(os.environ.get("AUTOGRAD_PAIR_NCU_TIMEOUT", "120"))
 NCU_WARMUP = int(os.environ.get("AUTOGRAD_PAIR_NCU_WARMUP", "5"))
 NCU_SPILL_PENALTY = float(os.environ.get("AUTOGRAD_PAIR_NCU_SPILL_PENALTY", "0.1"))
+NCU_OCCUPANCY_PENALTY = float(os.environ.get("AUTOGRAD_PAIR_NCU_OCCUPANCY_PENALTY", "0.1"))
+NCU_SMALL_GRID_PENALTY = float(os.environ.get("AUTOGRAD_PAIR_NCU_SMALL_GRID_PENALTY", "0.1"))
+NCU_LATENCY_PENALTY = float(os.environ.get("AUTOGRAD_PAIR_NCU_LATENCY_PENALTY", "0.1"))
+NCU_BANDWIDTH_PENALTY = float(os.environ.get("AUTOGRAD_PAIR_NCU_BANDWIDTH_PENALTY", "0.1"))
 NCU_STATE_PATH = Path(
     os.environ.get("AUTOGRAD_PAIR_NCU_STATE", str(BENCHMARK_DIR / ".autograd_pair_ncu_state.json"))
 )
 NCU_SHAPE = os.environ.get("AUTOGRAD_PAIR_NCU_SHAPE")  # "rows,cols,dtype" override
+
+# Generic, shape/dtype-agnostic advice for each hardware pattern.
+# Deliberately contains no metric values or profiled-shape details to avoid
+# anchoring the LLM to a specific dtype or problem size.
+_PATTERN_ADVICE = {
+    "register_spill": (
+        "register_spill: your kernel is spilling registers to local memory. "
+        "Split it into separate passes, reduce tile sizes, or lower num_warps."
+    ),
+    "occupancy_limited": (
+        "occupancy_limited: achieved occupancy is far below the theoretical maximum. "
+        "Tune num_warps, reduce per-block shared memory, or lower register pressure."
+    ),
+    "small_grid": (
+        "small_grid: too few thread blocks to fully occupy the GPU. "
+        "Parallelize over more dimensions or split large blocks into smaller ones."
+    ),
+    "latency_bound": (
+        "latency_bound: long memory-dependency stalls dominate. "
+        "Reduce redundant HBM reloads or increase arithmetic intensity."
+    ),
+    "bandwidth_bound": (
+        "bandwidth_bound: DRAM bandwidth is the bottleneck. "
+        "Reduce memory traffic by saving fewer or smaller tensors."
+    ),
+}
+
+
+def _build_warning_artifact(patterns: dict) -> str | None:
+    """Return a plain-text warning string for any firing pattern, or None if clean."""
+    warnings = [
+        _PATTERN_ADVICE[name]
+        for name, info in patterns.items()
+        if info["flag"] and name in _PATTERN_ADVICE
+    ]
+    if not warnings:
+        return None
+    return "\n".join(f"- {w}" for w in warnings)
 
 
 def _representative_case():
@@ -130,29 +172,21 @@ def evaluate(program_path: str) -> EvaluationResult:
 
     adjusted_score = combined_score
     if patterns["register_spill"]["flag"]:
-        # Wall-clock timing already captures most performance regressions, but
-        # register spilling on the one shape profiled here can hide in the
-        # aggregate score across all benchmark shapes. Penalize it directly
-        # using a hardware signal wall-clock timing alone wouldn't have
-        # flagged. Pattern K is the only one of the four classified patterns
-        # treated as unambiguously bad enough to affect the score directly --
-        # small_grid/latency_bound/bandwidth_bound/occupancy_limited are left
-        # as diagnostic-only (see README): none of them is "always worse,"
-        # just worth the LLM reading and reacting to.
-        adjusted_score = combined_score * (1.0 - NCU_SPILL_PENALTY)
+        adjusted_score *= (1.0 - NCU_SPILL_PENALTY)
+    if patterns["occupancy_limited"]["flag"]:
+        adjusted_score *= (1.0 - NCU_OCCUPANCY_PENALTY)
+    if patterns["small_grid"]["flag"]:
+        adjusted_score *= (1.0 - NCU_SMALL_GRID_PENALTY)
+    if patterns["latency_bound"]["flag"]:
+        adjusted_score *= (1.0 - NCU_LATENCY_PENALTY)
+    if patterns["bandwidth_bound"]["flag"]:
+        adjusted_score *= (1.0 - NCU_BANDWIDTH_PENALTY)
     metrics["combined_score"] = adjusted_score
     metrics["combined_score_pre_ncu"] = combined_score
 
-    artifacts["ncu_profile"] = _json(
-        {
-            "shape": [case.rows, case.cols],
-            "dtype": case.dtype_name,
-            "aggregate": profile.aggregate,
-            "derived_flags": flags,
-            "patterns": patterns,
-            "top_rule_suggestion": profile.top_rule,
-        }
-    )
+    warning = _build_warning_artifact(patterns)
+    if warning:
+        artifacts["hardware_warnings"] = warning
 
     _save_best_score(adjusted_score)
     return EvaluationResult(metrics=metrics, artifacts=artifacts)

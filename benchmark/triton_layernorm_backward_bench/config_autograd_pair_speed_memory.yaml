@@ -4,11 +4,12 @@ log_level: "INFO"
 max_tasks_per_child: 1
 
 llm:
-  primary_model: "gemini-2.5-flash-lite"
+  primary_model: "gpt-4o-mini"
   primary_model_weight: 0.8
-  secondary_model: "gemini-2.5-flash"
+  secondary_model: "gpt-4o"
   secondary_model_weight: 0.2
-  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  api_base: "https://api.openai.com/v1"
+  api_key: "${OPENAI_API_KEY}"
   temperature: 0.5
   max_tokens: 20000
   timeout: 180
