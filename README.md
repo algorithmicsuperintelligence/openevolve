@@ -202,7 +202,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 <details>
 <summary><b>Advanced LLM Integration</b></summary>
 
-- **Universal API**: Works with OpenAI, Google, local models, and proxies
+- **Universal API**: Works with OpenAI, Google, MiniMax (M3), local models, and proxies
 - **Intelligent Ensembles**: Weighted combinations with sophisticated fallback
 - **Test-Time Compute**: Enhanced reasoning through proxy systems (see [OptiLLM setup](#llm-provider-setup))
 - **Plugin Ecosystem**: Support for advanced reasoning plugins
@@ -281,6 +281,7 @@ docker run --rm -v $(pwd):/app ghcr.io/algorithmicsuperintelligence/openevolve:l
 - **o3-mini**: ~$0.03-0.12 per iteration (more cost-effective)
 - **Gemini-2.5-Pro**: ~$0.08-0.30 per iteration
 - **Gemini-2.5-Flash**: ~$0.01-0.05 per iteration (fastest and cheapest)
+- **MiniMax-M3**: ~$0.02-0.08 per iteration (512K context, OpenAI-compatible)
 - **Local models**: Nearly free after setup
 - **OptiLLM**: Use cheaper models with test-time compute for better results
 
@@ -317,6 +318,35 @@ llm:
 ```bash
 export OPENAI_API_KEY="your-gemini-api-key"
 ```
+
+</details>
+
+<details>
+<summary><b>🧠 MiniMax</b></summary>
+
+[MiniMax](https://www.minimaxi.com/) offers powerful models with up to 512K context window via an OpenAI-compatible API:
+
+```yaml
+# config.yaml
+llm:
+  api_base: "https://api.minimax.io/v1"
+  api_key: "${MINIMAX_API_KEY}"
+  models:
+    - name: "MiniMax-M3"
+      weight: 0.6
+    - name: "MiniMax-M2.7"
+      weight: 0.3
+    - name: "MiniMax-M2.7-highspeed"
+      weight: 0.1
+```
+
+```bash
+export MINIMAX_API_KEY="your-minimax-api-key"
+```
+
+> **Note:** MiniMax requires temperature to be in (0.0, 1.0] — zero is not accepted. The default 0.7 works well.
+
+See [`configs/minimax_config.yaml`](configs/minimax_config.yaml) for a complete configuration example.
 
 </details>
 
@@ -792,7 +822,7 @@ See the [Cost Estimation](#cost-estimation) section in Installation & Setup for 
 
 **Yes!** OpenEvolve supports any OpenAI-compatible API:
 
-- **Commercial**: OpenAI, Google, Cohere
+- **Commercial**: OpenAI, Google, Cohere, MiniMax
 - **Local**: Ollama, vLLM, LM Studio, text-generation-webui
 - **Advanced**: OptiLLM for routing and test-time compute
 
