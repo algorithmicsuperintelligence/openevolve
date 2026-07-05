@@ -47,7 +47,9 @@ class Program:
     # Program identification
     id: str
     code: str
-    changes_description: str = ""  # compact program changes description (via LLM) stored per program
+    changes_description: str = (
+        ""  # compact program changes description (via LLM) stored per program
+    )
     language: str = "python"
 
     # Evolution information
@@ -289,6 +291,10 @@ class ProgramDatabase:
                 # Program exists, compare fitness
                 should_replace = self._is_better(program, self.programs[existing_program_id])
 
+        # Track a program that gets displaced from its cell so we can remove it
+        # from the population if it ends up orphaned (owning no cell, in no island).
+        replaced_program_id = None
+
         if should_replace:
             # Log significant MAP-Elites events
             coords_dict = {
@@ -337,6 +343,7 @@ class ProgramDatabase:
                 # Remove replaced program from island set to keep it consistent with feature map
                 # This prevents accumulation of stale/replaced programs in the island
                 self.islands[island_idx].discard(existing_program_id)
+                replaced_program_id = existing_program_id
 
             island_feature_map[feature_key] = program.id
 
@@ -358,6 +365,19 @@ class ProgramDatabase:
 
         # Update island-specific best program tracking
         self._update_island_best_program(program, island_idx)
+
+        # If a program was displaced from its cell by this addition, it may now be
+        # orphaned - owning no cell and belonging to no island. Such a program is a
+        # "zombie" that consumes a population slot but can never be sampled again, so
+        # remove it. This runs after best-program tracking is updated so the newly
+        # added (better) program is already recorded as best, ensuring we never drop
+        # the current best program here.
+        if (
+            replaced_program_id is not None
+            and replaced_program_id != program.id
+            and replaced_program_id != self.best_program_id
+        ):
+            self._remove_program_if_orphaned(replaced_program_id)
 
         # Save to disk if configured
         if self.config.db_path:
@@ -1081,9 +1101,7 @@ class ProgramDatabase:
             other = self.programs[pid]
 
             if other.embedding is None:
-                logger.warning(
-                    f"Program {other.id} has no embedding, skipping similarity check"
-                )
+                logger.warning(f"Program {other.id} has no embedding, skipping similarity check")
                 continue
 
             similarity = self._cosine_similarity(embd, other.embedding)
@@ -1675,6 +1693,38 @@ class ProgramDatabase:
 
         return inspirations[:n]
 
+    def _remove_program_if_orphaned(self, program_id: str) -> None:
+        """
+        Remove a program from the population if it is orphaned.
+
+        A program is considered orphaned when it no longer owns a MAP-Elites cell
+        in any island's feature map and is not a member of any island. Such a
+        program (e.g. one displaced when its cell was improved) can never be
+        sampled again but still counts against the population size limit, so it is
+        removed from ``self.programs``, the archive and any lingering references.
+
+        Args:
+            program_id: ID of the (possibly) orphaned program to check and remove
+        """
+        if program_id not in self.programs:
+            return
+
+        # Still owns a cell in some island? Then it is not orphaned.
+        for island_map in self.island_feature_maps:
+            if program_id in island_map.values():
+                return
+
+        # Still a member of some island? Then it is not orphaned.
+        for island in self.islands:
+            if program_id in island:
+                return
+
+        # Fully orphaned - remove from all remaining structures.
+        del self.programs[program_id]
+        self.archive.discard(program_id)
+        self._cleanup_stale_island_bests()
+        logger.debug(f"Removed orphaned program {program_id} displaced from its cell")
+
     def _enforce_population_limit(self, exclude_program_id: Optional[str] = None) -> None:
         """
         Enforce the population size limit by removing worst programs if needed
@@ -1692,36 +1742,36 @@ class ProgramDatabase:
             f"Population size ({len(self.programs)}) exceeds limit ({self.config.population_size}), removing {num_to_remove} programs"
         )
 
-        # Get programs sorted by fitness (worst first)
+        # Collect all MAP-Elites cell owners across every island. These "elite"
+        # programs represent occupied niches and must be protected from eviction
+        # to preserve diversity - a low-scoring cell owner should only be removed
+        # after every non-owning (homeless) program has already been removed.
+        elite_ids = set()
+        for island_map in self.island_feature_maps:
+            elite_ids.update(island_map.values())
+
+        # Never remove the best program or the excluded (just-added) program
+        protected_ids = {self.best_program_id, exclude_program_id} - {None}
+
         all_programs = list(self.programs.values())
 
-        # Sort by combined_score if available, otherwise by average metric (worst first)
-        sorted_programs = sorted(
-            all_programs,
+        # Split into non-elite (homeless) and elite (cell owners), each sorted by
+        # fitness worst-first. Non-elite programs are removed before elite ones.
+        non_elite = sorted(
+            [p for p in all_programs if p.id not in elite_ids and p.id not in protected_ids],
+            key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+        )
+        elite = sorted(
+            [p for p in all_programs if p.id in elite_ids and p.id not in protected_ids],
             key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
         )
 
-        # Remove worst programs, but never remove the best program or excluded program
-        programs_to_remove = []
-        protected_ids = {self.best_program_id, exclude_program_id} - {None}
-
-        for program in sorted_programs:
-            if len(programs_to_remove) >= num_to_remove:
-                break
-            # Don't remove the best program or excluded program
-            if program.id not in protected_ids:
-                programs_to_remove.append(program)
-
-        # If we still need to remove more and only have protected programs,
-        # remove from the remaining programs anyway (but keep the protected ones)
+        # Remove non-elite programs first; only fall back to evicting elite cell
+        # owners (worst first) if removing all homeless programs is not enough.
+        programs_to_remove = non_elite[:num_to_remove]
         if len(programs_to_remove) < num_to_remove:
-            remaining_programs = [
-                p
-                for p in sorted_programs
-                if p not in programs_to_remove and p.id not in protected_ids
-            ]
-            additional_removals = remaining_programs[: num_to_remove - len(programs_to_remove)]
-            programs_to_remove.extend(additional_removals)
+            remaining = num_to_remove - len(programs_to_remove)
+            programs_to_remove.extend(elite[:remaining])
 
         # Remove the selected programs
         for program in programs_to_remove:

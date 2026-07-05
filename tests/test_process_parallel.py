@@ -30,7 +30,9 @@ class TestProcessParallel(unittest.TestCase):
         self.config.max_iterations = 10
         self.config.evaluator.parallel_evaluations = 2
         self.config.evaluator.timeout = 10
-        self.config.database.num_islands = 2
+        # One island per test program so each owns its MAP-Elites cell and none is
+        # displaced (MAP-Elites removes programs displaced from their cell).
+        self.config.database.num_islands = 3
         self.config.database.in_memory = True
         self.config.checkpoint_interval = 5
 
@@ -46,7 +48,7 @@ def evaluate(program_path):
         # Create test database
         self.database = ProgramDatabase(self.config.database)
 
-        # Add some test programs
+        # Add some test programs, one per island so each survives as its cell owner
         for i in range(3):
             program = Program(
                 id=f"test_{i}",
@@ -55,7 +57,7 @@ def evaluate(program_path):
                 metrics={"score": 0.5 + i * 0.1, "performance": 0.4 + i * 0.1},
                 iteration_found=0,
             )
-            self.database.add(program)
+            self.database.add(program, target_island=i)
 
     def tearDown(self):
         """Clean up test environment"""

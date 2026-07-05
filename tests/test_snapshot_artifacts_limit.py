@@ -28,7 +28,7 @@ class TestMaxSnapshotArtifactsConfig(unittest.TestCase):
             "llm": {"primary_model": "gpt-4"},
             "database": {
                 "max_snapshot_artifacts": 500,
-            }
+            },
         }
         config = Config.from_dict(config_dict)
         self.assertEqual(config.database.max_snapshot_artifacts, 500)
@@ -39,7 +39,7 @@ class TestMaxSnapshotArtifactsConfig(unittest.TestCase):
             "llm": {"primary_model": "gpt-4"},
             "database": {
                 "max_snapshot_artifacts": None,
-            }
+            },
         }
         config = Config.from_dict(config_dict)
         self.assertIsNone(config.database.max_snapshot_artifacts)
@@ -50,7 +50,7 @@ class TestMaxSnapshotArtifactsConfig(unittest.TestCase):
             "llm": {"primary_model": "gpt-4"},
             "database": {
                 "max_snapshot_artifacts": 0,
-            }
+            },
         }
         config = Config.from_dict(config_dict)
         self.assertEqual(config.database.max_snapshot_artifacts, 0)
@@ -61,7 +61,9 @@ class TestArtifactStorageWithLimit(unittest.TestCase):
 
     def test_store_artifacts_within_limit(self):
         """Test storing artifacts when within the limit"""
-        db_config = DatabaseConfig(max_snapshot_artifacts=5)
+        # One island per program so each program owns its cell and none is
+        # displaced (MAP-Elites removes programs displaced from their cell).
+        db_config = DatabaseConfig(max_snapshot_artifacts=5, num_islands=3)
         db = ProgramDatabase(db_config)
 
         # Add programs with artifacts
@@ -72,7 +74,7 @@ class TestArtifactStorageWithLimit(unittest.TestCase):
                 generation=0,
                 metrics={"score": i * 0.1},
             )
-            db.add(program)
+            db.add(program, target_island=i)
             db.store_artifacts(f"prog_{i}", {"output": f"result_{i}"})
 
         # All artifacts should be retrievable
@@ -82,7 +84,9 @@ class TestArtifactStorageWithLimit(unittest.TestCase):
 
     def test_store_many_artifacts(self):
         """Test storing more artifacts than the limit"""
-        db_config = DatabaseConfig(max_snapshot_artifacts=5)
+        # One island per program so each program owns its cell and none is
+        # displaced (MAP-Elites removes programs displaced from their cell).
+        db_config = DatabaseConfig(max_snapshot_artifacts=5, num_islands=10)
         db = ProgramDatabase(db_config)
 
         # Add 10 programs with artifacts
@@ -93,7 +97,7 @@ class TestArtifactStorageWithLimit(unittest.TestCase):
                 generation=0,
                 metrics={"score": i * 0.1},
             )
-            db.add(program)
+            db.add(program, target_island=i)
             db.store_artifacts(f"prog_{i}", {"output": f"result_{i}"})
 
         # All artifacts should still be stored in the database
