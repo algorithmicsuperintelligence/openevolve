@@ -803,8 +803,12 @@ class ProcessParallelController:
 
             # Use thread-safe sampling that doesn't modify shared state
             # This fixes the race condition from GitHub issue #246
+            # Inspirations are the diverse/creative examples; size them by
+            # num_diverse_programs (not num_top_programs) so the config parameter
+            # actually controls the inspiration count (GitHub issue #452).
             parent, inspirations = self.database.sample_from_island(
-                island_id=target_island, num_inspirations=self.config.prompt.num_top_programs
+                island_id=target_island,
+                num_inspirations=self.config.prompt.num_diverse_programs,
             )
 
             # Create database snapshot
