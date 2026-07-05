@@ -75,11 +75,14 @@ python scripts/visualizer.py --path examples/function_minimization/openevolve_ou
 
 5. **Iteration (`openevolve/iteration.py`)**: Worker process that samples from islands, generates mutations via LLM, evaluates programs, and stores artifacts.
 
+6. **Repair Subagent (`openevolve/evaluator.py`)**: When an evaluator raises `EvaluatorRepairRequest` (e.g. on compilation failure), the evaluator asks a dedicated LLM ensemble to fix the code and re-evaluates it. Configured via `EvaluatorConfig.repair_on_failure`, `max_repair_attempts`, and `repair_diff_based`. Uses `repair_models` from `LLMConfig` (falls back to `evaluator_models` then `models`). Repair history is stored as artifacts.
+
 ### Key Architectural Patterns
 
 - **Island-Based Evolution**: Multiple populations evolve separately with periodic migration
 - **MAP-Elites**: Maintains diversity by mapping programs to feature grid cells
 - **Artifact System**: Side-channel for programs to return debugging data, stored as JSON or files
+- **LLM Repair Loop**: Evaluators can raise `EvaluatorRepairRequest` to trigger LLM-based code repair before discarding broken programs
 - **Process Worker Pattern**: Each iteration runs in fresh process with database snapshot
 - **Double-Selection**: Programs for inspiration differ from those shown to LLM
 - **Lazy Migration**: Islands migrate based on generation counts, not iterations

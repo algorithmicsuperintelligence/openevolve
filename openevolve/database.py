@@ -1435,7 +1435,7 @@ class ProgramDatabase:
             Parent program selected using fitness-weighted sampling
         """
         island_id = island_id % len(self.islands)
-        island_programs = list(self.islands[island_id])
+        island_programs = sorted(self.islands[island_id])
 
         if not island_programs:
             # Island is empty, fall back to any available program

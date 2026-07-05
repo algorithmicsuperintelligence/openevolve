@@ -468,6 +468,9 @@ evaluator:
   enable_artifacts: true      # Error feedback to LLM
   cascade_evaluation: true    # Multi-stage testing
   use_llm_feedback: true      # AI code quality assessment
+  repair_on_failure: true     # LLM repair on EvaluatorRepairRequest
+  max_repair_attempts: 2      # Retry limit per broken program
+  repair_diff_based: false    # true=SEARCH/REPLACE diffs, false=full rewrite
 
 prompt:
   # Sophisticated inspiration system
@@ -719,6 +722,44 @@ return EvaluationResult(
 ```
 
 This creates a **feedback loop** where each generation learns from previous mistakes!
+
+### LLM-Based Code Repair
+
+When evolved code has a correctable error (e.g. a compilation failure), your evaluator can raise `EvaluatorRepairRequest` to trigger an automatic LLM repair attempt instead of discarding the program:
+
+```python
+from openevolve.evaluation_result import EvaluatorRepairRequest
+
+def evaluate(program_path):
+    result = compile(program_path)
+    if result.returncode != 0:
+        with open(program_path) as f:
+            code = f.read()
+        raise EvaluatorRepairRequest(
+            message="Compilation failed",
+            broken_code=code,
+            repair_context=result.stderr,
+            language="cpp",
+            fallback_metrics={"combined_score": 0.0},  # used if repair fails
+        )
+    # ... normal evaluation ...
+```
+
+Enable repair in your config:
+
+```yaml
+evaluator:
+  repair_on_failure: true
+  max_repair_attempts: 2
+  repair_diff_based: false  # true for SEARCH/REPLACE diffs, false for full rewrite
+
+llm:
+  repair_models:  # optional — falls back to evaluator_models, then models
+    - name: "your-repair-model"
+      weight: 1.0
+```
+
+Repair history is stored in program artifacts and displayed in the visualizer.
 
 ## Visualization
 

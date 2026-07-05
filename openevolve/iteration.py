@@ -168,6 +168,21 @@ async def run_iteration_with_shared_db(
         # Handle artifacts if they exist
         artifacts = evaluator.get_pending_artifacts(child_id)
 
+        # If the evaluator performed an LLM repair, use the repaired code as
+        # the canonical source for the database entry and demote the original
+        # broken LLM output to metadata["original_llm_code"].
+        repaired_code = evaluator.get_pending_repair(child_id)
+        repair_metadata: dict = {}
+        if repaired_code is not None:
+            repair_metadata["original_llm_code"] = child_code
+            repair_metadata["repair_history"] = (
+                (artifacts or {}).pop("repair_history", [])
+            )
+            child_code = repaired_code
+            logger.info(
+                f"Iteration {iteration}: using LLM-repaired code for program {child_id}"
+            )
+
         # Set template_key of Prompts
         template_key = "full_rewrite_user" if not config.diff_based_evolution else "diff_user"
 
@@ -184,6 +199,7 @@ async def run_iteration_with_shared_db(
             metadata={
                 "changes": changes_summary,
                 "parent_metrics": parent.metrics,
+                **repair_metadata,
             },
             prompts=(
                 {

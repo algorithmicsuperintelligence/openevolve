@@ -112,6 +112,9 @@ class OpenEvolve:
             for model_cfg in self.config.llm.evaluator_models:
                 if not hasattr(model_cfg, "random_seed") or model_cfg.random_seed is None:
                     model_cfg.random_seed = llm_seed
+            for model_cfg in self.config.llm.repair_models:
+                if not hasattr(model_cfg, "random_seed") or model_cfg.random_seed is None:
+                    model_cfg.random_seed = llm_seed
 
             logger.info(f"Set random seed to {self.config.random_seed} for reproducibility")
             logger.debug(f"Generated LLM seed: {llm_seed}")
@@ -139,6 +142,7 @@ class OpenEvolve:
         # Initialize components
         self.llm_ensemble = LLMEnsemble(self.config.llm.models)
         self.llm_evaluator_ensemble = LLMEnsemble(self.config.llm.evaluator_models)
+        self.llm_repair_ensemble = LLMEnsemble(self.config.llm.repair_models)
 
         self.prompt_sampler = PromptSampler(self.config.prompt)
         self.evaluator_prompt_sampler = PromptSampler(self.config.prompt)
@@ -158,6 +162,7 @@ class OpenEvolve:
             self.evaluator_prompt_sampler,
             database=self.database,
             suffix=Path(self.initial_program_path).suffix,
+            repair_llm_ensemble=self.llm_repair_ensemble,
         )
         self.evaluation_file = evaluation_file
 

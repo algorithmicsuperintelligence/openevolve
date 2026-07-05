@@ -64,11 +64,13 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
     # Reconstruct model objects
     models = [LLMModelConfig(**m) for m in config_dict["llm"]["models"]]
     evaluator_models = [LLMModelConfig(**m) for m in config_dict["llm"]["evaluator_models"]]
+    repair_models = [LLMModelConfig(**m) for m in config_dict["llm"].get("repair_models", [])]
 
     # Create LLM config with models
     llm_dict = config_dict["llm"].copy()
     llm_dict["models"] = models
     llm_dict["evaluator_models"] = evaluator_models
+    llm_dict["repair_models"] = repair_models
     llm_config = LLMConfig(**llm_dict)
 
     # Create other configs
@@ -118,6 +120,7 @@ def _lazy_init_worker_components():
 
         # Create evaluator-specific components
         evaluator_llm = LLMEnsemble(_worker_config.llm.evaluator_models)
+        repair_llm = LLMEnsemble(_worker_config.llm.repair_models)
         evaluator_prompt = PromptSampler(_worker_config.prompt)
         evaluator_prompt.set_templates("evaluator_system_message")
 
@@ -128,6 +131,7 @@ def _lazy_init_worker_components():
             evaluator_prompt,
             database=None,  # No shared database in worker
             suffix=getattr(_worker_config, "file_suffix", ".py"),
+            repair_llm_ensemble=repair_llm,
         )
 
 
@@ -294,6 +298,17 @@ def _run_iteration_worker(
         # Get artifacts
         artifacts = _worker_evaluator.get_pending_artifacts(child_id)
 
+        # Apply LLM repair if the evaluator performed one (mirrors iteration.py)
+        repaired_code = _worker_evaluator.get_pending_repair(child_id)
+        repair_metadata: dict = {}
+        if repaired_code is not None:
+            repair_metadata["original_llm_code"] = child_code
+            repair_metadata["repair_history"] = (artifacts or {}).pop("repair_history", [])
+            child_code = repaired_code
+            logger.info(
+                f"Worker iteration {iteration}: using LLM-repaired code for program {child_id}"
+            )
+
         # Create child program
         child_program = Program(
             id=child_id,
@@ -308,6 +323,7 @@ def _run_iteration_worker(
                 "changes": changes_summary,
                 "parent_metrics": parent.metrics,
                 "island": parent_island,
+                **repair_metadata,
             },
         )
 
@@ -370,6 +386,7 @@ class ProcessParallelController:
             "llm": {
                 "models": [asdict(m) for m in config.llm.models],
                 "evaluator_models": [asdict(m) for m in config.llm.evaluator_models],
+                "repair_models": [asdict(m) for m in config.llm.repair_models],
                 "api_base": config.llm.api_base,
                 "api_key": config.llm.api_key,
                 "temperature": config.llm.temperature,
@@ -593,8 +610,11 @@ class ProcessParallelController:
                                 artifacts=result.artifacts,
                                 island_id=island_id,
                                 metadata={
+                                    **{
+                                        k: v for k, v in child_program.metadata.items()
+                                        if k not in ("parent_metrics", "island")
+                                    },
                                     "iteration_time": result.iteration_time,
-                                    "changes": child_program.metadata.get("changes", ""),
                                 },
                             )
 

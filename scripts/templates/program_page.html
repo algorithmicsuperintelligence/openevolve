@@ -36,6 +36,43 @@
         </ul>
     <h2>Code:</h2>
     <pre>{{ program_data.code }}</pre>
+    {% if program_data.metadata and program_data.metadata.repair_history %}
+    <h2>Repairs:</h2>
+    <p>This program was repaired by the LLM before evaluation.
+       The repaired source is shown above.
+       The original broken LLM output and repair attempts are shown below.</p>
+    {% if program_data.metadata.original_llm_code %}
+    <h3>Original LLM-generated code (before repair):</h3>
+    <pre>{{ program_data.metadata.original_llm_code }}</pre>
+    {% endif %}
+    <h3>Repair attempts:</h3>
+    <table style="border-collapse:collapse;width:100%;border:1px solid #ddd;border-radius:4px;overflow:hidden;">
+      <thead>
+        <tr style="background:#2d3748;color:#fff;">
+          <th style="padding:6px 10px;font-weight:600;text-align:center;width:70px;">#</th>
+          <th style="padding:6px 10px;font-weight:600;width:100px;">Status</th>
+          <th style="padding:6px 10px;font-weight:600;">Compiler output / notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in program_data.metadata.repair_history %}
+        <tr style="border-bottom:1px solid #ddd;">
+          <td style="padding:6px 10px;text-align:center;font-weight:600;color:#444;">{{ entry.attempt }}</td>
+          <td style="padding:6px 10px;">
+            {% if entry.succeeded %}
+            <span style="display:inline-block;padding:1px 8px;border-radius:3px;background:#1a7f3c;color:#fff;font-weight:600;font-size:0.88em;">✓ ok</span>
+            {% else %}
+            <span style="display:inline-block;padding:1px 8px;border-radius:3px;background:#b91c1c;color:#fff;font-weight:600;font-size:0.88em;">✗ fail</span>
+            {% endif %}
+          </td>
+          <td style="padding:6px 10px;">
+            <pre style="margin:0;font-size:0.85em;color:#333;">{{ entry.error or entry.repair_error or '—' }}</pre>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
     <h2>Prompts:</h2>
     <ul>
         {#-- recursive “display” macro --#}

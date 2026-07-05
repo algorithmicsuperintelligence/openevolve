@@ -109,8 +109,12 @@ class LLMConfig(LLMModelConfig):
     # n-model configuration for evolution LLM ensemble
     models: List[LLMModelConfig] = field(default_factory=list)
 
-    # n-model configuration for evaluator LLM ensemble
+    # n-model configuration for evaluator LLM ensemble (LLM feedback scoring)
     evaluator_models: List[LLMModelConfig] = field(default_factory=lambda: [])
+
+    # n-model configuration for repair LLM ensemble.
+    # Falls back to evaluator_models (then models) when not set.
+    repair_models: List[LLMModelConfig] = field(default_factory=lambda: [])
 
     # Backwardes compatibility with primary_model(_weight) options
     primary_model: str = None
@@ -184,7 +188,7 @@ class LLMConfig(LLMModelConfig):
 
     def update_model_params(self, args: Dict[str, Any], overwrite: bool = False) -> None:
         """Update model parameters for all models"""
-        for model in self.models + self.evaluator_models:
+        for model in self.models + self.evaluator_models + self.repair_models:
             for key, value in args.items():
                 if overwrite or getattr(model, key, None) is None:
                     setattr(model, key, value)
@@ -194,6 +198,7 @@ class LLMConfig(LLMModelConfig):
         # Clear existing models lists
         self.models = []
         self.evaluator_models = []
+        self.repair_models = []
 
         # Re-run model generation logic from __post_init__
         if self.primary_model:
@@ -219,6 +224,10 @@ class LLMConfig(LLMModelConfig):
         # If no evaluator models are defined, use the same models as for evolution
         if not self.evaluator_models:
             self.evaluator_models = self.models.copy()
+
+        # If no repair models are defined, fall back to evaluator_models
+        if not self.repair_models:
+            self.repair_models = self.evaluator_models.copy()
 
         # Update models with shared configuration values
         shared_config = {
@@ -382,6 +391,17 @@ class EvaluatorConfig:
     # Artifact handling
     enable_artifacts: bool = True
     max_artifact_storage: int = 100 * 1024 * 1024  # 100MB per program
+
+    # LLM-based repair on EvaluatorRepairRequest
+    # When a user evaluator raises EvaluatorRepairRequest (e.g. on compile
+    # failure) OpenEvolve will ask the LLM to fix the code and re-evaluate,
+    # storing the repaired version in the database rather than the broken
+    # original.
+    repair_on_failure: bool = False
+    max_repair_attempts: int = 2
+    # True  → ask the LLM for SEARCH/REPLACE diffs (uses repair_diff_user template)
+    # False → ask the LLM for a full rewrite     (uses repair_full_rewrite_user template)
+    repair_diff_based: bool = False
 
 
 @dataclass

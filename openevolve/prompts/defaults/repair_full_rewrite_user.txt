@@ -1,0 +1,24 @@
+The following {language} program failed to evaluate due to the error below.
+Repair the program so that all errors are resolved.
+Preserve all structure, class names, plugin keys, and invariants that are unrelated to the error.
+
+# Error
+
+{error_message}
+
+# Additional context
+
+{repair_context}
+
+# Broken Program
+
+```{language}
+{broken_code}
+```
+
+Output ONLY the complete corrected program inside a single code fence.
+Do not include any commentary, explanation, or text outside the code fence.
+
+```{language}
+# corrected program here
+```

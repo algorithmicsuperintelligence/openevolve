@@ -19,7 +19,7 @@ import traceback
 
 from openevolve.config import EvaluatorConfig
 from openevolve.database import ProgramDatabase
-from openevolve.evaluation_result import EvaluationResult
+from openevolve.evaluation_result import EvaluationResult, EvaluatorRepairRequest
 from openevolve.database import ProgramDatabase
 from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.utils.async_utils import TaskPool, run_in_executor
@@ -45,11 +45,15 @@ class Evaluator:
         prompt_sampler: Optional[PromptSampler] = None,
         database: Optional[ProgramDatabase] = None,
         suffix: Optional[str] = ".py",
+        repair_llm_ensemble: Optional[LLMEnsemble] = None,
     ):
         self.config = config
         self.evaluation_file = evaluation_file
         self.program_suffix = suffix
         self.llm_ensemble = llm_ensemble
+        # Separate ensemble for LLM-based code repair; falls back to the main
+        # evaluator ensemble (llm_ensemble) when not provided.
+        self.repair_llm_ensemble = repair_llm_ensemble or llm_ensemble
         self.prompt_sampler = prompt_sampler
         self.database = database
 
@@ -61,6 +65,11 @@ class Evaluator:
 
         # Pending artifacts storage for programs
         self._pending_artifacts: Dict[str, Dict[str, Union[str, bytes]]] = {}
+
+        # Pending repairs: program_id → repaired source code.
+        # Populated by _attempt_repair when repair succeeds; consumed by
+        # iteration.py / process_parallel.py via get_pending_repair().
+        self._pending_repairs: Dict[str, str] = {}
 
         logger.info(f"Initialized evaluator with {evaluation_file}")
 
@@ -264,6 +273,28 @@ class Evaluator:
 
                 return {"error": 0.0, "timeout": True}
 
+            except EvaluatorRepairRequest as repair_req:
+                # The user evaluator signalled that the code needs LLM repair
+                # (e.g. a compilation failure).  Attempt repair if configured;
+                # otherwise fall through to the standard zero-score path.
+                if self.config.repair_on_failure and self.llm_ensemble:
+                    repaired_metrics = await self._attempt_repair(repair_req, program_id)
+                    if repaired_metrics is not None:
+                        return repaired_metrics
+                # Repair disabled, not configured, or all attempts exhausted.
+                logger.warning(
+                    f"Repair {'failed' if self.config.repair_on_failure else 'disabled'} "
+                    f"for program{program_id_str}: {repair_req}"
+                )
+                if artifacts_enabled and program_id:
+                    if program_id not in self._pending_artifacts:
+                        self._pending_artifacts[program_id] = {}
+                    self._pending_artifacts[program_id].update({
+                        "compile_error": str(repair_req),
+                        "repair_context": repair_req.repair_context,
+                    })
+                return repair_req.fallback_metrics
+
             except Exception as e:
                 last_exception = e
                 logger.warning(
@@ -327,6 +358,235 @@ class Evaluator:
             Artifacts dictionary or None if not found
         """
         return self._pending_artifacts.pop(program_id, None)
+
+    def get_pending_repair(self, program_id: str) -> Optional[str]:
+        """
+        Get and clear the repaired source code for a program, if one exists.
+
+        Returns the repaired code string when a previous ``_attempt_repair``
+        call succeeded, or ``None`` when no repair was performed.  The entry is
+        removed from the internal store on first read (one-shot).
+
+        Args:
+            program_id: Program ID used during evaluation.
+
+        Returns:
+            Repaired source code string, or ``None``.
+        """
+        return self._pending_repairs.pop(program_id, None)
+
+    async def _attempt_repair(
+        self,
+        repair_req: EvaluatorRepairRequest,
+        program_id: str,
+    ) -> Optional[Dict[str, float]]:
+        """
+        Attempt to repair broken code via the LLM, then re-evaluate.
+
+        Loops up to ``config.max_repair_attempts`` times.  On success the
+        repaired code is stored in ``_pending_repairs[program_id]`` and the
+        repair history is added to ``_pending_artifacts[program_id]`` so that
+        ``iteration.py`` can move both into ``Program.metadata``.
+
+        Args:
+            repair_req: The ``EvaluatorRepairRequest`` raised by the evaluator.
+            program_id: Program ID for artifact/repair storage.
+
+        Returns:
+            Metrics dict from the successfully repaired evaluation, or ``None``
+            if all repair attempts failed.
+        """
+        artifacts_enabled = os.environ.get("ENABLE_ARTIFACTS", "true").lower() == "true"
+        broken_code = repair_req.broken_code
+        error_message = str(repair_req)
+        repair_context = repair_req.repair_context
+        language = repair_req.language
+        repair_history: List[Dict] = []
+
+        for attempt in range(1, self.config.max_repair_attempts + 1):
+            logger.info(
+                f"Repair attempt {attempt}/{self.config.max_repair_attempts} "
+                f"for program {program_id} (language={language})"
+            )
+
+            repaired_code = await self._repair_code(
+                broken_code=broken_code,
+                error_message=error_message,
+                repair_context=repair_context,
+                language=language,
+            )
+            if repaired_code is None:
+                logger.warning(f"Repair attempt {attempt}: LLM returned no parseable code")
+                repair_history.append({
+                    "attempt": attempt,
+                    "error": error_message,
+                    "repair_error": "LLM returned no parseable code",
+                    "succeeded": False,
+                })
+                break
+
+            # Write the repaired code to a temp file and re-evaluate
+            with tempfile.NamedTemporaryFile(
+                suffix=self.program_suffix, delete=False
+            ) as tmp:
+                tmp.write(repaired_code.encode("utf-8"))
+                tmp_path = tmp.name
+
+            try:
+                result = await self._direct_evaluate(tmp_path)
+                eval_result = self._process_evaluation_result(result)
+
+                # Success — store the repaired code and history
+                repair_history.append({
+                    "attempt": attempt,
+                    "error": None,
+                    "succeeded": True,
+                })
+                logger.info(
+                    f"Repair succeeded on attempt {attempt} for program {program_id}"
+                )
+                self._pending_repairs[program_id] = repaired_code
+                if artifacts_enabled and program_id:
+                    if program_id not in self._pending_artifacts:
+                        self._pending_artifacts[program_id] = {}
+                    self._pending_artifacts[program_id]["repair_history"] = repair_history
+                    if eval_result.has_artifacts():
+                        self._pending_artifacts[program_id].update(eval_result.artifacts)
+
+                elapsed = 0.0  # timing already handled by outer evaluate_program
+                logger.info(
+                    f"Repaired program {program_id}: "
+                    f"{format_metrics_safe(eval_result.metrics)}"
+                )
+                return eval_result.metrics
+
+            except EvaluatorRepairRequest as next_req:
+                # Re-evaluation raised another repair request — prepare next loop
+                error_message = str(next_req)
+                repair_context = next_req.repair_context
+                broken_code = next_req.broken_code
+                repair_history.append({
+                    "attempt": attempt,
+                    "error": error_message,
+                    "succeeded": False,
+                })
+            except Exception as exc:
+                error_message = str(exc)
+                repair_history.append({
+                    "attempt": attempt,
+                    "error": error_message,
+                    "succeeded": False,
+                })
+                logger.warning(f"Repair attempt {attempt} raised exception: {exc}")
+                break
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+        # All attempts exhausted
+        logger.warning(
+            f"All {self.config.max_repair_attempts} repair attempt(s) failed "
+            f"for program {program_id}"
+        )
+        if artifacts_enabled and program_id:
+            if program_id not in self._pending_artifacts:
+                self._pending_artifacts[program_id] = {}
+            self._pending_artifacts[program_id].update({
+                "compile_error": str(repair_req),
+                "repair_context": repair_req.repair_context,
+                "repair_history": repair_history,
+                "repair_failed": True,
+            })
+        return None
+
+    async def _repair_code(
+        self,
+        broken_code: str,
+        error_message: str,
+        repair_context: str,
+        language: str,
+    ) -> Optional[str]:
+        """
+        Ask the LLM to repair broken code and return the fixed source.
+
+        Uses the ``repair_full_rewrite_user`` or ``repair_diff_user`` template
+        (depending on ``config.repair_diff_based``) and the ``repair_system_message``
+        template (falling back to ``system_message`` if absent).
+
+        Returns the repaired code string on success, or ``None`` if the LLM
+        response could not be parsed.
+        """
+        if not self.repair_llm_ensemble or not self.prompt_sampler:
+            logger.warning("_repair_code called but repair_llm_ensemble or prompt_sampler is None")
+            return None
+
+        # --- Choose templates ---
+        user_template_name = (
+            "repair_diff_user" if self.config.repair_diff_based else "repair_full_rewrite_user"
+        )
+        try:
+            user_template = self.prompt_sampler.template_manager.get_template(user_template_name)
+        except ValueError:
+            logger.warning(
+                f"Repair template '{user_template_name}' not found — repair skipped. "
+                "Ensure the template file exists in your prompts directory."
+            )
+            return None
+
+        # Prefer a dedicated repair system message; fall back to the evolution one.
+        try:
+            system_message = self.prompt_sampler.template_manager.get_template(
+                "repair_system_message"
+            )
+        except ValueError:
+            try:
+                system_message = self.prompt_sampler.template_manager.get_template(
+                    "system_message"
+                )
+            except ValueError:
+                system_message = (
+                    "You are an expert software developer. "
+                    "Fix all errors in the provided code."
+                )
+
+        try:
+            # Use sequential replacement instead of str.format() so that braces
+            # inside broken_code / error_message / repair_context (e.g. C++ code)
+            # do not raise KeyError or corrupt the template.
+            user_message = user_template
+            for placeholder, value in [
+                ("{language}", language),
+                ("{error_message}", error_message),
+                ("{repair_context}", repair_context),
+                ("{broken_code}", broken_code),
+            ]:
+                user_message = user_message.replace(placeholder, value)
+        except Exception as exc:
+            logger.warning(f"Repair template substitution error: {exc}")
+            return None
+
+        try:
+            llm_response = await self.repair_llm_ensemble.generate_with_context(
+                system_message=system_message,
+                messages=[{"role": "user", "content": user_message}],
+            )
+        except Exception as exc:
+            logger.warning(f"LLM call during repair failed: {exc}")
+            return None
+
+        # --- Parse the LLM response ---
+        if self.config.repair_diff_based:
+            from openevolve.utils.code_utils import apply_diff
+            repaired = apply_diff(broken_code, llm_response)
+        else:
+            from openevolve.utils.code_utils import parse_full_rewrite
+            repaired = parse_full_rewrite(llm_response, language)
+
+        if not repaired or not repaired.strip():
+            logger.warning("Repair LLM response yielded empty code after parsing")
+            return None
+
+        return repaired
 
     async def _direct_evaluate(
         self, program_path: str

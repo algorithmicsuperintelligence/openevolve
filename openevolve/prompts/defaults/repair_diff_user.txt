@@ -1,0 +1,27 @@
+The following {language} program failed to evaluate due to the error below.
+Repair the program using minimal SEARCH/REPLACE diffs.
+Preserve all structure, class names, plugin keys, and invariants that are unrelated to the error.
+
+# Error
+
+{error_message}
+
+# Additional context
+
+{repair_context}
+
+# Broken Program
+
+```{language}
+{broken_code}
+```
+
+Use the exact SEARCH/REPLACE diff format shown below.
+Each SEARCH block must match the broken program exactly (including whitespace).
+Multiple diff blocks are allowed.
+
+<<<<<<< SEARCH
+# exact lines to replace
+=======
+# corrected replacement
+>>>>>>> REPLACE

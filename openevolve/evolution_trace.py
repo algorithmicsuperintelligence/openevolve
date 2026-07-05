@@ -102,6 +102,9 @@ class EvolutionTracer:
             "total_improvement": {},
             "best_improvement": {},
             "worst_decline": {},
+            # Repair stats: how often LLM repair was triggered / succeeded
+            "repair_triggered": 0,
+            "repair_succeeded": 0,
         }
 
         if not self.enabled:
@@ -232,6 +235,14 @@ class EvolutionTracer:
                 if delta < self.stats["worst_decline"][metric]:
                     self.stats["worst_decline"][metric] = delta
 
+        # Track repair statistics from child program metadata
+        child_meta = trace.metadata or {}
+        repair_history = child_meta.get("repair_history")
+        if repair_history is not None:
+            self.stats["repair_triggered"] += 1
+            if any(entry.get("succeeded") for entry in repair_history):
+                self.stats["repair_succeeded"] += 1
+
     def flush(self):
         """Write buffered traces to file"""
         if not self.enabled or not self.buffer:
@@ -259,12 +270,18 @@ class EvolutionTracer:
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get current tracing statistics"""
+        total = self.stats["total_traces"]
+        triggered = self.stats["repair_triggered"]
         return {
             **self.stats,
             "improvement_rate": (
-                self.stats["improvement_count"] / self.stats["total_traces"]
-                if self.stats["total_traces"] > 0
-                else 0
+                self.stats["improvement_count"] / total if total > 0 else 0
+            ),
+            # Fraction of all iterations where repair was triggered
+            "repair_trigger_rate": triggered / total if total > 0 else 0,
+            # Fraction of repair attempts that succeeded
+            "repair_success_rate": (
+                self.stats["repair_succeeded"] / triggered if triggered > 0 else 0
             ),
         }
 
@@ -302,6 +319,13 @@ class EvolutionTracer:
         stats = self.get_statistics()
         logger.info(f"Evolution tracing complete. Total traces: {stats['total_traces']}")
         logger.info(f"Improvement rate: {stats['improvement_rate']:.2%}")
+
+        if stats["repair_triggered"] > 0:
+            logger.info(
+                f"Repair: triggered={stats['repair_triggered']}, "
+                f"succeeded={stats['repair_succeeded']}, "
+                f"success_rate={stats['repair_success_rate']:.2%}"
+            )
 
         if stats["best_improvement"]:
             logger.info(f"Best improvements: {stats['best_improvement']}")
