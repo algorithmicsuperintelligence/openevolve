@@ -79,6 +79,11 @@ class LLMModelConfig:
     # Reasoning parameters
     reasoning_effort: Optional[str] = None
 
+    # Reasoning model override: True forces reasoning-model parameter conventions
+    # (max_completion_tokens, no temperature/top_p), False forces standard conventions,
+    # None (default) auto-detects based on known OpenAI reasoning model prefixes.
+    is_reasoning_model: Optional[bool] = None
+
     # Manual mode (human-in-the-loop)
     manual_mode: Optional[bool] = None
     _manual_queue_dir: Optional[str] = None
@@ -167,6 +172,8 @@ class LLMConfig(LLMModelConfig):
             self.evaluator_models = self.models.copy()
 
         # Update models with shared configuration values
+        # Note: is_reasoning_model is intentionally excluded from shared_config.
+        # It is a per-model override, not a shared default.
         shared_config = {
             "api_base": self.api_base,
             "api_key": self.api_key,
@@ -221,6 +228,8 @@ class LLMConfig(LLMModelConfig):
             self.evaluator_models = self.models.copy()
 
         # Update models with shared configuration values
+        # Note: is_reasoning_model is intentionally excluded from shared_config.
+        # It is a per-model override, not a shared default.
         shared_config = {
             "api_base": self.api_base,
             "api_key": self.api_key,

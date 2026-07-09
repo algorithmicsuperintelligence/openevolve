@@ -20,6 +20,39 @@ from openevolve.llm.base import LLMInterface
 
 logger = logging.getLogger(__name__)
 
+# OpenAI reasoning models that require max_completion_tokens instead of max_tokens.
+# These models don't support temperature/top_p and use different parameters.
+OPENAI_REASONING_MODEL_PREFIXES: tuple[str, ...] = (
+    # O-series reasoning models (o1, o1-mini, o1-preview, o3, o3-mini, o3-pro, o4-mini, etc.)
+    "o1",
+    "o3",
+    "o4-",
+    # GPT-5 series (gpt-5, gpt-5-mini, gpt-5-nano, etc.)
+    "gpt-5",
+    # GPT OSS series (gpt-oss-120b, gpt-oss-20b, etc.)
+    "gpt-oss-",
+)
+
+
+def is_reasoning_model(
+    model_name: str,
+    config_flag: Optional[bool] = None,
+) -> bool:
+    """Detect if a model should be treated as a reasoning model.
+
+    Args:
+        model_name: The model name/identifier.
+        config_flag: Explicit override from config. If True/False, returns that
+            value directly.  If None (default), auto-detects based on known
+            OpenAI reasoning model prefixes.
+
+    Returns:
+        True if the model should be treated as a reasoning model.
+    """
+    if config_flag is not None:
+        return config_flag
+    return model_name.lower().startswith(OPENAI_REASONING_MODEL_PREFIXES)
+
 
 def _iso_now() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
@@ -63,9 +96,10 @@ class OpenAILLM(LLMInterface):
         self.api_key = model_cfg.api_key
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
+        self.is_reasoning_model_flag = getattr(model_cfg, "is_reasoning_model", None)
 
         # Manual mode: enabled via llm.manual_mode in config.yaml
-        self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
+        self.manual_mode = getattr(model_cfg, "manual_mode", False) is True
         self.manual_queue_dir: Optional[Path] = None
 
         if self.manual_mode:
@@ -114,29 +148,10 @@ class OpenAILLM(LLMInterface):
         formatted_messages.extend(messages)
 
         # Set up generation parameters
-        # Define OpenAI reasoning models that require max_completion_tokens
-        # These models don't support temperature/top_p and use different parameters
-        OPENAI_REASONING_MODEL_PREFIXES = (
-            # O-series reasoning models
-            "o1-",
-            "o1",  # o1, o1-mini, o1-preview
-            "o3-",
-            "o3",  # o3, o3-mini, o3-pro
-            "o4-",  # o4-mini
-            # GPT-5 series are also reasoning models
-            "gpt-5-",
-            "gpt-5",  # gpt-5, gpt-5-mini, gpt-5-nano
-            # The GPT OSS series are also reasoning models
-            "gpt-oss-120b",
-            "gpt-oss-20b",
-        )
+        # Detect whether to use reasoning-model parameter conventions
+        is_reasoning = is_reasoning_model(self.model, self.is_reasoning_model_flag)
 
-        # Check if this is an OpenAI reasoning model based on model name pattern
-        # This works for all endpoints (OpenAI, Azure, OptiLLM, OpenRouter, etc.)
-        model_lower = str(self.model).lower()
-        is_openai_reasoning_model = model_lower.startswith(OPENAI_REASONING_MODEL_PREFIXES)
-
-        if is_openai_reasoning_model:
+        if is_reasoning:
             # For OpenAI reasoning models
             params = {
                 "model": self.model,
