@@ -10,51 +10,40 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-M = 1_000_000
-
-OPENAI_EMBEDDING_MODELS = [
-    "text-embedding-3-small",
-    "text-embedding-3-large",
-]
-
 AZURE_EMBEDDING_MODELS = [
     "azure-text-embedding-3-small",
     "azure-text-embedding-3-large",
 ]
 
-OPENAI_EMBEDDING_COSTS = {
-    "text-embedding-3-small": 0.02 / M,
-    "text-embedding-3-large": 0.13 / M,
-}
-
 
 class EmbeddingClient:
-    def __init__(self, model_name: str = "text-embedding-3-small"):
+    def __init__(self, model_name: str = "text-embedding-3-small", base_url: str | None = None):
         """
         Initialize the EmbeddingClient.
 
         Args:
-            model (str): The OpenAI embedding model name to use.
+            model_name: The embedding model name to use.
+            base_url: Optional base URL for the embedding API endpoint.
         """
-        self.client, self.model = self._get_client_model(model_name)
+        self.client, self.model = self._get_client_model(model_name, base_url)
 
-    def _get_client_model(self, model_name: str) -> tuple[openai.OpenAI, str]:
-        if model_name in OPENAI_EMBEDDING_MODELS:
-            # Use OPENAI_EMBEDDING_API_KEY if set, otherwise fall back to OPENAI_API_KEY
-            # This allows users to use OpenRouter for LLMs while using OpenAI for embeddings
-            embedding_api_key = os.getenv("OPENAI_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
-            client = openai.OpenAI(api_key=embedding_api_key)
-            model_to_use = model_name
-        elif model_name in AZURE_EMBEDDING_MODELS:
+    def _get_client_model(
+        self, model_name: str, base_url: str | None = None
+    ) -> tuple[openai.OpenAI, str]:
+        if model_name in AZURE_EMBEDDING_MODELS:
             # get rid of the azure- prefix
             model_to_use = model_name.split("azure-")[-1]
             client = openai.AzureOpenAI(
                 api_key=os.getenv("AZURE_OPENAI_API_KEY"),
                 api_version=os.getenv("AZURE_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_API_ENDPOINT"),
+                azure_endpoint=os.environ["AZURE_API_ENDPOINT"],
             )
         else:
-            raise ValueError(f"Invalid embedding model: {model_name}")
+            # Use OPENAI_EMBEDDING_API_KEY if set, otherwise fall back to OPENAI_API_KEY
+            # This allows users to use OpenRouter for LLMs while using OpenAI for embeddings
+            embedding_api_key = os.getenv("OPENAI_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
+            client = openai.OpenAI(api_key=embedding_api_key, base_url=base_url)
+            model_to_use = model_name
 
         return client, model_to_use
 
