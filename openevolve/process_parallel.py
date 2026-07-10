@@ -332,6 +332,61 @@ def _run_iteration_worker(
         return SerializableResult(error=str(e), iteration=iteration)
 
 
+def _wait_for_processes(processes: tuple[mp.Process, ...], timeout: float) -> list[mp.Process]:
+    """Wait for process handles to observe worker exits without blocking indefinitely."""
+    deadline = time.monotonic() + timeout
+    alive = list(processes)
+    while alive:
+        next_alive = []
+        for process in alive:
+            try:
+                process.join(timeout=0)
+                if process.is_alive():
+                    next_alive.append(process)
+            except (AssertionError, ValueError):
+                continue
+        alive = next_alive
+        remaining = deadline - time.monotonic()
+        if not alive or remaining <= 0:
+            break
+        time.sleep(min(0.001, remaining))
+    return alive
+
+
+def _terminate_process_pool(executor: ProcessPoolExecutor) -> None:
+    """Cancel queued work and ensure all process-pool workers have exited."""
+    # Python < 3.14 has no public force-shutdown API. Capture only this
+    # executor's workers before shutdown clears its private process mapping.
+    process_map = getattr(executor, "_processes", None) or {}
+    processes = tuple(process_map.copy().values())
+    terminate_workers = getattr(executor, "terminate_workers", None)
+
+    if callable(terminate_workers):
+        terminate_workers()
+    else:
+        executor.shutdown(wait=False, cancel_futures=True)
+        for process in processes:
+            try:
+                if process.is_alive():
+                    process.terminate()
+            except (ProcessLookupError, ValueError):
+                continue
+
+    surviving_processes = _wait_for_processes(processes, timeout=1.0)
+    for process in surviving_processes:
+        try:
+            process.kill()
+        except (ProcessLookupError, ValueError):
+            continue
+
+    surviving_processes = _wait_for_processes(tuple(surviving_processes), timeout=1.0)
+    if surviving_processes:
+        logger.warning(
+            "Process-pool workers did not exit: %s",
+            [process.pid for process in surviving_processes],
+        )
+
+
 class ProcessParallelController:
     """Controller for process-based parallel evolution"""
 
@@ -428,9 +483,10 @@ class ProcessParallelController:
         """Stop the process pool"""
         self.shutdown_event.set()
 
-        if self.executor:
-            self.executor.shutdown(wait=True)
-            self.executor = None
+        executor = self.executor
+        self.executor = None
+        if executor:
+            _terminate_process_pool(executor)
 
         logger.info("Stopped process pool")
 
