@@ -464,6 +464,10 @@ database:
   migration_interval: 20
   feature_dimensions: ["complexity", "diversity", "performance"]
 
+  # Optional novelty filtering with Gemini embeddings
+  embedding_model: "gemini-embedding-001"
+  similarity_threshold: 0.99
+
 evaluator:
   enable_artifacts: true      # Error feedback to LLM
   cascade_evaluation: true    # Multi-stage testing
@@ -479,6 +483,9 @@ prompt:
   template_dir: "custom_prompts/"
   use_template_stochasticity: true  # Randomized prompts
 ```
+
+For Gemini embeddings, set `GEMINI_API_KEY`. `GOOGLE_API_KEY` is also supported
+as a fallback. OpenEvolve uses Google's OpenAI-compatible endpoint automatically.
 
 <details>
 <summary><b>🎯 Feature Engineering</b></summary>

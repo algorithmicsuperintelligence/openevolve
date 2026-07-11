@@ -3,10 +3,11 @@ Adapted from SakanaAI/ShinkaEvolve (Apache-2.0 License)
 Original source: https://github.com/SakanaAI/ShinkaEvolve/blob/main/shinka/llm/embedding.py
 """
 
-import os
-import openai
-from typing import Union, List
 import logging
+import os
+from typing import List, Union
+
+import openai
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,10 @@ OPENAI_EMBEDDING_MODELS = [
 AZURE_EMBEDDING_MODELS = [
     "azure-text-embedding-3-small",
     "azure-text-embedding-3-large",
+]
+
+GEMINI_EMBEDDING_MODELS = [
+    "gemini-embedding-001",
 ]
 
 OPENAI_EMBEDDING_COSTS = {
@@ -53,6 +58,13 @@ class EmbeddingClient:
                 api_version=os.getenv("AZURE_API_VERSION"),
                 azure_endpoint=os.getenv("AZURE_API_ENDPOINT"),
             )
+        elif model_name in GEMINI_EMBEDDING_MODELS:
+            gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            client = openai.OpenAI(
+                api_key=gemini_api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
+            model_to_use = model_name
         else:
             raise ValueError(f"Invalid embedding model: {model_name}")
 
