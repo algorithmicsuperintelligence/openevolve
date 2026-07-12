@@ -467,21 +467,13 @@ class ProgramDatabase:
             parent = self._sample_from_island_weighted(island_id)
             sampling_mode = "weighted"
 
-        # Select inspirations from the same island
+        # Select inspirations using the same elite/diversity-aware strategy as sample().
+        # Pass the requested island explicitly so parallel workers remain isolated even
+        # if an archive fallback returns a parent whose metadata points elsewhere.
         if num_inspirations is None:
             num_inspirations = 5  # Default for backward compatibility
 
-        # Get other programs from the island for inspirations
-        other_programs = [pid for pid in island_programs if pid != parent.id]
-
-        if len(other_programs) < num_inspirations:
-            # Not enough programs in island, use what we have
-            inspiration_ids = other_programs
-        else:
-            # Sample inspirations
-            inspiration_ids = random.sample(other_programs, num_inspirations)
-
-        inspirations = [self.programs[pid] for pid in inspiration_ids if pid in self.programs]
+        inspirations = self._sample_inspirations(parent, n=num_inspirations, island_id=island_id)
 
         logger.debug(
             f"Sampled parent {parent.id} and {len(inspirations)} inspirations from island {island_id} "
@@ -1569,7 +1561,9 @@ class ProgramDatabase:
             parent_id = random.choice(valid_archive)
             return self.programs[parent_id]
 
-    def _sample_inspirations(self, parent: Program, n: int = 5) -> List[Program]:
+    def _sample_inspirations(
+        self, parent: Program, n: int = 5, island_id: Optional[int] = None
+    ) -> List[Program]:
         """
         Sample inspiration programs for the next evolution step.
 
@@ -1579,14 +1573,23 @@ class ProgramDatabase:
         Args:
             parent: Parent program
             n: Number of inspirations to sample
+            island_id: Explicit island to sample from. If omitted, use the
+                parent program's island metadata.
 
         Returns:
             List of inspiration programs from the current island
         """
         inspirations = []
 
-        # Get the parent's island (should be current_island)
-        parent_island = parent.metadata.get("island", self.current_island)
+        # Prefer an explicitly requested island. This matters for
+        # sample_from_island(), where archive fallback may return a parent whose
+        # metadata belongs to a different island.
+        if island_id is None:
+            parent_island = parent.metadata.get("island", self.current_island)
+        else:
+            parent_island = island_id
+
+        parent_island %= len(self.islands)
 
         # Get all programs from the current island
         island_program_ids = list(self.islands[parent_island])
