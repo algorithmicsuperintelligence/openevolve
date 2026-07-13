@@ -174,6 +174,7 @@ class LLMConfig(LLMModelConfig):
 
         # Update models with shared configuration values
         shared_config = {
+            "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
             "temperature": self.temperature,
@@ -228,6 +229,7 @@ class LLMConfig(LLMModelConfig):
 
         # Update models with shared configuration values
         shared_config = {
+            "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
             "temperature": self.temperature,

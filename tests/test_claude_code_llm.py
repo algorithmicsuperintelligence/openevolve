@@ -133,6 +133,81 @@ class TestMaxBudgetConfig(unittest.TestCase):
         self.assertEqual(config.llm.models[0].max_budget_usd, 3.0)
 
 
+class TestProviderPropagation(unittest.TestCase):
+    """A top-level ``llm.provider`` must reach each model in the ensemble.
+
+    Regression test for a bug where ``provider`` was omitted from the shared
+    config propagated to per-model configs, so ``provider: "claude_code"`` set
+    at the ``llm:`` level was silently dropped and every model fell back to the
+    OpenAI backend (crashing with "Missing credentials").
+    """
+
+    def test_top_level_provider_propagates_to_models(self):
+        from openevolve.config import Config
+
+        config = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "claude_code",
+                    "models": [
+                        {"name": "sonnet", "weight": 0.8},
+                        {"name": "haiku", "weight": 0.2},
+                    ],
+                }
+            }
+        )
+        self.assertTrue(config.llm.models, "expected models to be configured")
+        for model in config.llm.models:
+            self.assertEqual(model.provider, "claude_code")
+        # Evaluator models default to the evolution models and must inherit too.
+        for model in config.llm.evaluator_models:
+            self.assertEqual(model.provider, "claude_code")
+
+    def test_per_model_provider_overrides_top_level(self):
+        from openevolve.config import Config
+
+        config = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "claude_code",
+                    "models": [
+                        {"name": "sonnet", "weight": 0.5},
+                        {"name": "gpt-4o", "weight": 0.5, "provider": "openai"},
+                    ],
+                }
+            }
+        )
+        providers = {m.name: m.provider for m in config.llm.models}
+        self.assertEqual(providers["sonnet"], "claude_code")
+        self.assertEqual(providers["gpt-4o"], "openai")
+
+    def test_default_provider_is_none(self):
+        from openevolve.config import Config
+
+        config = Config.from_dict(
+            {"llm": {"models": [{"name": "gpt-4o", "weight": 1.0}]}}
+        )
+        self.assertIsNone(config.llm.models[0].provider)
+
+    def test_ensemble_builds_claude_code_from_config(self):
+        from openevolve.config import Config
+        from openevolve.llm.ensemble import LLMEnsemble
+
+        config = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "claude_code",
+                    "models": [{"name": "sonnet", "weight": 1.0}],
+                }
+            }
+        )
+        ensemble = LLMEnsemble(config.llm.models)
+        self.assertTrue(
+            all(isinstance(m, ClaudeCodeLLM) for m in ensemble.models),
+            "ensemble should build ClaudeCodeLLM instances from top-level provider",
+        )
+
+
 class TestProviderRegistry(unittest.TestCase):
     def test_claude_code_in_registry(self):
         from openevolve.llm.ensemble import _PROVIDER_REGISTRY
