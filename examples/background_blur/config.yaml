@@ -1,0 +1,90 @@
+# Portrait background blur - optimise a hot function behind a hard quality gate.
+#
+# Uses OpenRouter with a cheap, fast model. Set your key first:
+#
+#     export OPENROUTER_API_KEY=sk-or-...
+#
+# Any OpenAI-compatible endpoint works. To run fully locally with no hosted API and
+# no key, point `api_base` at a local optillm server instead, e.g.:
+#
+#     api_base: "http://localhost:8000/v1"
+#     api_key: "dummy"
+#     models: [{ name: "optillm", api_base: "http://localhost:8000/v1", weight: 1.0 }]
+
+max_iterations: 100
+checkpoint_interval: 5
+diff_based_evolution: false   # full rewrites: the win here is restructuring the blur
+language: python
+max_code_length: 40000
+
+llm:
+  api_base: "https://openrouter.ai/api/v1"
+  api_key: "${OPENROUTER_API_KEY}"
+  max_tokens: 6000
+  temperature: 0.9
+  timeout: 600
+  retries: 6
+  retry_delay: 8
+  models:
+    - name: "google/gemini-2.5-flash-lite"
+      api_base: "https://openrouter.ai/api/v1"
+      api_key: "${OPENROUTER_API_KEY}"
+      weight: 1.0
+
+prompt:
+  system_message: |
+    You are an expert at high-performance numerical Python (NumPy).
+
+    You are optimising the hot function of a real-time video pipeline: a portrait-mode
+    background blur. For every frame it must blur the background with a Gaussian of the
+    given sigma and composite the (sharp) person back on top using the supplied mask:
+
+        blurred = gaussian_blur(frame, sigma)
+        out     = mask * frame + (1 - mask) * blurred
+
+    The current implementation is correct but slow: it convolves with the full 2D
+    Gaussian kernel directly, costing O(k^2) passes per frame.
+
+    YOUR SCORE IS THE SPEEDUP. But speed only counts if the output still matches the
+    reference blur. Fidelity is a HARD GATE, not a trade-off:
+
+        mean SSIM         >= 0.98
+        worst-frame SSIM  >= 0.95
+        worst-REGION SSIM >= 0.90   (worst 16x16 block - catches localised artefacts)
+
+    Fail any of those and you score ZERO no matter how fast you are. So do NOT:
+      - skip the blur, or under-blur with a kernel smaller than sigma demands
+      - blur the person (always respect the mask)
+      - reuse a stale background across frames (the background genuinely changes;
+        a stale background leaves a person-shaped ghost that destroys one region
+        while barely moving the frame average)
+
+    Legitimate ways to go faster include (but are not limited to): exploiting the
+    separability of the Gaussian (two 1D passes instead of k^2), blurring at reduced
+    resolution and upsampling, approximating the Gaussian with repeated box blurs via
+    summed-area tables/cumsum, FFT convolution, avoiding needless float64 work and
+    redundant copies, and vectorising across the sequence.
+
+    Use only numpy and the Python standard library. Keep the public entry point
+    `process_sequence(frames, masks, sigma)` with the same signature and return type.
+
+database:
+  population_size: 30
+  num_islands: 2
+  # MAP-Elites grid: spread candidates across code complexity and how much fidelity
+  # they spend, so we keep BOTH the exact-and-fast and the approximate-and-faster
+  # strategies alive instead of collapsing onto one.
+  feature_dimensions:
+    - complexity
+    - ssim
+
+evaluator:
+  timeout: 600
+  cascade_evaluation: true
+  # Stage 1 (smoke) and stage 2 (quality gate) each return combined_score 1.0 on pass
+  # and 0.0 on reject, so a 0.5 threshold means "only benchmark what is already correct".
+  cascade_thresholds: [0.5, 0.5]
+  # IMPORTANT: fitness here is a TIMING measurement. Concurrent evaluations contend for
+  # CPU and corrupt the benchmark, so this MUST stay at 1. Note that even serial
+  # evaluation is not sufficient on its own - see the timing notes in the README.
+  parallel_evaluations: 1
