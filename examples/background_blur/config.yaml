@@ -1,14 +1,14 @@
 # Portrait background blur - optimise a hot function behind a hard quality gate.
 #
-# Uses OpenRouter with a cheap, fast model. Set your key first:
+# Uses OpenRouter with a cheap, fast model. Put your OpenRouter key in the usual
+# environment variable before running:
 #
-#     export OPENROUTER_API_KEY=sk-or-...
+#     export OPENAI_API_KEY=sk-or-...
 #
 # Any OpenAI-compatible endpoint works. To run fully locally with no hosted API and
-# no key, point `api_base` at a local optillm server instead, e.g.:
+# no key at all, point `api_base` at a local optillm server instead, e.g.:
 #
 #     api_base: "http://localhost:8000/v1"
-#     api_key: "dummy"
 #     models: [{ name: "optillm", api_base: "http://localhost:8000/v1", weight: 1.0 }]
 
 max_iterations: 100
@@ -19,7 +19,6 @@ max_code_length: 40000
 
 llm:
   api_base: "https://openrouter.ai/api/v1"
-  api_key: "${OPENROUTER_API_KEY}"
   max_tokens: 6000
   temperature: 0.9
   timeout: 600
@@ -28,7 +27,6 @@ llm:
   models:
     - name: "google/gemini-2.5-flash-lite"
       api_base: "https://openrouter.ai/api/v1"
-      api_key: "${OPENROUTER_API_KEY}"
       weight: 1.0
 
 prompt:

@@ -37,7 +37,7 @@ would write first, and it is the thing to beat.
 ## Run it
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-...
+export OPENAI_API_KEY=sk-or-...   # your OpenRouter key
 
 python openevolve-run.py \
   examples/background_blur/initial_program.py \
@@ -46,7 +46,8 @@ python openevolve-run.py \
   --iterations 100
 ```
 
-`config.yaml` uses OpenRouter with a cheap model (`google/gemini-2.5-flash-lite`).
+`config.yaml` uses OpenRouter with a cheap model (`google/gemini-2.5-flash-lite`); the
+key is read from `OPENAI_API_KEY`.
 Any OpenAI-compatible endpoint works — point `api_base` at a local optillm server to
 run with no hosted API and no key at all.
 
