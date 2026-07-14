@@ -33,6 +33,14 @@ class MockEvaluator:
             "combined_score": 0.6 + (self.call_count * 0.05) % 0.4,
         }
 
+    def get_pending_artifacts(self, program_id):
+        """Mock artifact retrieval - mirrors the real Evaluator interface.
+
+        The controller calls this for the initial program; the real Evaluator
+        always provides it, so the mock must too.
+        """
+        return None
+
 
 class TestCheckpointResume(unittest.TestCase):
     """Tests for checkpoint resume functionality"""

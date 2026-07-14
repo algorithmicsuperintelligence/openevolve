@@ -155,9 +155,11 @@ class OpenAILLM(LLMInterface):
                 "model": self.model,
                 "messages": formatted_messages,
                 "temperature": kwargs.get("temperature", self.temperature),
-                "top_p": kwargs.get("top_p", self.top_p),
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
             }
+            top_p = kwargs.get("top_p", self.top_p)
+            if top_p is not None:
+                params["top_p"] = top_p
 
             # Handle reasoning_effort for open source reasoning models.
             reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)

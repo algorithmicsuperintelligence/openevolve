@@ -56,6 +56,9 @@ class LLMModelConfig:
     api_key: Optional[str] = None
     name: str = None
 
+    # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
+    provider: Optional[str] = None
+
     # Custom LLM client
     init_client: Optional[Callable] = None
 
@@ -78,6 +81,9 @@ class LLMModelConfig:
 
     # Reasoning parameters
     reasoning_effort: Optional[str] = None
+
+    # Claude Code CLI budget per call (USD)
+    max_budget_usd: Optional[float] = None
 
     # Manual mode (human-in-the-loop)
     manual_mode: Optional[bool] = None

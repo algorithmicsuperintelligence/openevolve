@@ -238,6 +238,51 @@ def _prepare_program(
     return program_file
 
 
+def _extract_lambda_source(source: str) -> Optional[str]:
+    """Extract a single ``lambda ...`` expression from a source snippet.
+
+    ``inspect.getsource`` on a lambda returns the whole line it appears on, e.g.
+    ``evaluator=lambda p: {"score": 0.8},  # comment``. This isolates just the
+    ``lambda p: {"score": 0.8}`` expression using a bracket/string-aware scan so a
+    trailing comma, comment, or the enclosing call's ``)`` do not leak in.
+
+    Returns the lambda expression string, or None if no lambda is found.
+    """
+    idx = source.find("lambda")
+    if idx == -1:
+        return None
+
+    out = []
+    depth = 0
+    quote = None
+    i = idx
+    while i < len(source):
+        c = source[i]
+        if quote is not None:
+            out.append(c)
+            if c == quote and source[i - 1] != "\\":
+                quote = None
+        elif c in "\"'":
+            quote = c
+            out.append(c)
+        elif c in "([{":
+            depth += 1
+            out.append(c)
+        elif c in ")]}":
+            if depth == 0:
+                break  # closing bracket of the enclosing call -> lambda ended
+            depth -= 1
+            out.append(c)
+        elif depth == 0 and (c == "," or c == "#" or c == "\n"):
+            break  # top-level comma / comment / newline ends the lambda
+        else:
+            out.append(c)
+        i += 1
+
+    expr = "".join(out).strip()
+    return expr or None
+
+
 def _prepare_evaluator(
     evaluator: Union[str, Path, Callable], temp_dir: Optional[str], temp_files: List[str]
 ) -> str:
@@ -259,6 +304,18 @@ def _prepare_evaluator(
 
             func_source = textwrap.dedent(func_source)
             func_name = evaluator.__name__
+
+            if func_name == "<lambda>":
+                # A lambda has no usable name (referencing it as `<lambda>` is a
+                # syntax error). Extract the lambda expression from the source and
+                # bind it to a real name so the generated module is self-contained
+                # and works in subprocess workers.
+                lambda_src = _extract_lambda_source(func_source)
+                if lambda_src is None:
+                    # Couldn't isolate the expression; fall back to the globals path
+                    raise TypeError("cannot serialize lambda source")
+                func_name = "_user_evaluator"
+                func_source = f"{func_name} = {lambda_src}"
 
             # Build a self-contained evaluator module with the function source
             # and an evaluate() entry point that calls it

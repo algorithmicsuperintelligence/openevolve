@@ -100,9 +100,13 @@ class OpenEvolve:
             random.seed(self.config.random_seed)
             np.random.seed(self.config.random_seed)
 
-            # Create hash-based seeds for different components
+            # Create hash-based seeds for different components. md5 is used only to
+            # derive a deterministic RNG seed from the configured seed, not for any
+            # security purpose; usedforsecurity=False documents that intent.
             base_seed = str(self.config.random_seed).encode("utf-8")
-            llm_seed = int(hashlib.md5(base_seed + b"llm").hexdigest()[:8], 16) % (2**31)
+            llm_seed = int(
+                hashlib.md5(base_seed + b"llm", usedforsecurity=False).hexdigest()[:8], 16
+            ) % (2**31)
 
             # Propagate seed to LLM configurations
             self.config.llm.random_seed = llm_seed
@@ -225,7 +229,7 @@ class OpenEvolve:
         if not bool(getattr(self.config.llm, "manual_mode", False)):
             return
 
-        qdir = (Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue")
+        qdir = Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue"
 
         # Clear stale tasks from previous runs
         if qdir.exists():
@@ -301,6 +305,12 @@ class OpenEvolve:
             )
 
             self.database.add(initial_program)
+
+            # Check for and store artifacts from initial program
+            initial_artifacts = self.evaluator.get_pending_artifacts(initial_program_id)
+            if initial_artifacts:
+                self.database.store_artifacts(initial_program_id, initial_artifacts)
+                logger.info(f"Stored artifacts for initial program")
 
             # Check if combined_score is present in the metrics
             if "combined_score" not in initial_metrics:

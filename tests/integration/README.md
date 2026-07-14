@@ -29,8 +29,8 @@ pytest tests/integration/ -m "slow"
 ```
 
 These tests:
-- Take ~1 hour to complete
-- Use real optillm server with google/gemma-3-270m-it model
+- Take ~30-60 minutes to complete
+- Use a real optillm server with the codelion/dhara-250m model
 - Test complete evolution pipelines, checkpointing, island migration, etc.
 - Require optillm server running on localhost:8000
 
