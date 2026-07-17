@@ -42,14 +42,19 @@ async def run_with_timeout(
         coro: Coroutine function to run
         timeout: Timeout in seconds
         *args: Arguments to pass to the coroutine
-        timeout_error_value: Value to return on timeout (default: {"error": 0.0, "timeout": True})
+        timeout_error_value: Value to return on timeout
+            (default: {"combined_score": 0.0, "error": "Evaluation timed out", "timeout": True})
         **kwargs: Keyword arguments to pass to the coroutine
 
     Returns:
         Result of the coroutine or timeout_error_value on timeout
     """
     if timeout_error_value is None:
-        timeout_error_value = {"error": 0.0, "timeout": True}
+        timeout_error_value = {
+            "combined_score": 0.0,
+            "error": "Evaluation timed out",
+            "timeout": True,
+        }
 
     try:
         return await asyncio.wait_for(coro(*args, **kwargs), timeout=timeout)
@@ -68,14 +73,19 @@ async def run_sync_with_timeout(
         func: Synchronous function to run
         timeout: Timeout in seconds
         *args: Arguments to pass to the function
-        timeout_error_value: Value to return on timeout (default: {"error": 0.0, "timeout": True})
+        timeout_error_value: Value to return on timeout
+            (default: {"combined_score": 0.0, "error": "Evaluation timed out", "timeout": True})
         **kwargs: Keyword arguments to pass to the function
 
     Returns:
         Result of the function or timeout_error_value on timeout
     """
     if timeout_error_value is None:
-        timeout_error_value = {"error": 0.0, "timeout": True}
+        timeout_error_value = {
+            "combined_score": 0.0,
+            "error": "Evaluation timed out",
+            "timeout": True,
+        }
 
     try:
         loop = asyncio.get_event_loop()

@@ -262,7 +262,11 @@ class Evaluator:
                         "error_type": "timeout",
                     }
 
-                return {"error": 0.0, "timeout": True}
+                return {
+                    "combined_score": 0.0,
+                    "error": "Evaluation timed out",
+                    "timeout": True,
+                }
 
             except Exception as e:
                 last_exception = e
@@ -400,7 +404,12 @@ class Evaluator:
             except asyncio.TimeoutError:
                 logger.warning(f"Stage 1 evaluation timed out after {self.config.timeout}s")
                 return EvaluationResult(
-                    metrics={"stage1_passed": 0.0, "error": 0.0, "timeout": True},
+                    metrics={
+                        "combined_score": 0.0,
+                        "stage1_passed": 0.0,
+                        "error": "Stage 1 evaluation timed out",
+                        "timeout": True,
+                    },
                     artifacts={
                         "failure_stage": "stage1",
                         "timeout": True,
@@ -447,7 +456,9 @@ class Evaluator:
                         "failure_stage": "stage2",
                     }
                 )
+                stage1_eval_result.metrics["combined_score"] = 0.0
                 stage1_eval_result.metrics["stage2_passed"] = 0.0
+                stage1_eval_result.metrics["error"] = "Stage 2 evaluation timed out"
                 stage1_eval_result.metrics["timeout"] = True
                 return stage1_eval_result
             except Exception as e:
@@ -509,7 +520,9 @@ class Evaluator:
                         "failure_stage": "stage3",
                     }
                 )
+                merged_result.metrics["combined_score"] = 0.0
                 merged_result.metrics["stage3_passed"] = 0.0
+                merged_result.metrics["error"] = "Stage 3 evaluation timed out"
                 merged_result.metrics["timeout"] = True
                 return merged_result
             except Exception as e:

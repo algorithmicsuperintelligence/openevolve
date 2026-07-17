@@ -21,7 +21,7 @@ def safe_numeric_average(metrics: Dict[str, Any]) -> float:
 
     numeric_values = []
     for value in metrics.values():
-        if isinstance(value, (int, float)):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
             try:
                 # Convert to float and check if it's a valid number
                 float_val = float(value)
@@ -53,7 +53,7 @@ def safe_numeric_sum(metrics: Dict[str, Any]) -> float:
 
     numeric_sum = 0.0
     for value in metrics.values():
-        if isinstance(value, (int, float)):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
             try:
                 # Convert to float and check if it's a valid number
                 float_val = float(value)
@@ -99,7 +99,7 @@ def get_fitness_score(
     for key, value in metrics.items():
         # Exclude MAP feature dimensions from fitness calculation
         if key not in feature_dimensions:
-            if isinstance(value, (int, float)):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
                 try:
                     float_val = float(value)
                     if not (float_val != float_val):  # Check for NaN
