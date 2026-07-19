@@ -11,7 +11,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-
+import importlib
 from openevolve.config import Config, load_config
 from openevolve.database import Program, ProgramDatabase
 from openevolve.evaluator import Evaluator
@@ -125,7 +125,10 @@ class OpenEvolve:
             self.config.database.random_seed = self.config.random_seed
 
         self.config.database.novelty_llm = self.llm_ensemble
-        self.database = ProgramDatabase(self.config.database)
+        database_cls_name = getattr(self.config.database, "variant", "ProgramDatabase")
+        database_mod = importlib.import_module("openevolve.database")
+        database_cls = getattr(database_mod, database_cls_name, None)
+        self.database = database_cls(self.config.database)
 
         self.evaluator = Evaluator(
             self.config.evaluator,
