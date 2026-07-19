@@ -546,20 +546,70 @@ class ProcessParallelController:
         # Track pending futures by island to maintain distribution
         pending_futures: Dict[int, Future] = {}
         island_pending: Dict[int, List[int]] = {i: [] for i in range(self.num_islands)}
+        future_start_times: Dict[int, float] = {}
+        future_retry_counts: Dict[int, int] = {}
+        future_island_map: Dict[int, int] = {}
         batch_size = min(self.num_workers * 2, max_iterations)
 
         # Submit initial batch - distribute across islands
         batch_per_island = max(1, batch_size // self.num_islands) if batch_size > 0 else 0
         current_iteration = start_iteration
 
+        # Hard-timeout watchdog for futures that never transition to done().
+        stuck_future_timeout = self.config.stuck_future_timeout
+        if stuck_future_timeout is None:
+            stuck_future_timeout = (
+                self.config.evaluator.timeout + self.config.stuck_future_timeout_buffer
+            )
+        if stuck_future_timeout is not None and stuck_future_timeout <= 0:
+            stuck_future_timeout = None
+        stuck_future_max_retries = max(0, self.config.stuck_future_max_retries)
+
+        if stuck_future_timeout is not None:
+            logger.info(
+                f"Hard-timeout watchdog enabled: timeout={stuck_future_timeout}s, "
+                f"max_retries={stuck_future_max_retries}"
+            )
+        else:
+            logger.info("Hard-timeout watchdog disabled")
+
+        def remove_from_island_pending(iteration: int) -> None:
+            for island_id, iteration_list in island_pending.items():
+                if iteration in iteration_list:
+                    iteration_list.remove(iteration)
+                    break
+
+        def submit_iteration_to_island(
+            iteration: int, island_id: int, retry_count: int = 0
+        ) -> bool:
+            future = self._submit_iteration(iteration, island_id)
+            if not future:
+                return False
+
+            pending_futures[iteration] = future
+            island_pending[island_id].append(iteration)
+            future_start_times[iteration] = time.monotonic()
+            future_retry_counts[iteration] = retry_count
+            future_island_map[iteration] = island_id
+            return True
+
+        def submit_next_iteration_if_needed() -> None:
+            nonlocal next_iteration
+            for island_id in range(self.num_islands):
+                if (
+                    len(island_pending[island_id]) < batch_per_island
+                    and next_iteration < total_iterations
+                    and not self.shutdown_event.is_set()
+                ):
+                    if submit_iteration_to_island(next_iteration, island_id, retry_count=0):
+                        next_iteration += 1
+                        break  # Keep per-island balance by submitting one per completion.
+
         # Round-robin distribution across islands
         for island_id in range(self.num_islands):
             for _ in range(batch_per_island):
                 if current_iteration < total_iterations:
-                    future = self._submit_iteration(current_iteration, island_id)
-                    if future:
-                        pending_futures[current_iteration] = future
-                        island_pending[island_id].append(current_iteration)
+                    submit_iteration_to_island(current_iteration, island_id, retry_count=0)
                     current_iteration += 1
 
         next_iteration = current_iteration
@@ -592,10 +642,21 @@ class ProcessParallelController:
         ):
             # Find completed futures
             completed_iteration = None
+            completed_by_watchdog = False
+            watchdog_elapsed = 0.0
             for iteration, future in list(pending_futures.items()):
                 if future.done():
                     completed_iteration = iteration
                     break
+                if stuck_future_timeout is not None:
+                    started_at = future_start_times.get(iteration)
+                    if started_at is not None:
+                        elapsed = time.monotonic() - started_at
+                        if elapsed > stuck_future_timeout:
+                            completed_iteration = iteration
+                            completed_by_watchdog = True
+                            watchdog_elapsed = elapsed
+                            break
 
             if completed_iteration is None:
                 await asyncio.sleep(0.01)
@@ -603,6 +664,52 @@ class ProcessParallelController:
 
             # Process completed result
             future = pending_futures.pop(completed_iteration)
+            island_id = future_island_map.get(completed_iteration)
+
+            if completed_by_watchdog:
+                retry_count = future_retry_counts.get(completed_iteration, 0)
+                future.cancel()
+                remove_from_island_pending(completed_iteration)
+
+                can_retry = (
+                    retry_count < stuck_future_max_retries
+                    and island_id is not None
+                    and not self.shutdown_event.is_set()
+                )
+                if can_retry:
+                    next_retry = retry_count + 1
+                    logger.warning(
+                        f"⏰ Hard-timeout watchdog: iteration {completed_iteration} exceeded "
+                        f"{stuck_future_timeout}s (elapsed {watchdog_elapsed:.2f}s). "
+                        f"Requeueing attempt {next_retry}/{stuck_future_max_retries}."
+                    )
+                    if submit_iteration_to_island(
+                        completed_iteration, island_id, retry_count=next_retry
+                    ):
+                        continue
+                    logger.error(
+                        f"Failed to requeue timed out iteration {completed_iteration}; "
+                        f"counting it as failed."
+                    )
+                else:
+                    logger.error(
+                        f"⏰ Hard-timeout watchdog: iteration {completed_iteration} exceeded "
+                        f"{stuck_future_timeout}s (elapsed {watchdog_elapsed:.2f}s). "
+                        f"Retries exhausted ({retry_count}/{stuck_future_max_retries}); "
+                        f"counting as failed."
+                    )
+
+                future_start_times.pop(completed_iteration, None)
+                future_retry_counts.pop(completed_iteration, None)
+                future_island_map.pop(completed_iteration, None)
+                completed_iterations += 1
+                submit_next_iteration_if_needed()
+                continue
+
+            # Completed normally (or failed with result/error): clean watchdog state.
+            future_start_times.pop(completed_iteration, None)
+            future_retry_counts.pop(completed_iteration, None)
+            future_island_map.pop(completed_iteration, None)
 
             try:
                 # Use evaluator timeout + buffer to gracefully handle stuck processes
@@ -814,24 +921,10 @@ class ProcessParallelController:
             completed_iterations += 1
 
             # Remove completed iteration from island tracking
-            for island_id, iteration_list in island_pending.items():
-                if completed_iteration in iteration_list:
-                    iteration_list.remove(completed_iteration)
-                    break
+            remove_from_island_pending(completed_iteration)
 
-            # Submit next iterations maintaining island balance
-            for island_id in range(self.num_islands):
-                if (
-                    len(island_pending[island_id]) < batch_per_island
-                    and next_iteration < total_iterations
-                    and not self.shutdown_event.is_set()
-                ):
-                    future = self._submit_iteration(next_iteration, island_id)
-                    if future:
-                        pending_futures[next_iteration] = future
-                        island_pending[island_id].append(next_iteration)
-                        next_iteration += 1
-                        break  # Only submit one iteration per completion to maintain balance
+            # Submit next iteration while keeping island distribution balanced.
+            submit_next_iteration_if_needed()
 
         # Handle shutdown
         if self.shutdown_event.is_set():

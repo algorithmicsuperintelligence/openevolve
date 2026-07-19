@@ -444,6 +444,13 @@ class Config:
 
     # Parallel controller settings
     max_tasks_per_child: Optional[int] = None
+    # Hard-timeout watchdog for stuck process futures.
+    # If None, defaults to evaluator.timeout + stuck_future_timeout_buffer.
+    stuck_future_timeout: Optional[float] = None
+    # Additional buffer seconds used when stuck_future_timeout is not explicitly set.
+    stuck_future_timeout_buffer: int = 30
+    # Number of retry attempts when watchdog times out a stuck future.
+    stuck_future_max_retries: int = 1
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "Config":
