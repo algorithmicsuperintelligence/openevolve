@@ -439,6 +439,7 @@ class ProcessParallelController:
             "evaluator": asdict(config.evaluator),
             "max_iterations": config.max_iterations,
             "checkpoint_interval": config.checkpoint_interval,
+            "checkpoint_on_improvement": config.checkpoint_on_improvement,
             "log_level": config.log_level,
             "log_dir": config.log_dir,
             "random_seed": config.random_seed,
@@ -714,7 +715,8 @@ class ProcessParallelController:
                             self._warned_about_combined_score = True
 
                     # Check for new best
-                    if self.database.best_program_id == child_program.id:
+                    is_new_best = self.database.best_program_id == child_program.id
+                    if is_new_best:
                         logger.info(
                             f"🌟 New best solution found at iteration {completed_iteration}: "
                             f"{child_program.id}"
@@ -722,13 +724,24 @@ class ProcessParallelController:
 
                     # Checkpoint callback
                     # Don't checkpoint at iteration 0 (that's just the initial program)
-                    if (
+                    interval_hit = (
                         completed_iteration > 0
                         and completed_iteration % self.config.checkpoint_interval == 0
-                    ):
-                        logger.info(
-                            f"Checkpoint interval reached at iteration {completed_iteration}"
-                        )
+                    )
+                    improvement_hit = (
+                        completed_iteration > 0
+                        and self.config.checkpoint_on_improvement
+                        and is_new_best
+                    )
+                    if interval_hit or improvement_hit:
+                        if interval_hit:
+                            logger.info(
+                                f"Checkpoint interval reached at iteration {completed_iteration}"
+                            )
+                        else:
+                            logger.info(
+                                f"Checkpointing new best solution at iteration {completed_iteration}"
+                            )
                         self.database.log_island_status()
                         if checkpoint_callback:
                             checkpoint_callback(completed_iteration)
