@@ -1,0 +1,42 @@
+# Configuration for function minimization example
+max_iterations: 1000
+checkpoint_interval: 10
+
+# LLM configuration
+llm:
+  primary_model: "gemini-2.5-flash-lite"
+  primary_model_weight: 0.8
+  secondary_model: "gemini-2.5-flash"
+  secondary_model_weight: 0.2
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  temperature: 0.7
+  max_tokens: 16000
+  timeout: 120
+
+# Prompt configuration
+prompt:
+  num_top_programs: 3
+  num_diverse_programs: 2
+  include_artifacts: true
+  system_message: "You're building a program that runs iterated prisoner's dilemma in a tournament with many other strategies, similar to Axelrod's famous tournaments.  Your task is to improve the play strategy for maximum profit."
+
+# Database configuration
+database:
+  population_size: 50
+  archive_size: 20
+  num_islands: 4
+  elite_selection_ratio: 0.2
+  exploitation_ratio: 0.7
+
+  # embedding_model: "text-embedding-3-small"
+  similarity_threshold: 0.99
+
+# Evaluator configuration
+evaluator:
+  enable_artifacts: true
+  cascade_evaluation: false
+  timeout: 60
+  parallel_evaluations: 3
+
+# Evolution settings
+max_code_length: 20000
