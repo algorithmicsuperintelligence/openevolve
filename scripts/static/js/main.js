@@ -118,7 +118,12 @@ function loadAndRenderData(data) {
 if (window.STATIC_DATA) {
     loadAndRenderData(window.STATIC_DATA);
 } else {
+    let isFetching = false;
+    
     function fetchAndRender() {
+        if (isFetching) return; 
+        isFetching = true;
+        
         fetch('/api/data')
             .then(resp => resp.json())
             .then(data => {
@@ -128,6 +133,12 @@ if (window.STATIC_DATA) {
                 }
                 lastDataStr = dataStr;
                 loadAndRenderData(data);
+            })
+            .catch(err => {
+                console.error('Failed to fetch data:', err);
+            })
+            .finally(() => {
+                isFetching = false; 
             });
     }
     fetchAndRender();
