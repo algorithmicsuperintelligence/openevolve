@@ -156,6 +156,7 @@ class OpenAILLM(LLMInterface):
                 "messages": formatted_messages,
                 "temperature": kwargs.get("temperature", self.temperature),
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                "stream": False,  # Explicitly request non-streaming responses to avoid SSE issues
             }
             top_p = kwargs.get("top_p", self.top_p)
             if top_p is not None:
