@@ -4,7 +4,7 @@ Prompt sampling for OpenEvolve
 
 import logging
 import random
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from openevolve.config import PromptConfig
 from openevolve.prompt.templates import TemplateManager
@@ -15,19 +15,30 @@ from openevolve.utils.metrics_utils import (
     format_feature_coordinates,
 )
 
+if TYPE_CHECKING:
+    from openevolve.prompt.meta_evolution import PromptArchive
+
 logger = logging.getLogger(__name__)
 
 
 class PromptSampler:
     """Generates prompts for code evolution"""
 
-    def __init__(self, config: PromptConfig):
+    def __init__(
+        self,
+        config: PromptConfig,
+        prompt_archive: Optional["PromptArchive"] = None,
+    ):
         self.config = config
         self.template_manager = TemplateManager(custom_template_dir=config.template_dir)
 
         # Store custom template mappings
         self.system_template_override = None
         self.user_template_override = None
+
+        # Meta-evolution: optional prompt archive for template sampling
+        self.prompt_archive = prompt_archive
+        self._last_sampled_template_id: Optional[str] = None
 
         # Only log once to reduce duplication
         if not hasattr(logger, "_prompt_sampler_logged"):
@@ -48,6 +59,21 @@ class PromptSampler:
         self.user_template_override = user_template
         logger.info(f"Set custom templates: system={system_template}, user={user_template}")
 
+    def set_prompt_archive(self, archive: Optional["PromptArchive"]) -> None:
+        """
+        Set the prompt archive for meta-evolution.
+
+        Args:
+            archive: PromptArchive instance or None to disable
+        """
+        self.prompt_archive = archive
+        if archive is not None:
+            logger.info(f"Enabled prompt meta-evolution (archive size: {len(archive.templates)})")
+
+    def get_last_template_id(self) -> Optional[str]:
+        """Get the ID of the last sampled template, or None if not using meta-evolution."""
+        return self._last_sampled_template_id
+
     def build_prompt(
         self,
         current_program: str = "",
@@ -63,6 +89,7 @@ class PromptSampler:
         program_artifacts: Optional[Dict[str, Union[str, bytes]]] = None,
         feature_dimensions: Optional[List[str]] = None,
         current_changes_description: Optional[str] = None,
+        meta_template_info: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> Dict[str, str]:
         """
@@ -80,33 +107,59 @@ class PromptSampler:
             diff_based_evolution: Whether to use diff-based evolution (True) or full rewrites (False)
             template_key: Optional override for template key
             program_artifacts: Optional artifacts from program evaluation
+            meta_template_info: Optional dict with 'template_id', 'system_template', 'user_template'
+                               for prompt meta-evolution. If provided, uses these templates
+                               instead of sampling from the archive.
             **kwargs: Additional keys to replace in the user prompt
 
         Returns:
-            Dictionary with 'system' and 'user' keys
+            Dictionary with 'system', 'user', and optionally 'template_id' keys
         """
-        # Select template based on evolution mode (with overrides)
-        if template_key:
-            # Use explicitly provided template key
-            user_template_key = template_key
-        elif self.user_template_override:
-            # Use the override set with set_templates
-            user_template_key = self.user_template_override
-        else:
-            # Default behavior: diff-based vs full rewrite
-            user_template_key = "diff_user" if diff_based_evolution else "full_rewrite_user"
+        # Reset template tracking
+        self._last_sampled_template_id = None
 
-        # Get the template
-        user_template = self.template_manager.get_template(user_template_key)
-
-        # Use system template override if set
-        if self.system_template_override:
-            system_message = self.template_manager.get_template(self.system_template_override)
+        # Priority 1: Use pre-provided meta-evolution template (from worker processes)
+        if meta_template_info is not None:
+            self._last_sampled_template_id = meta_template_info.get("template_id")
+            system_message = meta_template_info.get("system_template")
+            user_template = meta_template_info.get("user_template")
+            logger.debug(
+                f"Using pre-sampled meta-evolution template {self._last_sampled_template_id}"
+            )
+        # Priority 2: Sample from prompt archive (main process with archive)
+        elif self.prompt_archive is not None:
+            sampled_template = self.prompt_archive.sample_template()
+            self._last_sampled_template_id = sampled_template.id
+            system_message = sampled_template.system_template
+            user_template = sampled_template.user_template
+            logger.debug(
+                f"Using meta-evolved template {sampled_template.id} "
+                f"(score={sampled_template.score:.3f})"
+            )
         else:
-            system_message = self.config.system_message
-            # If system_message is a template name rather than content, get the template
-            if system_message in self.template_manager.templates:
-                system_message = self.template_manager.get_template(system_message)
+            # Standard template selection (no meta-evolution)
+            # Select template based on evolution mode (with overrides)
+            if template_key:
+                # Use explicitly provided template key
+                user_template_key = template_key
+            elif self.user_template_override:
+                # Use the override set with set_templates
+                user_template_key = self.user_template_override
+            else:
+                # Default behavior: diff-based vs full rewrite
+                user_template_key = "diff_user" if diff_based_evolution else "full_rewrite_user"
+
+            # Get the template
+            user_template = self.template_manager.get_template(user_template_key)
+
+            # Use system template override if set
+            if self.system_template_override:
+                system_message = self.template_manager.get_template(self.system_template_override)
+            else:
+                system_message = self.config.system_message
+                # If system_message is a template name rather than content, get the template
+                if system_message in self.template_manager.templates:
+                    system_message = self.template_manager.get_template(system_message)
 
         if self.config.programs_as_changes_description:
             if self.config.system_message_changes_description:
@@ -174,10 +227,16 @@ class PromptSampler:
                 changes_description=current_changes_description.rstrip(),
             )
 
-        return {
+        result = {
             "system": system_message,
             "user": user_message,
         }
+
+        # Include template_id if meta-evolution is active
+        if self._last_sampled_template_id is not None:
+            result["template_id"] = self._last_sampled_template_id
+
+        return result
 
     def _format_metrics(self, metrics: Dict[str, float]) -> str:
         """Format metrics for the prompt using safe formatting"""
