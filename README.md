@@ -326,7 +326,8 @@ export OPENAI_API_KEY="your-gemini-api-key"
 # config.yaml
 llm:
   api_base: "http://localhost:11434/v1"  # Ollama
-  model: "codellama:7b"
+  api_key: "ollama"
+  primary_model: "codellama:7b"
 ```
 
 </details>
