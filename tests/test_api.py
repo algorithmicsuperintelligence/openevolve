@@ -1,6 +1,7 @@
 """
 Test the library API functionality
 """
+import asyncio
 import unittest
 import unittest.mock
 import tempfile
@@ -13,10 +14,12 @@ from openevolve.api import (
     evolve_algorithm, 
     evolve_code,
     EvolutionResult,
+    _run_evolution_async,
     _prepare_program,
     _prepare_evaluator
 )
-from openevolve.config import Config
+from openevolve.config import Config, LLMModelConfig
+from openevolve.database import Program
 
 
 class TestAPIFunctions(unittest.TestCase):
@@ -40,7 +43,67 @@ class TestAPIFunctions(unittest.TestCase):
         
         self.assertEqual(result.best_score, 0.85)
         self.assertEqual(result.best_code, "def test(): pass")
+        self.assertEqual(result.completion_reason, "unknown")
+        self.assertIsNone(result.last_completed_iteration)
+        self.assertEqual(result.llm_usage, {})
         self.assertIn("0.8500", str(result))
+
+    def test_async_result_carries_authoritative_controller_completion_metadata(self):
+        """The public result reports the controller cursor, not an inferred score state."""
+        program_file = os.path.join(self.temp_dir, "program.py")
+        evaluator_file = os.path.join(self.temp_dir, "evaluator.py")
+        with open(program_file, "w") as handle:
+            handle.write("def solve(): return 1\n")
+        with open(evaluator_file, "w") as handle:
+            handle.write(
+                "def evaluate(program_path): return {'combined_score': 1.0}\n"
+            )
+
+        config = Config()
+        config.llm.models = [LLMModelConfig(name="fake-model", api_key="test")]
+        config.evaluator.cascade_evaluation = False
+        best_program = Program(
+            id="best",
+            code="def solve(): return 2\n",
+            language="python",
+            metrics={"combined_score": 1.0},
+            iteration_found=1,
+        )
+        controller = unittest.mock.MagicMock()
+        controller.run = unittest.mock.AsyncMock(return_value=best_program)
+        controller.completion_reason = "target_score_reached"
+        controller.last_completed_iteration = 3
+        controller.completed_iteration_count = 3
+        controller.llm_usage = {
+            "llm_calls_submitted": 3,
+            "llm_calls": 3,
+            "total_provider_tokens": 1234,
+            "llm_call_budget_overshoot": 0,
+            "provider_token_budget_overshoot": 34,
+        }
+
+        with unittest.mock.patch(
+            "openevolve.api.OpenEvolve", return_value=controller
+        ):
+            result = asyncio.run(
+                _run_evolution_async(
+                    initial_program=program_file,
+                    evaluator=evaluator_file,
+                    config=config,
+                    iterations=12,
+                    output_dir=os.path.join(self.temp_dir, "output"),
+                    cleanup=False,
+                    target_score=1.0,
+                )
+            )
+
+        self.assertEqual(result.completion_reason, "target_score_reached")
+        self.assertEqual(result.last_completed_iteration, 3)
+        self.assertEqual(result.completed_iteration_count, 3)
+        self.assertEqual(result.llm_usage["llm_calls_submitted"], 3)
+        self.assertEqual(result.llm_usage["llm_calls"], 3)
+        self.assertEqual(result.llm_usage["total_provider_tokens"], 1234)
+        self.assertEqual(result.llm_usage["provider_token_budget_overshoot"], 34)
     
     def test_prepare_program_from_file(self):
         """Test _prepare_program with existing file"""

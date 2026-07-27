@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Dict, Union
 
 
+EVALUATION_FAILED_METRIC = "__evaluation_failed__"
+
+
 @dataclass
 class EvaluationResult:
     """

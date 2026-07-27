@@ -21,6 +21,16 @@ from openevolve.llm.base import LLMInterface
 logger = logging.getLogger(__name__)
 
 
+def _uses_provider_managed_sampling(api_base: str | None, model: str | None) -> bool:
+    """Whether this provider/model pair requires sampling knobs to be omitted."""
+    base = str(api_base or "").rstrip("/")
+    name = str(model or "").lower()
+    return (
+        base.startswith("https://generativelanguage.googleapis.com/")
+        and name.startswith(("gemini-3.5-", "gemini-3.6-"))
+    )
+
+
 def _iso_now() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
@@ -63,6 +73,7 @@ class OpenAILLM(LLMInterface):
         self.api_key = model_cfg.api_key
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
+        self.last_call_metadata: Dict[str, Any] = {}
 
         # Manual mode: enabled via llm.manual_mode in config.yaml
         self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
@@ -154,12 +165,15 @@ class OpenAILLM(LLMInterface):
             params = {
                 "model": self.model,
                 "messages": formatted_messages,
-                "temperature": kwargs.get("temperature", self.temperature),
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
             }
-            top_p = kwargs.get("top_p", self.top_p)
-            if top_p is not None:
-                params["top_p"] = top_p
+            if not _uses_provider_managed_sampling(self.api_base, self.model):
+                temperature = kwargs.get("temperature", self.temperature)
+                if temperature is not None:
+                    params["temperature"] = temperature
+                top_p = kwargs.get("top_p", self.top_p)
+                if top_p is not None:
+                    params["top_p"] = top_p
 
             # Handle reasoning_effort for open source reasoning models.
             reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
@@ -221,6 +235,22 @@ class OpenAILLM(LLMInterface):
         response = await loop.run_in_executor(
             None, lambda: self.client.chat.completions.create(**params)
         )
+        usage = getattr(response, "usage", None)
+        usage_details = (
+            usage.model_dump(mode="json")
+            if usage is not None and hasattr(usage, "model_dump")
+            else {}
+        )
+        self.last_call_metadata = {
+            "provider_response_id": getattr(response, "id", None),
+            "model": getattr(response, "model", None) or self.model,
+            "usage": {
+                "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                "completion_tokens": getattr(usage, "completion_tokens", None),
+                "total_tokens": getattr(usage, "total_tokens", None),
+                "details": usage_details,
+            },
+        }
         # Logging of system prompt, user message and response content
         logger = logging.getLogger(__name__)
         logger.debug(f"API parameters: {params}")

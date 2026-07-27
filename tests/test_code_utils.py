@@ -5,10 +5,13 @@ Tests for code utilities in openevolve.utils.code_utils
 import unittest
 
 from openevolve.utils.code_utils import (
+    DiffApplicationError,
     _format_block_lines,
     apply_diff,
+    apply_diff_strict,
     extract_diffs,
     format_diff_summary,
+    validate_evolve_blocks,
 )
 
 
@@ -93,6 +96,93 @@ class TestCodeUtils(unittest.TestCase):
             result,
             expected_code,
         )
+
+    def test_strict_diff_requires_exactly_one_match(self):
+        original = "x = 1\nx = 1\n"
+        diff = "\n".join(
+            ["<" * 7 + " SEARCH", "x = 1", "=" * 7, "x = 2", ">" * 7 + " REPLACE"]
+        )
+        with self.assertRaises(DiffApplicationError):
+            apply_diff_strict(original, diff)
+
+    def test_strict_diff_is_atomic(self):
+        original = "x = 1\ny = 2\n"
+        diff = "\n".join(
+            [
+                "<" * 7 + " SEARCH",
+                "x = 1",
+                "=" * 7,
+                "x = 3",
+                ">" * 7 + " REPLACE",
+                "<" * 7 + " SEARCH",
+                "missing = 0",
+                "=" * 7,
+                "missing = 1",
+                ">" * 7 + " REPLACE",
+            ]
+        )
+        with self.assertRaises(DiffApplicationError):
+            apply_diff_strict(original, diff)
+        self.assertEqual(original, "x = 1\ny = 2\n")
+
+    def test_strict_diff_can_enforce_evolve_blocks(self):
+        original = """header = 1
+# EVOLVE-BLOCK-START
+x = 1
+# EVOLVE-BLOCK-END
+footer = 2"""
+        inside = "\n".join(
+            ["<" * 7 + " SEARCH", "x = 1", "=" * 7, "x = 2", ">" * 7 + " REPLACE"]
+        )
+        self.assertIn(
+            "x = 2",
+            apply_diff_strict(original, inside, enforce_evolve_blocks=True),
+        )
+        outside = "\n".join(
+            [
+                "<" * 7 + " SEARCH",
+                "header = 1",
+                "=" * 7,
+                "header = 2",
+                ">" * 7 + " REPLACE",
+            ]
+        )
+        with self.assertRaises(DiffApplicationError):
+            apply_diff_strict(original, outside, enforce_evolve_blocks=True)
+
+    def test_strict_diff_applies_sequential_dependent_blocks(self):
+        original = """# EVOLVE-BLOCK-START
+x = 1
+# EVOLVE-BLOCK-END"""
+        diff = "\n".join(
+            [
+                "<" * 7 + " SEARCH",
+                "x = 1",
+                "=" * 7,
+                "x = 2",
+                ">" * 7 + " REPLACE",
+                "<" * 7 + " SEARCH",
+                "x = 2",
+                "=" * 7,
+                "x = 3",
+                ">" * 7 + " REPLACE",
+            ]
+        )
+        result = apply_diff_strict(original, diff, enforce_evolve_blocks=True)
+        self.assertIn("x = 3", result)
+
+    def test_evolve_blocks_must_be_balanced_and_non_nested(self):
+        with self.assertRaises(DiffApplicationError):
+            validate_evolve_blocks("# EVOLVE-BLOCK-START\nx = 1")
+        with self.assertRaises(DiffApplicationError):
+            validate_evolve_blocks("# EVOLVE-BLOCK-END")
+        nested = """# EVOLVE-BLOCK-START
+# EVOLVE-BLOCK-START
+x = 1
+# EVOLVE-BLOCK-END
+# EVOLVE-BLOCK-END"""
+        with self.assertRaises(DiffApplicationError):
+            validate_evolve_blocks(nested)
 
 
 class TestFormatDiffSummary(unittest.TestCase):

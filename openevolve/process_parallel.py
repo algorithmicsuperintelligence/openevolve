@@ -3,6 +3,8 @@ Process-based parallel controller for true parallelism
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import multiprocessing as mp
 import pickle
@@ -16,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
+from openevolve.evaluation_result import EVALUATION_FAILED_METRIC
 from openevolve.utils.metrics_utils import safe_numeric_average
 
 logger = logging.getLogger(__name__)
@@ -30,6 +33,7 @@ class SerializableResult:
     iteration_time: float = 0.0
     prompt: Optional[Dict[str, str]] = None
     llm_response: Optional[str] = None
+    llm_metadata: Optional[Dict[str, Any]] = None
     artifacts: Optional[Dict[str, Any]] = None
     iteration: int = 0
     error: Optional[str] = None
@@ -54,6 +58,7 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
     # Reconstruct Config object from nested dictionaries
     from openevolve.config import (
         Config,
+        ControllerSchedulerConfig,
         DatabaseConfig,
         EvaluatorConfig,
         LLMConfig,
@@ -73,7 +78,11 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
 
     # Create other configs
     prompt_config = PromptConfig(**config_dict["prompt"])
-    database_config = DatabaseConfig(**config_dict["database"])
+    database_dict = config_dict["database"].copy()
+    scheduler = database_dict.get("controller_scheduler")
+    if isinstance(scheduler, dict):
+        database_dict["controller_scheduler"] = ControllerSchedulerConfig(**scheduler)
+    database_config = DatabaseConfig(**database_dict)
     evaluator_config = EvaluatorConfig(**config_dict["evaluator"])
 
     _worker_config = Config(
@@ -135,6 +144,9 @@ def _run_iteration_worker(
     iteration: int, db_snapshot: Dict[str, Any], parent_id: str, inspiration_ids: List[str]
 ) -> SerializableResult:
     """Run a single iteration in a worker process"""
+    prompt: Optional[Dict[str, str]] = None
+    llm_response: Optional[str] = None
+    llm_metadata: Optional[Dict[str, Any]] = None
     try:
         # Lazy initialization
         _lazy_init_worker_components()
@@ -205,16 +217,42 @@ def _run_iteration_worker(
             )
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
-            return SerializableResult(error=f"LLM generation failed: {str(e)}", iteration=iteration)
+            llm_metadata = dict(
+                getattr(_worker_llm_ensemble, "last_call_metadata", {}) or {}
+            ) or None
+            return SerializableResult(
+                error=f"LLM generation failed: {str(e)}",
+                iteration=iteration,
+                prompt=prompt,
+                llm_metadata=llm_metadata,
+            )
 
+        llm_metadata = dict(
+            getattr(_worker_llm_ensemble, "last_call_metadata", {}) or {}
+        ) or None
         # Check for None response
         if llm_response is None:
-            return SerializableResult(error="LLM returned None response", iteration=iteration)
+            return SerializableResult(
+                error="LLM returned None response",
+                iteration=iteration,
+                prompt=prompt,
+                llm_metadata=llm_metadata,
+            )
+
+        def reject_proposal(message: str) -> SerializableResult:
+            return SerializableResult(
+                error=message,
+                iteration=iteration,
+                llm_response=llm_response,
+                llm_metadata=llm_metadata,
+            )
 
         # Parse response based on evolution mode
         if _worker_config.diff_based_evolution:
             from openevolve.utils.code_utils import (
                 apply_diff,
+                apply_diff_blocks_strict,
+                apply_diff_strict,
                 apply_diff_blocks,
                 extract_diffs,
                 format_diff_summary,
@@ -223,24 +261,43 @@ def _run_iteration_worker(
 
             diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
             if not diff_blocks:
-                return SerializableResult(
-                    error="No valid diffs found in response", iteration=iteration
-                )
+                return reject_proposal("No valid diffs found in response")
 
             if _worker_config.prompt.programs_as_changes_description:
                 try:
-                    code_blocks, desc_blocks, _unmatched = split_diffs_by_target(
+                    code_blocks, desc_blocks, unmatched = split_diffs_by_target(
                         diff_blocks,
                         code_text=parent.code,
                         changes_description_text=parent_changes_desc,
                     )
                 except Exception as e:
-                    return SerializableResult(error=str(e), iteration=iteration)
+                    return reject_proposal(str(e))
 
-                child_code, _ = apply_diff_blocks(parent.code, code_blocks)
-                child_changes_desc, desc_applied = apply_diff_blocks(
-                    parent_changes_desc, desc_blocks
-                )
+                if unmatched:
+                    return reject_proposal(
+                        f"{len(unmatched)} SEARCH/REPLACE blocks match no declared target"
+                    )
+                if _worker_config.strict_diff_application:
+                    try:
+                        child_code = apply_diff_blocks_strict(
+                            parent.code,
+                            code_blocks,
+                            enforce_evolve_blocks=_worker_config.enforce_evolve_blocks,
+                            max_diff_blocks=_worker_config.max_diff_blocks,
+                        )
+                        child_changes_desc = apply_diff_blocks_strict(
+                            parent_changes_desc,
+                            desc_blocks,
+                            max_diff_blocks=_worker_config.max_diff_blocks,
+                        )
+                        desc_applied = len(desc_blocks)
+                    except Exception as e:
+                        return reject_proposal(str(e))
+                else:
+                    child_code, _ = apply_diff_blocks(parent.code, code_blocks)
+                    child_changes_desc, desc_applied = apply_diff_blocks(
+                        parent_changes_desc, desc_blocks
+                    )
 
                 # Must update the previous changes description
                 if (
@@ -248,9 +305,8 @@ def _run_iteration_worker(
                     or not child_changes_desc.strip()
                     or child_changes_desc.strip() == parent_changes_desc.strip()
                 ):
-                    return SerializableResult(
-                        error="changes_description was not updated or empty, program is discarded",
-                        iteration=iteration,
+                    return reject_proposal(
+                        "changes_description was not updated or empty, program is discarded"
                     )
 
                 changes_summary = format_diff_summary(
@@ -260,7 +316,21 @@ def _run_iteration_worker(
                 )
             else:
                 # All diffs applied only to code
-                child_code = apply_diff(parent.code, llm_response, _worker_config.diff_pattern)
+                if _worker_config.strict_diff_application:
+                    try:
+                        child_code = apply_diff_strict(
+                            parent.code,
+                            llm_response,
+                            _worker_config.diff_pattern,
+                            enforce_evolve_blocks=_worker_config.enforce_evolve_blocks,
+                            max_diff_blocks=_worker_config.max_diff_blocks,
+                        )
+                    except Exception as e:
+                        return reject_proposal(str(e))
+                else:
+                    child_code = apply_diff(
+                        parent.code, llm_response, _worker_config.diff_pattern
+                    )
                 changes_summary = format_diff_summary(
                     diff_blocks,
                     max_line_len=_worker_config.prompt.diff_summary_max_line_len,
@@ -271,18 +341,15 @@ def _run_iteration_worker(
 
             new_code = parse_full_rewrite(llm_response, _worker_config.language)
             if not new_code:
-                return SerializableResult(
-                    error=f"No valid code found in response", iteration=iteration
-                )
+                return reject_proposal("No valid code found in response")
 
             child_code = new_code
             changes_summary = "Full rewrite"
 
         # Check code length
         if len(child_code) > _worker_config.max_code_length:
-            return SerializableResult(
-                error=f"Generated code exceeds maximum length ({len(child_code)} > {_worker_config.max_code_length})",
-                iteration=iteration,
+            return reject_proposal(
+                f"Generated code exceeds maximum length ({len(child_code)} > {_worker_config.max_code_length})"
             )
 
         # Evaluate the child program
@@ -293,6 +360,21 @@ def _run_iteration_worker(
 
         # Get artifacts
         artifacts = _worker_evaluator.get_pending_artifacts(child_id)
+        if bool(child_metrics.pop(EVALUATION_FAILED_METRIC, 0.0)):
+            detail = "candidate evaluation failed"
+            if isinstance(artifacts, dict):
+                failure = artifacts.get("stderr") or artifacts.get("error_type")
+                if failure:
+                    detail = f"{detail}: {failure}"
+            return SerializableResult(
+                error=detail,
+                iteration=iteration,
+                prompt=prompt,
+                llm_response=llm_response,
+                llm_metadata=llm_metadata,
+                artifacts=artifacts,
+                target_island=db_snapshot.get("sampling_island"),
+            )
 
         # Create child program
         child_program = Program(
@@ -308,6 +390,7 @@ def _run_iteration_worker(
                 "changes": changes_summary,
                 "parent_metrics": parent.metrics,
                 "island": parent_island,
+                "llm": llm_metadata,
             },
         )
 
@@ -322,6 +405,7 @@ def _run_iteration_worker(
             iteration_time=iteration_time,
             prompt=prompt,
             llm_response=llm_response,
+            llm_metadata=llm_metadata,
             artifacts=artifacts,
             iteration=iteration,
             target_island=target_island,
@@ -329,7 +413,13 @@ def _run_iteration_worker(
 
     except Exception as e:
         logger.exception(f"Error in worker iteration {iteration}")
-        return SerializableResult(error=str(e), iteration=iteration)
+        return SerializableResult(
+            error=str(e),
+            iteration=iteration,
+            prompt=prompt,
+            llm_response=llm_response,
+            llm_metadata=llm_metadata,
+        )
 
 
 def _wait_for_processes(processes: tuple[mp.Process, ...], timeout: float) -> list[mp.Process]:
@@ -397,22 +487,278 @@ class ProcessParallelController:
         database: ProgramDatabase,
         evolution_tracer=None,
         file_suffix: str = ".py",
+        usage_output_path: Optional[str] = None,
     ):
         self.config = config
         self.evaluation_file = evaluation_file
         self.database = database
         self.evolution_tracer = evolution_tracer
         self.file_suffix = file_suffix
+        self.usage_output_path = Path(usage_output_path) if usage_output_path else None
 
         self.executor: Optional[ProcessPoolExecutor] = None
         self.shutdown_event = mp.Event()
         self.early_stopping_triggered = False
+        self.target_score_reached = False
+        self.completion_reason = "not_started"
+        self.last_completed_iteration: Optional[int] = None
+        self.completed_iteration_count = 0
+        self.submitted_proposal_count = 0
+        self.llm_call_count = 0
+        self.prompt_token_count = 0
+        self.completion_token_count = 0
+        self.total_provider_tokens = 0
+        self.unreported_provider_token_calls = 0
+        self.llm_call_budget_overshoot = 0
+        self.provider_token_budget_overshoot = 0
+        self.budget_limits_reached: List[str] = []
+        self.budget_completion_reason: Optional[str] = None
+        self.inflight_proposals_at_budget_stop = 0
+        self._seen_provider_response_ids: set[str] = set()
+        self._controller_island_state: Dict[int, Dict[str, Any]] = {
+            island_id: {
+                "accepted": 0,
+                "best_score": 0.0,
+                "calls": 0,
+                "rejected": 0,
+                "tokens": 0,
+                "unique": set(),
+            }
+            for island_id in range(config.database.num_islands)
+        }
 
         # Number of worker processes
         self.num_workers = config.evaluator.parallel_evaluations
         self.num_islands = config.database.num_islands
 
         logger.info(f"Initialized process parallel controller with {self.num_workers} workers")
+
+    @staticmethod
+    def _nonnegative_int(value: Any) -> Optional[int]:
+        """Return provider counters only when they are exact non-negative integers."""
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
+    @staticmethod
+    def _budget_reason(limits_reached: List[str]) -> Optional[str]:
+        """Return a stable public completion reason for the first reached budget."""
+        call_limit = "max_llm_calls" in limits_reached
+        token_limit = "max_total_provider_tokens" in limits_reached
+        if call_limit and token_limit:
+            return "max_llm_calls_and_max_total_provider_tokens_reached"
+        if call_limit:
+            return "max_llm_calls_reached"
+        if token_limit:
+            return "max_total_provider_tokens_reached"
+        return None
+
+    def _refresh_budget_state(self, inflight_proposals: int) -> Optional[str]:
+        """Refresh budget state after a reservation or verified usage receipt."""
+        limits_reached = []
+        if (
+            self.config.max_llm_calls is not None
+            and self.submitted_proposal_count >= self.config.max_llm_calls
+        ):
+            limits_reached.append("max_llm_calls")
+            self.llm_call_budget_overshoot = (
+                self.submitted_proposal_count - self.config.max_llm_calls
+            )
+        if (
+            self.config.max_total_provider_tokens is not None
+            and self.total_provider_tokens >= self.config.max_total_provider_tokens
+        ):
+            limits_reached.append("max_total_provider_tokens")
+            self.provider_token_budget_overshoot = (
+                self.total_provider_tokens - self.config.max_total_provider_tokens
+            )
+        self.budget_limits_reached = limits_reached
+
+        reached_reason = self._budget_reason(limits_reached)
+        if reached_reason and self.budget_completion_reason is None:
+            self.budget_completion_reason = reached_reason
+            self.inflight_proposals_at_budget_stop = max(0, inflight_proposals)
+        return self.budget_completion_reason
+
+    def _record_controller_result(
+        self,
+        island_id: Optional[int],
+        result: SerializableResult,
+    ) -> None:
+        """Update only observed per-island counters used by the live allocator."""
+
+        if (
+            not self.config.database.controller_scheduler.enabled
+            or not isinstance(island_id, int)
+            or island_id not in self._controller_island_state
+        ):
+            return
+        state = self._controller_island_state[island_id]
+        state["calls"] += 1
+        metadata = result.llm_metadata if isinstance(result.llm_metadata, dict) else {}
+        usage = metadata.get("usage")
+        if isinstance(usage, dict):
+            total_tokens = self._nonnegative_int(usage.get("total_tokens"))
+            if total_tokens is not None:
+                state["tokens"] += total_tokens
+        if result.error is not None or not result.child_program_dict:
+            state["rejected"] += 1
+            return
+        state["accepted"] += 1
+        child = result.child_program_dict
+        code = child.get("code")
+        if isinstance(code, str):
+            state["unique"].add(hashlib.sha256(code.encode("utf-8")).hexdigest())
+        metrics = child.get("metrics")
+        if isinstance(metrics, dict):
+            score = metrics.get("combined_score")
+            if not isinstance(score, (int, float)) or isinstance(score, bool):
+                score = safe_numeric_average(metrics)
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                state["best_score"] = max(float(state["best_score"]), float(score))
+
+    def _select_controller_island(
+        self,
+        island_pending: Dict[int, List[int]],
+        batch_size: int,
+    ) -> int:
+        """Choose an island from prior observed results with deterministic ties."""
+
+        scheduler = self.config.database.controller_scheduler
+        available = [
+            island_id
+            for island_id in range(self.num_islands)
+            if len(island_pending[island_id]) < batch_size
+        ]
+        if not available:
+            raise RuntimeError("controller scheduler has no available island")
+        total_calls = sum(
+            int(state["calls"]) for state in self._controller_island_state.values()
+        )
+        if total_calls < scheduler.minimum_calls:
+            return min(
+                available,
+                key=lambda island_id: (
+                    int(self._controller_island_state[island_id]["calls"]),
+                    len(island_pending[island_id]),
+                    island_id,
+                ),
+            )
+
+        def priority(island_id: int) -> tuple[float, int]:
+            state = self._controller_island_state[island_id]
+            calls = int(state["calls"])
+            accepted = int(state["accepted"])
+            rejected = int(state["rejected"])
+            tokens = int(state["tokens"])
+            unique = len(state["unique"])
+            best_score = float(state["best_score"])
+            validity = accepted / calls if calls else 1.0
+            diversity = unique / accepted if accepted else 1.0
+            token_efficiency = best_score / max(tokens / 1000.0, 1.0)
+            value = (
+                scheduler.exploitation_weight * best_score
+                + scheduler.underexplored_weight / (1.0 + calls)
+                + scheduler.validity_weight * validity
+                + scheduler.diversity_weight * diversity
+                + scheduler.token_efficiency_weight * token_efficiency
+                - scheduler.rejection_penalty
+                * (rejected / calls if calls else 0.0)
+            )
+            return (-value, island_id)
+
+        return min(available, key=priority)
+
+    def _register_submitted_proposal(self, inflight_proposals: int) -> Optional[str]:
+        """Reserve one logical proposal-model call against the exact call cap."""
+        self.submitted_proposal_count += 1
+        return self._refresh_budget_state(inflight_proposals)
+
+    @property
+    def llm_usage(self) -> Dict[str, Any]:
+        """Public, JSON-serializable proposal-model usage summary for this run."""
+        return {
+            "call_budget_counting_basis": "submitted_proposals",
+            "provider_usage_counting_basis": "unique_provider_receipts",
+            "llm_calls_submitted": self.submitted_proposal_count,
+            "llm_calls": self.llm_call_count,
+            "prompt_tokens": self.prompt_token_count,
+            "completion_tokens": self.completion_token_count,
+            "total_provider_tokens": self.total_provider_tokens,
+            "unreported_provider_token_calls": self.unreported_provider_token_calls,
+            "max_llm_calls": self.config.max_llm_calls,
+            "max_total_provider_tokens": self.config.max_total_provider_tokens,
+            "llm_call_budget_overshoot": self.llm_call_budget_overshoot,
+            "provider_token_budget_overshoot": self.provider_token_budget_overshoot,
+            "limits_reached": list(self.budget_limits_reached),
+            "inflight_proposals_at_budget_stop": self.inflight_proposals_at_budget_stop,
+        }
+
+    def _record_llm_usage(
+        self,
+        iteration: int,
+        result: SerializableResult,
+        inflight_proposals: int = 0,
+    ) -> Optional[str]:
+        """Aggregate and persist one uniquely identified provider receipt.
+
+        The call cap is reserved before submission. Provider response identity
+        is required for token accounting; missing counters are never guessed.
+        """
+        if not isinstance(result.llm_metadata, dict):
+            return self.budget_completion_reason
+
+        metadata = result.llm_metadata
+        response_id = metadata.get("provider_response_id")
+        verified_receipt = isinstance(response_id, str) and bool(response_id.strip())
+        duplicate_receipt = bool(
+            verified_receipt and response_id in self._seen_provider_response_ids
+        )
+        usage = metadata.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+
+        if verified_receipt and not duplicate_receipt:
+            self._seen_provider_response_ids.add(response_id)
+            self.llm_call_count += 1
+
+            prompt_tokens = self._nonnegative_int(usage.get("prompt_tokens"))
+            completion_tokens = self._nonnegative_int(usage.get("completion_tokens"))
+            total_tokens = self._nonnegative_int(usage.get("total_tokens"))
+
+            if prompt_tokens is not None:
+                self.prompt_token_count += prompt_tokens
+            if completion_tokens is not None:
+                self.completion_token_count += completion_tokens
+            if (
+                total_tokens is None
+                and prompt_tokens is not None
+                and completion_tokens is not None
+            ):
+                total_tokens = prompt_tokens + completion_tokens
+
+            if total_tokens is None:
+                self.unreported_provider_token_calls += 1
+            else:
+                self.total_provider_tokens += total_tokens
+
+        self._refresh_budget_state(inflight_proposals)
+
+        payload = {
+            **metadata,
+            "iteration": iteration,
+            "accepted_for_evaluation": result.error is None,
+            "verified_provider_receipt": verified_receipt,
+            "duplicate_provider_receipt": duplicate_receipt,
+            "cumulative_usage": self.llm_usage,
+        }
+        if self.usage_output_path:
+            self.usage_output_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.usage_output_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+                )
+
+        return self.budget_completion_reason
 
     def _serialize_config(self, config: Config) -> dict:
         """Serialize config object to a dictionary that can be pickled"""
@@ -438,12 +784,18 @@ class ProcessParallelController:
             "database": asdict(config.database),
             "evaluator": asdict(config.evaluator),
             "max_iterations": config.max_iterations,
+            "max_llm_calls": config.max_llm_calls,
+            "max_total_provider_tokens": config.max_total_provider_tokens,
             "checkpoint_interval": config.checkpoint_interval,
             "log_level": config.log_level,
             "log_dir": config.log_dir,
             "random_seed": config.random_seed,
             "diff_based_evolution": config.diff_based_evolution,
             "max_code_length": config.max_code_length,
+            "diff_pattern": config.diff_pattern,
+            "strict_diff_application": config.strict_diff_application,
+            "enforce_evolve_blocks": config.enforce_evolve_blocks,
+            "max_diff_blocks": config.max_diff_blocks,
             "language": config.language,
             "file_suffix": self.file_suffix,
         }
@@ -551,15 +903,23 @@ class ProcessParallelController:
         # Submit initial batch - distribute across islands
         batch_per_island = max(1, batch_size // self.num_islands) if batch_size > 0 else 0
         current_iteration = start_iteration
+        stop_scheduling = False
+        self.completion_reason = "running"
 
         # Round-robin distribution across islands
         for island_id in range(self.num_islands):
             for _ in range(batch_per_island):
-                if current_iteration < total_iterations:
+                if current_iteration < total_iterations and not stop_scheduling:
                     future = self._submit_iteration(current_iteration, island_id)
                     if future:
                         pending_futures[current_iteration] = future
                         island_pending[island_id].append(current_iteration)
+                        budget_reason = self._register_submitted_proposal(
+                            inflight_proposals=len(pending_futures)
+                        )
+                        if budget_reason:
+                            stop_scheduling = True
+                            self.completion_reason = budget_reason
                     current_iteration += 1
 
         next_iteration = current_iteration
@@ -608,12 +968,47 @@ class ProcessParallelController:
                 # Use evaluator timeout + buffer to gracefully handle stuck processes
                 timeout_seconds = self.config.evaluator.timeout + 30
                 result = future.result(timeout=timeout_seconds)
+                budget_reason = self._record_llm_usage(
+                    completed_iteration,
+                    result,
+                    inflight_proposals=len(pending_futures),
+                )
+                completed_island = (
+                    result.target_island
+                    if isinstance(result.target_island, int)
+                    else next(
+                        (
+                            island_id
+                            for island_id, iterations in island_pending.items()
+                            if completed_iteration in iterations
+                        ),
+                        None,
+                    )
+                )
+                self._record_controller_result(completed_island, result)
+                if budget_reason:
+                    if not stop_scheduling:
+                        logger.info(
+                            "LLM budget reached at iteration %s; draining %s in-flight "
+                            "proposal(s) without scheduling new work",
+                            completed_iteration,
+                            len(pending_futures),
+                        )
+                    stop_scheduling = True
+                    self.completion_reason = budget_reason
 
                 if result.error:
                     logger.warning(f"Iteration {completed_iteration} error: {result.error}")
                 elif result.child_program_dict:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
+                    # Capture lineage before insertion. MAP-Elites replacement
+                    # may remove the parent while adding the child.
+                    trace_parent_program = (
+                        self.database.get(result.parent_id)
+                        if result.parent_id
+                        else None
+                    )
 
                     # Add to database with explicit target_island to ensure proper island placement
                     # This fixes issue #391: children should go to the target island, not inherit
@@ -630,11 +1025,7 @@ class ProcessParallelController:
 
                     # Log evolution trace
                     if self.evolution_tracer:
-                        # Retrieve parent program for trace logging
-                        parent_program = (
-                            self.database.get(result.parent_id) if result.parent_id else None
-                        )
-                        if parent_program:
+                        if trace_parent_program:
                             # Determine island ID
                             island_id = child_program.metadata.get(
                                 "island", self.database.current_island
@@ -642,7 +1033,7 @@ class ProcessParallelController:
 
                             self.evolution_tracer.log_trace(
                                 iteration=completed_iteration,
-                                parent_program=parent_program,
+                                parent_program=trace_parent_program,
                                 child_program=child_program,
                                 prompt=result.prompt,
                                 llm_response=result.llm_response,
@@ -651,6 +1042,7 @@ class ProcessParallelController:
                                 metadata={
                                     "iteration_time": result.iteration_time,
                                     "changes": child_program.metadata.get("changes", ""),
+                                    "llm": result.llm_metadata,
                                 },
                             )
 
@@ -742,7 +1134,9 @@ class ProcessParallelController:
                             logger.info(
                                 f"Target score {target_score} reached at iteration {completed_iteration}"
                             )
-                            break
+                            self.target_score_reached = True
+                            self.completion_reason = "target_score_reached"
+                            stop_scheduling = True
 
                     # Check early stopping
                     if early_stopping_enabled and child_program.metrics:
@@ -780,14 +1174,20 @@ class ProcessParallelController:
                                 if (
                                     iterations_without_improvement
                                     >= self.config.early_stopping_patience
+                                    and (
+                                        not self.config.database.controller_scheduler.enabled
+                                        or completed_iterations + 1
+                                        >= self.config.database.controller_scheduler.minimum_calls
+                                    )
                                 ):
                                     self.early_stopping_triggered = True
+                                    self.completion_reason = "early_stopping"
+                                    stop_scheduling = True
                                     logger.info(
                                         f"🛑 Early stopping triggered at iteration {completed_iteration}: "
                                         f"No improvement for {iterations_without_improvement} iterations "
                                         f"(best score: {best_score:.4f})"
                                     )
-                                    break
 
                             else:
                                 # Event-based early stopping
@@ -798,7 +1198,8 @@ class ProcessParallelController:
                                         f"Task successfully solved with score {best_score:.4f}."
                                     )
                                     self.early_stopping_triggered = True
-                                    break
+                                    self.completion_reason = "early_stopping"
+                                    stop_scheduling = True
 
             except FutureTimeoutError:
                 logger.error(
@@ -812,6 +1213,15 @@ class ProcessParallelController:
                 logger.error(f"Error processing result from iteration {completed_iteration}: {e}")
 
             completed_iterations += 1
+            self.completed_iteration_count = completed_iterations
+            self.last_completed_iteration = (
+                completed_iteration
+                if self.last_completed_iteration is None
+                else max(self.last_completed_iteration, completed_iteration)
+            )
+            self.database.last_iteration = max(
+                self.database.last_iteration, completed_iteration
+            )
 
             # Remove completed iteration from island tracking
             for island_id, iteration_list in island_pending.items():
@@ -819,17 +1229,33 @@ class ProcessParallelController:
                     iteration_list.remove(completed_iteration)
                     break
 
-            # Submit next iterations maintaining island balance
-            for island_id in range(self.num_islands):
+            # Submit the next iteration either with the original balanced
+            # allocator or the explicitly enabled observed-result controller.
+            if self.config.database.controller_scheduler.enabled:
+                island_order = [
+                    self._select_controller_island(island_pending, batch_size)
+                ]
+                per_island_limit = batch_size
+            else:
+                island_order = range(self.num_islands)
+                per_island_limit = batch_per_island
+            for island_id in island_order:
                 if (
-                    len(island_pending[island_id]) < batch_per_island
+                    len(island_pending[island_id]) < per_island_limit
                     and next_iteration < total_iterations
                     and not self.shutdown_event.is_set()
+                    and not stop_scheduling
                 ):
                     future = self._submit_iteration(next_iteration, island_id)
                     if future:
                         pending_futures[next_iteration] = future
                         island_pending[island_id].append(next_iteration)
+                        budget_reason = self._register_submitted_proposal(
+                            inflight_proposals=len(pending_futures)
+                        )
+                        if budget_reason:
+                            stop_scheduling = True
+                            self.completion_reason = budget_reason
                         next_iteration += 1
                         break  # Only submit one iteration per completion to maintain balance
 
@@ -842,9 +1268,20 @@ class ProcessParallelController:
         # Log completion reason
         if self.early_stopping_triggered:
             logger.info("✅ Evolution completed - Early stopping triggered due to convergence")
+        elif self.target_score_reached:
+            logger.info("✅ Evolution completed - Target reached; in-flight work recorded")
+        elif self.budget_completion_reason:
+            self.completion_reason = self.budget_completion_reason
+            logger.info(
+                "✅ Evolution completed - %s; usage=%s",
+                self.budget_completion_reason,
+                self.llm_usage,
+            )
         elif self.shutdown_event.is_set():
+            self.completion_reason = "shutdown_requested"
             logger.info("✅ Evolution completed - Shutdown requested")
         else:
+            self.completion_reason = "maximum_iterations"
             logger.info("✅ Evolution completed - Maximum iterations reached")
 
         return self.database.get_best_program()

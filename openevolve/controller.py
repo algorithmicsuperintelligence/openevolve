@@ -48,6 +48,7 @@ class OpenEvolve:
     ):
         # Load configuration (loaded in main_async)
         self.config = config
+        self.config.validate()
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
@@ -163,6 +164,12 @@ class OpenEvolve:
 
         # Initialize improved parallel processing components
         self.parallel_controller = None
+        # Preserve authoritative run completion metadata after the process
+        # controller is stopped and released.
+        self.completion_reason = "not_started"
+        self.last_completed_iteration: Optional[int] = None
+        self.completed_iteration_count = 0
+        self.llm_usage: Dict[str, Any] = {}
 
     def _setup_logging(self) -> None:
         """Set up logging"""
@@ -314,6 +321,7 @@ class OpenEvolve:
                 self.database,
                 self.evolution_tracer,
                 file_suffix=self.config.file_suffix,
+                usage_output_path=os.path.join(self.output_dir, "llm_usage.jsonl"),
             )
 
             # Set up signal handlers for graceful shutdown
@@ -354,6 +362,15 @@ class OpenEvolve:
         finally:
             # Clean up parallel processing resources
             if self.parallel_controller:
+                self.completion_reason = self.parallel_controller.completion_reason
+                self.last_completed_iteration = (
+                    self.parallel_controller.last_completed_iteration
+                )
+                self.completed_iteration_count = (
+                    self.parallel_controller.completed_iteration_count
+                )
+                llm_usage = getattr(self.parallel_controller, "llm_usage", {})
+                self.llm_usage = dict(llm_usage) if isinstance(llm_usage, dict) else {}
                 self.parallel_controller.stop()
                 self.parallel_controller = None
 
@@ -501,15 +518,36 @@ class OpenEvolve:
         if self.parallel_controller.shutdown_event.is_set():
             logger.info("Evolution stopped due to shutdown request")
             return
-        elif self.parallel_controller.early_stopping_triggered:
+        elif getattr(self.parallel_controller, "early_stopping_triggered", False) is True:
             logger.info("Evolution stopped due to early stopping - saving final checkpoint")
             # Continue to save final checkpoint for early stopping
 
-        # Save final checkpoint if needed
-        # Note: start_iteration here is the evolution start (1 for fresh start, not 0)
-        # max_iterations is the number of evolution iterations to run
-        final_iteration = start_iteration + max_iterations - 1
-        if final_iteration > 0 and final_iteration % self.config.checkpoint_interval == 0:
+        # Bind the final checkpoint to work that actually completed. A target
+        # reached by one worker can leave higher-numbered work in flight, so
+        # the requested budget is not a valid completion cursor.
+        final_iteration = getattr(
+            self.parallel_controller, "last_completed_iteration", None
+        )
+        target_score_reached = (
+            getattr(self.parallel_controller, "target_score_reached", False) is True
+        )
+        early_stopping_triggered = (
+            getattr(self.parallel_controller, "early_stopping_triggered", False) is True
+        )
+        budget_triggered = bool(
+            getattr(self.parallel_controller, "budget_completion_reason", None)
+        )
+        should_save_final = (
+            isinstance(final_iteration, int)
+            and final_iteration > 0
+            and (
+                target_score_reached
+                or early_stopping_triggered
+                or budget_triggered
+                or final_iteration % self.config.checkpoint_interval == 0
+            )
+        )
+        if should_save_final:
             self._save_checkpoint(final_iteration)
 
     def _save_best_program(self, program: Optional[Program] = None) -> None:

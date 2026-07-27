@@ -4,6 +4,7 @@ Configuration handling for OpenEvolve
 
 import os
 import re
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
@@ -307,6 +308,20 @@ class PromptConfig:
 
 
 @dataclass
+class ControllerSchedulerConfig:
+    """Optional observed-result island allocator for bounded live comparisons."""
+
+    enabled: bool = False
+    exploitation_weight: float = 0.0
+    underexplored_weight: float = 0.0
+    validity_weight: float = 0.0
+    diversity_weight: float = 0.0
+    token_efficiency_weight: float = 0.0
+    rejection_penalty: float = 0.0
+    minimum_calls: int = 1
+
+
+@dataclass
 class DatabaseConfig:
     """Configuration for the program database"""
 
@@ -326,6 +341,9 @@ class DatabaseConfig:
     elite_selection_ratio: float = 0.1
     exploration_ratio: float = 0.2
     exploitation_ratio: float = 0.7
+    controller_scheduler: ControllerSchedulerConfig = field(
+        default_factory=ControllerSchedulerConfig
+    )
     # Note: diversity_metric fixed to "edit_distance"
     diversity_metric: str = "edit_distance"  # Options: "edit_distance", "feature_based"
 
@@ -418,6 +436,10 @@ class Config:
 
     # General settings
     max_iterations: int = 10000
+    # Optional per-run proposal-model budgets. Calls are reserved before
+    # submission; provider-token totals come from completed unique receipts.
+    max_llm_calls: Optional[int] = None
+    max_total_provider_tokens: Optional[int] = None
     checkpoint_interval: int = 100
     log_level: str = "INFO"
     log_dir: Optional[str] = None
@@ -436,6 +458,9 @@ class Config:
     diff_based_evolution: bool = True
     max_code_length: int = 10000
     diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+    strict_diff_application: bool = False
+    enforce_evolve_blocks: bool = False
+    max_diff_blocks: int = 32
 
     # Early stopping settings
     early_stopping_patience: Optional[int] = None
@@ -489,13 +514,67 @@ class Config:
         if config.database.random_seed is None and config.random_seed is not None:
             config.database.random_seed = config.random_seed
 
-        if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        """Validate combinations used by both YAML and programmatic callers."""
+        for field_name in ("max_llm_calls", "max_total_provider_tokens"):
+            value = getattr(self, field_name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                raise ValueError(f"{field_name} must be a positive integer or None")
+        try:
+            re.compile(self.diff_pattern)
+        except re.error as error:
+            raise ValueError(f"Invalid regex pattern in diff_pattern: {error}") from error
+        if self.prompt.programs_as_changes_description and not self.diff_based_evolution:
             raise ValueError(
                 "prompt.programs_as_changes_description=true requires diff_based_evolution=true "
                 "(full rewrites cannot reliably update code and changes_description together)"
             )
-
-        return config
+        if self.enforce_evolve_blocks and not self.strict_diff_application:
+            raise ValueError(
+                "enforce_evolve_blocks=true requires strict_diff_application=true"
+            )
+        if self.enforce_evolve_blocks and not self.diff_based_evolution:
+            raise ValueError(
+                "enforce_evolve_blocks=true requires diff_based_evolution=true"
+            )
+        if self.max_diff_blocks < 1:
+            raise ValueError("max_diff_blocks must be at least 1")
+        scheduler = self.database.controller_scheduler
+        if not isinstance(scheduler.enabled, bool):
+            raise ValueError("database.controller_scheduler.enabled must be boolean")
+        for field_name in (
+            "exploitation_weight",
+            "underexplored_weight",
+            "validity_weight",
+            "diversity_weight",
+            "token_efficiency_weight",
+            "rejection_penalty",
+        ):
+            value = getattr(scheduler, field_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or value < 0
+            ):
+                raise ValueError(
+                    f"database.controller_scheduler.{field_name} "
+                    "must be finite and nonnegative"
+                )
+        if (
+            isinstance(scheduler.minimum_calls, bool)
+            or not isinstance(scheduler.minimum_calls, int)
+            or scheduler.minimum_calls < 1
+        ):
+            raise ValueError(
+                "database.controller_scheduler.minimum_calls "
+                "must be a positive integer"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

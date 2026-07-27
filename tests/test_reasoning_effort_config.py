@@ -10,7 +10,7 @@ import tempfile
 import os
 
 from openevolve.config import Config, LLMConfig, LLMModelConfig
-from openevolve.llm.openai import OpenAILLM
+from openevolve.llm.openai import OpenAILLM, _uses_provider_managed_sampling
 
 
 class TestReasoningEffortConfig(unittest.TestCase):
@@ -139,6 +139,20 @@ class TestReasoningEffortConfig(unittest.TestCase):
             
         # Verify the reasoning_effort is stored
         self.assertEqual(llm.reasoning_effort, "high")
+
+    def test_gemini_36_uses_provider_managed_sampling(self):
+        self.assertTrue(
+            _uses_provider_managed_sampling(
+                "https://generativelanguage.googleapis.com/v1beta/openai/",
+                "gemini-3.6-flash",
+            )
+        )
+        self.assertFalse(
+            _uses_provider_managed_sampling(
+                "https://api.openai.com/v1",
+                "gemini-3.6-flash",
+            )
+        )
 
     def test_reasoning_effort_passed_to_api_params(self):
         """Test that reasoning_effort is included in API call parameters"""
