@@ -19,6 +19,7 @@ from openevolve.evolution_trace import EvolutionTracer
 from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.process_parallel import ProcessParallelController
 from openevolve.prompt.sampler import PromptSampler
+from openevolve.run_manifest import RunManifest
 from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
 
@@ -228,6 +229,35 @@ class OpenEvolve:
         target_score: Optional[float] = None,
         checkpoint_path: Optional[str] = None,
     ) -> Optional[Program]:
+        """Run evolution and persist a redacted run-level provenance manifest."""
+        max_iterations = iterations or self.config.max_iterations
+        manifest = RunManifest(
+            self.output_dir, self.config, self.initial_program_path, self.evaluation_file
+        )
+        manifest.write(max_iterations=max_iterations)
+        self._run_stop_reason = "error"
+
+        try:
+            return await self._run_evolution(
+                iterations=iterations,
+                target_score=target_score,
+                checkpoint_path=checkpoint_path,
+            )
+        except KeyboardInterrupt:
+            self._run_stop_reason = "interrupted"
+            raise
+        except BaseException:
+            self._run_stop_reason = "error"
+            raise
+        finally:
+            manifest.write(max_iterations=max_iterations, stop_reason=self._run_stop_reason)
+
+    async def _run_evolution(
+        self,
+        iterations: Optional[int] = None,
+        target_score: Optional[float] = None,
+        checkpoint_path: Optional[str] = None,
+    ) -> Optional[Program]:
         """
         Run the evolution process with improved parallel processing
 
@@ -350,6 +380,13 @@ class OpenEvolve:
             await self._run_evolution_with_checkpoints(
                 evolution_start, evolution_iterations, target_score
             )
+
+            if self.parallel_controller.shutdown_event.is_set():
+                self._run_stop_reason = "interrupted"
+            elif self.parallel_controller.early_stopping_triggered:
+                self._run_stop_reason = "completed"
+            else:
+                self._run_stop_reason = "max_iterations"
 
         finally:
             # Clean up parallel processing resources
