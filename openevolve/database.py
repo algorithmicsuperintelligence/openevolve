@@ -3,6 +3,7 @@ Program database for OpenEvolve
 """
 
 import base64
+import copy
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ import random
 import shutil
 import time
 import uuid
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 
 # FileLock removed - no longer needed with threaded parallel processing
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -38,6 +39,29 @@ def _safe_avg_metrics(metrics: Dict[str, Any]) -> float:
         v for v in metrics.values() if isinstance(v, (int, float)) and not isinstance(v, bool)
     ]
     return sum(numeric_values) / max(1, len(numeric_values)) if numeric_values else 0.0
+
+
+def _copy_field_value(value: Any) -> Any:
+    """
+    Produce the same value dataclasses.asdict() would produce for one field.
+
+    asdict() walks every node through _asdict_inner() and copy.deepcopy(), which is
+    a large amount of dispatch for the plain str/int/float/dict/list values a Program
+    actually holds. The fast paths below cover those; anything else falls back to the
+    same helpers asdict() itself would use, so the result is unchanged.
+    """
+    t = type(value)
+    if t is str or t is int or t is float or t is bool or value is None:
+        return value
+    if t is dict:
+        return {k: _copy_field_value(v) for k, v in value.items()}
+    if t is list:
+        return [_copy_field_value(v) for v in value]
+    if t is tuple:
+        return tuple(_copy_field_value(v) for v in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    return copy.deepcopy(value)
 
 
 @dataclass
@@ -80,7 +104,8 @@ class Program:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
-        return asdict(self)
+        values = self.__dict__
+        return {name: _copy_field_value(values[name]) for name in _PROGRAM_FIELD_NAMES}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Program":
@@ -112,6 +137,11 @@ class Program:
         return cls(**filtered_data)
 
 
+# Field order of Program, resolved once. to_dict() walks this instead of calling
+# dataclasses.fields() on every call.
+_PROGRAM_FIELD_NAMES = tuple(f.name for f in fields(Program))
+
+
 class ProgramDatabase:
     """
     Database for storing and sampling programs during evolution
@@ -121,8 +151,17 @@ class ProgramDatabase:
     It also tracks the absolute best program separately to ensure it's never lost.
     """
 
+    # Bound on _code_shape_cache. A class attribute rather than an instance one so it
+    # is available to _fast_code_diversity from inside __init__ itself.
+    _CODE_SHAPE_CACHE_SIZE = 2048
+
     def __init__(self, config: DatabaseConfig):
         self.config = config
+
+        # Bound before anything else in __init__: load() below reaches
+        # log_island_status() -> get_island_stats() -> _calculate_island_diversity()
+        # -> _fast_code_diversity(), which needs this cache.
+        self._code_shape_cache: Dict[str, Tuple[int, int, frozenset]] = {}
 
         # In-memory program storage
         self.programs: Dict[str, Program] = {}
@@ -2092,6 +2131,24 @@ class ProgramDatabase:
 
         return total_diversity / max(1, comparisons)
 
+    def _code_shape(self, code: str) -> Tuple[int, int, frozenset]:
+        """
+        Length, newline count and character set of one code string, memoized.
+
+        _get_cached_diversity() compares one program against the whole reference set,
+        so the same reference strings are re-scanned once per comparison, and the
+        program's own string is re-scanned once per reference entry. Each scan is
+        O(len(code)); the derived values only depend on the string itself.
+        """
+        shape = self._code_shape_cache.get(code)
+        if shape is None:
+            shape = (len(code), code.count("\n"), frozenset(code))
+            if len(self._code_shape_cache) >= self._CODE_SHAPE_CACHE_SIZE:
+                # Same insertion-order eviction the diversity cache uses
+                del self._code_shape_cache[next(iter(self._code_shape_cache))]
+            self._code_shape_cache[code] = shape
+        return shape
+
     def _fast_code_diversity(self, code1: str, code2: str) -> float:
         """
         Fast approximation of code diversity using simple metrics
@@ -2101,18 +2158,16 @@ class ProgramDatabase:
         if code1 == code2:
             return 0.0
 
+        len1, lines1, chars1 = self._code_shape(code1)
+        len2, lines2, chars2 = self._code_shape(code2)
+
         # Length difference (scaled to reasonable range)
-        len1, len2 = len(code1), len(code2)
         length_diff = abs(len1 - len2)
 
         # Line count difference
-        lines1 = code1.count("\n")
-        lines2 = code2.count("\n")
         line_diff = abs(lines1 - lines2)
 
         # Simple character set difference
-        chars1 = set(code1)
-        chars2 = set(code2)
         char_diff = len(chars1.symmetric_difference(chars2))
 
         # Combine metrics (scaled to match original edit distance range)
@@ -2206,9 +2261,10 @@ class ProgramDatabase:
         """Cache a diversity value with LRU eviction"""
         # Check if cache is full
         if len(self.diversity_cache) >= self.diversity_cache_size:
-            # Remove oldest entry
-            oldest_hash = min(self.diversity_cache.items(), key=lambda x: x[1]["timestamp"])[0]
-            del self.diversity_cache[oldest_hash]
+            # Remove oldest entry. Entries are inserted in increasing timestamp order
+            # and dicts preserve insertion order, so the first key is the same entry
+            # the previous min()-over-timestamps scan selected, without the O(n) scan.
+            del self.diversity_cache[next(iter(self.diversity_cache))]
 
         # Add new entry
         self.diversity_cache[code_hash] = {"value": diversity, "timestamp": time.time()}
@@ -2239,9 +2295,13 @@ class ProgramDatabase:
         stats["max"] = max(stats["max"], value)
 
         # Keep recent values for more sophisticated scaling methods
-        stats["values"].append(value)
-        if len(stats["values"]) > 1000:  # Limit memory usage
-            stats["values"] = stats["values"][-1000:]
+        values = stats["values"]
+        values.append(value)
+        if len(values) > 1000:  # Limit memory usage
+            # The list is trimmed one element at a time, so dropping the head in place
+            # is the same window the [-1000:] slice produced, without allocating and
+            # copying a fresh 1000-element list on every call once the window is full.
+            del values[0]
 
     def _scale_feature_value(self, feature_name: str, value: float) -> float:
         """
