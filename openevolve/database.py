@@ -618,16 +618,18 @@ class ProgramDatabase:
         # create directory if it doesn't exist
         os.makedirs(save_path, exist_ok=True)
 
+        # Create the programs directory once rather than once per program
+        programs_dir = os.path.join(save_path, "programs")
+        os.makedirs(programs_dir, exist_ok=True)
+
+        # Neither of these can change while the loop runs
+        prompts_by_program = self.prompts_by_program
+        log_prompts = self.config.log_prompts and bool(prompts_by_program)
+
         # Save each program
         for program in self.programs.values():
-            prompts = None
-            if (
-                self.config.log_prompts
-                and self.prompts_by_program
-                and program.id in self.prompts_by_program
-            ):
-                prompts = self.prompts_by_program[program.id]
-            self._save_program(program, save_path, prompts=prompts)
+            prompts = prompts_by_program.get(program.id) if log_prompts else None
+            self._save_program(program, save_path, prompts=prompts, programs_dir=programs_dir)
 
         # Save metadata
         metadata = {
@@ -644,7 +646,7 @@ class ProgramDatabase:
         }
 
         with open(os.path.join(save_path, "metadata.json"), "w") as f:
-            json.dump(metadata, f)
+            f.write(json.dumps(metadata))
 
         logger.info(f"Saved database with {len(self.programs)} programs to {save_path}")
 
@@ -817,6 +819,7 @@ class ProgramDatabase:
         program: Program,
         base_path: Optional[str] = None,
         prompts: Optional[Dict[str, Dict[str, str]]] = None,
+        programs_dir: Optional[str] = None,
     ) -> None:
         """
         Save a program to disk
@@ -825,14 +828,19 @@ class ProgramDatabase:
             program: Program to save
             base_path: Base path to save to (uses config.db_path if None)
             prompts: Optional prompts to save with the program, in the format {template_key: { 'system': str, 'user': str }}
+            programs_dir: Directory to write into, already created by the caller.
+                save() passes this so the directory is not re-created once per
+                program. When omitted the directory is derived and created here,
+                which is what the single-program call site in add() relies on.
         """
-        save_path = base_path or self.config.db_path
-        if not save_path:
-            return
+        if programs_dir is None:
+            save_path = base_path or self.config.db_path
+            if not save_path:
+                return
 
-        # Create programs directory if it doesn't exist
-        programs_dir = os.path.join(save_path, "programs")
-        os.makedirs(programs_dir, exist_ok=True)
+            # Create programs directory if it doesn't exist
+            programs_dir = os.path.join(save_path, "programs")
+            os.makedirs(programs_dir, exist_ok=True)
 
         # Save program
         program_dict = program.to_dict()
@@ -841,7 +849,7 @@ class ProgramDatabase:
         program_path = os.path.join(programs_dir, f"{program.id}.json")
 
         with open(program_path, "w") as f:
-            json.dump(program_dict, f)
+            f.write(json.dumps(program_dict))
 
     def _calculate_feature_coords(self, program: Program) -> List[int]:
         """
