@@ -4,9 +4,11 @@ Command-line interface for OpenEvolve
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from openevolve import OpenEvolve
@@ -23,6 +25,16 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "evaluation_file", help="Path to the evaluation file containing an 'evaluate' function"
+    )
+
+    parser.add_argument(
+        "--seed-program",
+        action="append",
+        default=[],
+        help=(
+            "Additional evaluated starting parent. Repeat the option to seed "
+            "multiple islands while retaining initial_program as the incumbent."
+        ),
     )
 
     parser.add_argument("--config", "-c", help="Path to configuration file (YAML)", default=None)
@@ -77,6 +89,10 @@ async def main_async() -> int:
     if not os.path.exists(args.evaluation_file):
         print(f"Error: Evaluation file '{args.evaluation_file}' not found")
         return 1
+    missing_seeds = [path for path in args.seed_program if not os.path.exists(path)]
+    if missing_seeds:
+        print(f"Error: Seed program file not found: '{missing_seeds[0]}'")
+        return 1
 
     # Load base config from file or defaults
     config = load_config(args.config)
@@ -110,6 +126,7 @@ async def main_async() -> int:
             evaluation_file=args.evaluation_file,
             config=config,
             output_dir=args.output,
+            seed_program_paths=args.seed_program,
         )
 
         # Load from checkpoint if specified
@@ -160,6 +177,25 @@ async def main_async() -> int:
         if latest_checkpoint:
             print(f"\nLatest checkpoint saved at: {latest_checkpoint}")
             print(f"To resume, use: --checkpoint {latest_checkpoint}")
+
+        summary = {
+            "schema_version": 1,
+            "record_type": "openevolve_run_summary",
+            "completion_reason": openevolve.completion_reason,
+            "last_completed_iteration": openevolve.last_completed_iteration,
+            "completed_iteration_count": openevolve.completed_iteration_count,
+            "latest_checkpoint": latest_checkpoint,
+            "best_program_id": best_program.id,
+            "best_program_metrics": best_program.metrics,
+            "llm_usage": openevolve.llm_usage,
+        }
+        summary_path = Path(openevolve.output_dir) / "run-summary.json"
+        temporary = summary_path.with_name(f".{summary_path.name}.tmp")
+        temporary.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(summary_path)
 
         return 0
 

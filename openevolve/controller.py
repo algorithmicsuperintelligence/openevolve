@@ -45,6 +45,7 @@ class OpenEvolve:
         evaluation_file: str,
         config: Config,
         output_dir: Optional[str] = None,
+        seed_program_paths: Optional[List[str]] = None,
     ):
         # Load configuration (loaded in main_async)
         self.config = config
@@ -96,6 +97,11 @@ class OpenEvolve:
         # Load initial program
         self.initial_program_path = initial_program_path
         self.initial_program_code = self._load_initial_program()
+        self.seed_program_paths = [
+            str(Path(path).expanduser().resolve())
+            for path in (seed_program_paths or [])
+        ]
+        self.seed_program_codes = self._load_seed_programs()
         if not self.config.language:
             self.config.language = extract_code_language(self.initial_program_code)
 
@@ -229,6 +235,22 @@ class OpenEvolve:
         with open(self.initial_program_path, "r") as f:
             return f.read()
 
+    def _load_seed_programs(self) -> List[tuple[str, str]]:
+        """Load distinct optional starting parents without replacing the incumbent."""
+
+        loaded: List[tuple[str, str]] = []
+        seen = {self.initial_program_code}
+        for path in self.seed_program_paths:
+            if not Path(path).is_file():
+                raise ValueError(f"Seed program does not exist: {path}")
+            code = Path(path).read_text(encoding="utf-8")
+            if code in seen:
+                logger.info("Skipping duplicate seed program %s", path)
+                continue
+            seen.add(code)
+            loaded.append((path, code))
+        return loaded
+
     async def run(
         self,
         iterations: Optional[int] = None,
@@ -307,6 +329,38 @@ class OpenEvolve:
                         f"For better evolution results, please modify your evaluator to return a 'combined_score' "
                         f"metric that properly weights different aspects of program performance."
                     )
+
+            for index, (seed_path, seed_code) in enumerate(self.seed_program_codes):
+                seed_program_id = str(uuid.uuid4())
+                seed_metrics = await self.evaluator.evaluate_program(
+                    seed_code,
+                    seed_program_id,
+                )
+                seed_program = Program(
+                    id=seed_program_id,
+                    code=seed_code,
+                    changes_description=f"Starting parent from {Path(seed_path).name}",
+                    language=self.config.language,
+                    metrics=seed_metrics,
+                    iteration_found=start_iteration,
+                    metadata={
+                        "seed_program": True,
+                        "seed_program_path": seed_path,
+                    },
+                )
+                target_island = (index + 1) % self.config.database.num_islands
+                self.database.add(
+                    seed_program,
+                    target_island=target_island,
+                )
+                seed_artifacts = self.evaluator.get_pending_artifacts(seed_program_id)
+                if seed_artifacts:
+                    self.database.store_artifacts(seed_program_id, seed_artifacts)
+                logger.info(
+                    "Added seed program %s to island %s",
+                    Path(seed_path).name,
+                    target_island,
+                )
         else:
             logger.info(
                 f"Skipping initial program addition (resuming from iteration {start_iteration} "

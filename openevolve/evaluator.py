@@ -678,7 +678,7 @@ class Evaluator:
         """
         Check if metrics pass a threshold
 
-        Uses 'combined_score' if available (for consistency with evolution),
+        Uses 'selection_score' when supplied, then 'combined_score',
         otherwise falls back to averaging all numeric metrics except 'error'
 
         Args:
@@ -690,6 +690,16 @@ class Evaluator:
         """
         if not metrics:
             return False
+
+        if "selection_eligible" in metrics:
+            eligible = metrics.get("selection_eligible")
+            if not isinstance(eligible, (int, float)) or float(eligible) <= 0.0:
+                return False
+
+        if "selection_score" in metrics:
+            score = metrics.get("selection_score")
+            if isinstance(score, (int, float)):
+                return float(score) >= threshold
 
         # Use combined_score if available - this is what evolution uses
         if "combined_score" in metrics:

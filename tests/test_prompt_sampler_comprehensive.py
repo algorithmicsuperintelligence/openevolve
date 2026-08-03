@@ -184,6 +184,27 @@ class TestPromptSamplerComprehensive(unittest.TestCase):
         self.assertIn("best", prompt["user"])
         self.assertIn("creative", prompt["user"])
 
+    def test_artifact_include_names_limit_and_order_prompt_context(self):
+        config = Config()
+        config.prompt.artifact_include_names = ["search-map.txt", "guidance"]
+        sampler = PromptSampler(config.prompt)
+
+        prompt = sampler.build_prompt(
+            current_program="def main(): pass",
+            program_artifacts={
+                "large-receipt.json": "omit me",
+                "guidance": "short direction",
+                "search-map.txt": "compact map",
+            },
+        )
+
+        self.assertNotIn("large-receipt.json", prompt["user"])
+        self.assertNotIn("omit me", prompt["user"])
+        self.assertLess(
+            prompt["user"].index("search-map.txt"),
+            prompt["user"].index("guidance"),
+        )
+
     def test_fitness_calculation_consistency(self):
         """Test that fitness calculation is consistent across all methods"""
         metrics = {

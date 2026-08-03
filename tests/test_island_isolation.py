@@ -152,6 +152,11 @@ class TestIslandIsolation(unittest.TestCase):
                 # Each island should have received iterations
                 for count in island_counts.values():
                     self.assertGreater(count, 0)
+                self.assertEqual(
+                    [0, 1, 2],
+                    submitted_islands[:3],
+                    "the initial parallel batch must contain one call per island",
+                )
         finally:
             controller.stop()
 

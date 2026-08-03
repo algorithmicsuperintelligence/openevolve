@@ -140,6 +140,182 @@ def _lazy_init_worker_components():
         )
 
 
+def _with_archive_context(
+    parent_artifacts: Optional[Dict[str, Any]],
+    db_snapshot: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Add evaluator-defined complete search history to one prompt."""
+
+    archive_artifact = _worker_config.prompt.archive_context_artifact
+    neighborhood_artifact = (
+        _worker_config.prompt.proposal_neighborhood_artifact
+    )
+    if archive_artifact is None and neighborhood_artifact is None:
+        return parent_artifacts
+    augmented = dict(parent_artifacts or {})
+    snapshot_artifacts = db_snapshot.get("artifacts")
+    historical_artifacts = db_snapshot.get("historical_artifact_values")
+    if archive_artifact is not None:
+        live_values = _snapshot_artifact_values(
+            snapshot_artifacts,
+            archive_artifact,
+        )
+        historical_values = _historical_artifact_values(
+            historical_artifacts,
+            archive_artifact,
+        )
+        values = live_values | historical_values
+        ordered = sorted(values)
+        limit = _worker_config.prompt.archive_context_max_items
+        selected = ordered[:limit]
+        context = {
+            "artifact": archive_artifact,
+            "archive_item_count": len(ordered),
+            "live_archive_item_count": len(live_values),
+            "historical_item_count": len(historical_values),
+            "included_item_count": len(selected),
+            "items": selected,
+            "truncated": len(selected) != len(ordered),
+        }
+        augmented["archive-context.json"] = json.dumps(
+            context,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    if neighborhood_artifact is not None:
+        raw_neighborhood = augmented.get(neighborhood_artifact)
+        if isinstance(raw_neighborhood, bytes):
+            raw_neighborhood = raw_neighborhood.decode(
+                "utf-8", errors="strict"
+            )
+        if not isinstance(raw_neighborhood, str):
+            raise ValueError(
+                "parent is missing configured proposal neighborhood artifact: "
+                f"{neighborhood_artifact}"
+            )
+        try:
+            neighborhood = json.loads(raw_neighborhood)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"proposal neighborhood artifact is not valid JSON: {error}"
+            ) from error
+        if (
+            not isinstance(neighborhood, dict)
+            or neighborhood.get("schema_version") != 1
+        ):
+            raise ValueError(
+                "proposal neighborhood artifact must use schema_version 1"
+            )
+        identity_artifact = neighborhood.get("identity_artifact")
+        options = neighborhood.get("options")
+        if (
+            not isinstance(identity_artifact, str)
+            or not identity_artifact.strip()
+            or not isinstance(options, list)
+        ):
+            raise ValueError(
+                "proposal neighborhood must declare identity_artifact and options"
+            )
+        retained = _snapshot_artifact_values(
+            snapshot_artifacts,
+            identity_artifact,
+        )
+        historical = _historical_artifact_values(
+            historical_artifacts,
+            identity_artifact,
+        )
+        known = retained | historical
+        available: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        excluded_retained = 0
+        excluded_historical = 0
+        excluded_known = 0
+        for option in options:
+            if not isinstance(option, dict):
+                raise ValueError(
+                    "proposal neighborhood options must be JSON objects"
+                )
+            identity = option.get("identity")
+            option_id = option.get("id")
+            if (
+                not isinstance(identity, str)
+                or not identity
+                or not isinstance(option_id, str)
+                or not option_id
+            ):
+                raise ValueError(
+                    "proposal neighborhood options require non-empty id and identity"
+                )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if identity in known:
+                excluded_known += 1
+                if identity in retained:
+                    excluded_retained += 1
+                if identity in historical:
+                    excluded_historical += 1
+                continue
+            available.append(option)
+        limit = _worker_config.prompt.proposal_options_max_items
+        selected_options = available[:limit]
+        proposal_context = {
+            "source_artifact": neighborhood_artifact,
+            "identity_artifact": identity_artifact,
+            "declared_option_count": len(options),
+            "excluded_retained_count": excluded_retained,
+            "excluded_historical_count": excluded_historical,
+            "excluded_known_count": excluded_known,
+            "available_option_count": len(available),
+            "included_option_count": len(selected_options),
+            "options": selected_options,
+            "truncated": len(selected_options) != len(available),
+        }
+        augmented["proposal-options.json"] = json.dumps(
+            proposal_context,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    return augmented
+
+
+def _snapshot_artifact_values(
+    snapshot_artifacts: Any,
+    artifact_name: str,
+) -> set[str]:
+    """Return complete text values for one artifact across a worker snapshot."""
+
+    values: set[str] = set()
+    if not isinstance(snapshot_artifacts, dict):
+        return values
+    for program_id in sorted(snapshot_artifacts):
+        artifacts = snapshot_artifacts.get(program_id)
+        if not isinstance(artifacts, dict):
+            continue
+        value = artifacts.get(artifact_name)
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str):
+            values.add(value)
+    return values
+
+
+def _historical_artifact_values(
+    historical_artifacts: Any,
+    artifact_name: str,
+) -> set[str]:
+    """Return persisted text values for one append-only artifact ledger."""
+
+    if not isinstance(historical_artifacts, dict):
+        return set()
+    values = historical_artifacts.get(artifact_name)
+    if not isinstance(values, list):
+        return set()
+    return {value for value in values if isinstance(value, str)}
+
+
 def _run_iteration_worker(
     iteration: int, db_snapshot: Dict[str, Any], parent_id: str, inspiration_ids: List[str]
 ) -> SerializableResult:
@@ -158,7 +334,10 @@ def _run_iteration_worker(
         inspirations = [programs[pid] for pid in inspiration_ids if pid in programs]
 
         # Get parent artifacts if available
-        parent_artifacts = db_snapshot["artifacts"].get(parent_id)
+        parent_artifacts = _with_archive_context(
+            db_snapshot["artifacts"].get(parent_id),
+            db_snapshot,
+        )
 
         # Get island-specific programs for context
         parent_island = parent.metadata.get("island", db_snapshot["current_island"])
@@ -243,8 +422,11 @@ def _run_iteration_worker(
             return SerializableResult(
                 error=message,
                 iteration=iteration,
+                parent_id=parent.id,
+                prompt=prompt,
                 llm_response=llm_response,
                 llm_metadata=llm_metadata,
+                target_island=db_snapshot.get("sampling_island"),
             )
 
         # Parse response based on evolution mode
@@ -375,6 +557,21 @@ def _run_iteration_worker(
                 artifacts=artifacts,
                 target_island=db_snapshot.get("sampling_island"),
             )
+
+        identity_artifact = _worker_config.program_identity_artifact
+        if identity_artifact is not None:
+            if not isinstance(parent_artifacts, dict) or identity_artifact not in parent_artifacts:
+                return reject_proposal(
+                    f"Parent is missing configured program identity artifact: {identity_artifact}"
+                )
+            if not isinstance(artifacts, dict) or identity_artifact not in artifacts:
+                return reject_proposal(
+                    f"Candidate is missing configured program identity artifact: {identity_artifact}"
+                )
+            if artifacts[identity_artifact] == parent_artifacts[identity_artifact]:
+                return reject_proposal(
+                    "Candidate has the same program identity as its parent"
+                )
 
         # Create child program
         child_program = Program(
@@ -514,7 +711,50 @@ class ProcessParallelController:
         self.budget_limits_reached: List[str] = []
         self.budget_completion_reason: Optional[str] = None
         self.inflight_proposals_at_budget_stop = 0
+        self.accepted_proposal_count = 0
+        self.rejected_proposal_count = 0
         self._seen_provider_response_ids: set[str] = set()
+        self._known_program_identities: set[tuple[str, Any]] = set()
+        self._known_phenotype_identities: set[tuple[str, Any]] = set()
+        self._historical_artifact_values = (
+            self.database.historical_artifact_values
+        )
+        self._tracked_history_artifact_names: set[str] = {
+            artifact_name
+            for artifact_name in (
+                self.config.prompt.archive_context_artifact,
+                self.config.program_identity_artifact,
+                self.config.phenotype_identity_artifact,
+            )
+            if isinstance(artifact_name, str) and artifact_name
+        }
+        self._tracked_history_artifact_names.update(
+            self._historical_artifact_values
+        )
+        for program_id in self.database.programs:
+            self._discover_neighborhood_identity_artifact(
+                self.database.get_artifacts(program_id)
+            )
+        for program_id in self.database.programs:
+            self._record_historical_artifacts(
+                self.database.get_artifacts(program_id)
+            )
+        identity_artifact = self.config.program_identity_artifact
+        if identity_artifact is not None:
+            for value in self._historical_artifact_values.get(
+                identity_artifact, set()
+            ):
+                identity = self._identity_key(value)
+                if identity is not None:
+                    self._known_program_identities.add(identity)
+        phenotype_artifact = self.config.phenotype_identity_artifact
+        if phenotype_artifact is not None:
+            for value in self._historical_artifact_values.get(
+                phenotype_artifact, set()
+            ):
+                identity = self._identity_key(value)
+                if identity is not None:
+                    self._known_phenotype_identities.add(identity)
         self._controller_island_state: Dict[int, Dict[str, Any]] = {
             island_id: {
                 "accepted": 0,
@@ -533,12 +773,130 @@ class ProcessParallelController:
 
         logger.info(f"Initialized process parallel controller with {self.num_workers} workers")
 
+    def _early_stopping_score(self, metrics: Dict[str, Any]) -> Optional[float]:
+        """Return the configured convergence score for one evaluated program."""
+        metric = self.config.early_stopping_metric
+        if metric in metrics:
+            value = metrics[metric]
+        elif metric == "combined_score":
+            value = safe_numeric_average(metrics)
+        else:
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        return None
+
+    def _initial_early_stopping_score(self) -> float:
+        """Seed convergence tracking from programs already in the archive."""
+        scores = (
+            self._early_stopping_score(program.metrics)
+            for program in self.database.programs.values()
+        )
+        return max((score for score in scores if score is not None), default=float("-inf"))
+
     @staticmethod
     def _nonnegative_int(value: Any) -> Optional[int]:
         """Return provider counters only when they are exact non-negative integers."""
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             return None
         return value
+
+    @staticmethod
+    def _identity_key(value: Any) -> Optional[tuple[str, Any]]:
+        """Normalize supported identity artifact values into stable keys."""
+        if isinstance(value, str):
+            return ("text", value)
+        if isinstance(value, bytes):
+            return ("bytes", bytes(value))
+        return None
+
+    @staticmethod
+    def _artifact_text(value: Any) -> Optional[str]:
+        """Normalize a persistable evaluator artifact to text."""
+
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, str):
+            return value
+        return None
+
+    def _discover_neighborhood_identity_artifact(
+        self,
+        artifacts: Any,
+    ) -> None:
+        """Track the identity named by a valid configured neighborhood."""
+
+        neighborhood_name = (
+            self.config.prompt.proposal_neighborhood_artifact
+        )
+        if not isinstance(neighborhood_name, str) or not isinstance(
+            artifacts, dict
+        ):
+            return
+        raw = self._artifact_text(artifacts.get(neighborhood_name))
+        if raw is None:
+            return
+        try:
+            neighborhood = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+        if (
+            not isinstance(neighborhood, dict)
+            or neighborhood.get("schema_version") != 1
+        ):
+            return
+        identity_artifact = neighborhood.get("identity_artifact")
+        if isinstance(identity_artifact, str) and identity_artifact:
+            self._tracked_history_artifact_names.add(identity_artifact)
+
+    def _record_historical_artifacts(self, artifacts: Any) -> None:
+        """Remember relevant measured artifacts even if MAP-Elites drops them."""
+
+        if not isinstance(artifacts, dict):
+            return
+        self._discover_neighborhood_identity_artifact(artifacts)
+        for artifact_name in self._tracked_history_artifact_names:
+            value = self._artifact_text(artifacts.get(artifact_name))
+            if value is not None:
+                self._historical_artifact_values.setdefault(
+                    artifact_name, set()
+                ).add(value)
+
+    def _apply_program_identity_gate(self, result: SerializableResult) -> None:
+        """Reject a measured child whose structural or phenotype identity exists."""
+        artifact_name = self.config.program_identity_artifact
+        if result.error is not None or not result.child_program_dict:
+            return
+        artifacts = result.artifacts if isinstance(result.artifacts, dict) else {}
+        if artifact_name is not None:
+            identity = self._identity_key(artifacts.get(artifact_name))
+            if identity is None:
+                result.error = (
+                    "Candidate is missing configured program identity artifact: "
+                    f"{artifact_name}"
+                )
+                return
+            if identity in self._known_program_identities:
+                result.error = "Candidate program identity already exists in the archive"
+                return
+            # Reserve at result processing time so simultaneously generated
+            # duplicates cannot both enter before the database snapshot refreshes.
+            self._known_program_identities.add(identity)
+
+        phenotype_artifact = self.config.phenotype_identity_artifact
+        if phenotype_artifact is None:
+            return
+        phenotype = self._identity_key(artifacts.get(phenotype_artifact))
+        if phenotype is None:
+            result.error = (
+                "Candidate is missing configured phenotype identity artifact: "
+                f"{phenotype_artifact}"
+            )
+            return
+        if phenotype in self._known_phenotype_identities:
+            result.error = "Candidate phenotype identity already exists in the archive"
+            return
+        self._known_phenotype_identities.add(phenotype)
 
     @staticmethod
     def _budget_reason(limits_reached: List[str]) -> Optional[str]:
@@ -587,6 +945,11 @@ class ProcessParallelController:
     ) -> None:
         """Update only observed per-island counters used by the live allocator."""
 
+        if result.error is not None or not result.child_program_dict:
+            self.rejected_proposal_count += 1
+        else:
+            self.accepted_proposal_count += 1
+
         if (
             not self.config.database.controller_scheduler.enabled
             or not isinstance(island_id, int)
@@ -606,13 +969,33 @@ class ProcessParallelController:
             return
         state["accepted"] += 1
         child = result.child_program_dict
-        code = child.get("code")
-        if isinstance(code, str):
-            state["unique"].add(hashlib.sha256(code.encode("utf-8")).hexdigest())
+        diversity_artifact = (
+            self.config.database.controller_scheduler.diversity_artifact
+        )
+        if diversity_artifact is not None:
+            artifacts = result.artifacts if isinstance(result.artifacts, dict) else {}
+            diversity_identity = self._identity_key(
+                artifacts.get(diversity_artifact)
+            )
+            if diversity_identity is not None:
+                state["unique"].add(diversity_identity)
+        else:
+            code = child.get("code")
+            if isinstance(code, str):
+                state["unique"].add(
+                    ("code", hashlib.sha256(code.encode("utf-8")).hexdigest())
+                )
         metrics = child.get("metrics")
         if isinstance(metrics, dict):
-            score = metrics.get("combined_score")
-            if not isinstance(score, (int, float)) or isinstance(score, bool):
+            score_metric = self.config.database.controller_scheduler.score_metric
+            score = metrics.get(score_metric)
+            if (
+                score_metric == "combined_score"
+                and (
+                    not isinstance(score, (int, float))
+                    or isinstance(score, bool)
+                )
+            ):
                 score = safe_numeric_average(metrics)
             if isinstance(score, (int, float)) and not isinstance(score, bool):
                 state["best_score"] = max(float(state["best_score"]), float(score))
@@ -632,10 +1015,7 @@ class ProcessParallelController:
         ]
         if not available:
             raise RuntimeError("controller scheduler has no available island")
-        total_calls = sum(
-            int(state["calls"]) for state in self._controller_island_state.values()
-        )
-        if total_calls < scheduler.minimum_calls:
+        if self.submitted_proposal_count < scheduler.minimum_calls:
             return min(
                 available,
                 key=lambda island_id: (
@@ -644,6 +1024,21 @@ class ProcessParallelController:
                     island_id,
                 ),
             )
+        if scheduler.leader_score_band is not None:
+            global_best = max(
+                self._controller_island_best_score(island_id)
+                for island_id in range(self.num_islands)
+            )
+            quality_frontier = [
+                island_id
+                for island_id in available
+                if (
+                    global_best - self._controller_island_best_score(island_id)
+                    <= float(scheduler.leader_score_band)
+                )
+            ]
+            if quality_frontier:
+                available = quality_frontier
 
         def priority(island_id: int) -> tuple[float, int]:
             state = self._controller_island_state[island_id]
@@ -652,7 +1047,7 @@ class ProcessParallelController:
             rejected = int(state["rejected"])
             tokens = int(state["tokens"])
             unique = len(state["unique"])
-            best_score = float(state["best_score"])
+            best_score = self._controller_island_best_score(island_id)
             validity = accepted / calls if calls else 1.0
             diversity = unique / accepted if accepted else 1.0
             token_efficiency = best_score / max(tokens / 1000.0, 1.0)
@@ -669,6 +1064,103 @@ class ProcessParallelController:
 
         return min(available, key=priority)
 
+    def _controller_island_best_score(self, island_id: int) -> float:
+        """Return the best observed or currently retained score for an island."""
+
+        state = self._controller_island_state[island_id]
+        best_score = float(state["best_score"])
+        score_metric = self.config.database.controller_scheduler.score_metric
+        if not 0 <= island_id < len(self.database.islands):
+            return best_score
+        for program_id in self.database.islands[island_id]:
+            program = self.database.programs.get(program_id)
+            if program is None or not isinstance(program.metrics, dict):
+                continue
+            score = program.metrics.get(score_metric)
+            if (
+                score_metric == "combined_score"
+                and (
+                    not isinstance(score, (int, float))
+                    or isinstance(score, bool)
+                )
+            ):
+                score = safe_numeric_average(program.metrics)
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                best_score = max(best_score, float(score))
+        return best_score
+
+    def _controller_parallelism(self, max_iterations: int) -> int:
+        """Return active scheduler slots while preserving a selectable island."""
+
+        if max_iterations < 1:
+            return 0
+        scheduler = self.config.database.controller_scheduler
+        if not scheduler.enabled:
+            return min(self.num_islands, max_iterations)
+        selectable_islands = max(1, self.num_islands - scheduler.reserve_islands)
+        return min(
+            self.num_workers,
+            selectable_islands,
+            max_iterations,
+        )
+
+    def _adaptive_controller_parallelism(self, max_iterations: int) -> int:
+        """Return the lower quality-phase frontier when one is configured."""
+
+        warmup = self._controller_parallelism(max_iterations)
+        configured = (
+            self.config.database.controller_scheduler.adaptive_parallelism
+        )
+        if configured is None:
+            return warmup
+        return min(warmup, configured)
+
+    def _target_controller_parallelism(self, max_iterations: int) -> int:
+        """Return warmup or adaptive frontier from submitted proposal count."""
+
+        scheduler = self.config.database.controller_scheduler
+        if (
+            scheduler.enabled
+            and self.submitted_proposal_count >= scheduler.minimum_calls
+        ):
+            return self._adaptive_controller_parallelism(max_iterations)
+        return self._controller_parallelism(max_iterations)
+
+    @property
+    def controller_allocation(self) -> Dict[str, Any]:
+        """Return a serializable receipt for observed-result island allocation."""
+
+        scheduler = self.config.database.controller_scheduler
+        islands = []
+        for island_id in range(self.num_islands):
+            state = self._controller_island_state[island_id]
+            islands.append(
+                {
+                    "island": island_id,
+                    "calls": int(state["calls"]),
+                    "accepted": int(state["accepted"]),
+                    "rejected": int(state["rejected"]),
+                    "distinct_behaviors": len(state["unique"]),
+                    "best_score": self._controller_island_best_score(island_id),
+                    "tokens": int(state["tokens"]),
+                }
+            )
+        return {
+            "enabled": bool(scheduler.enabled),
+            "score_metric": scheduler.score_metric,
+            "diversity_artifact": scheduler.diversity_artifact,
+            "leader_score_band": scheduler.leader_score_band,
+            "parent_score_band": scheduler.parent_score_band,
+            "reserve_islands": scheduler.reserve_islands,
+            "active_parallelism": self._controller_parallelism(
+                max(1, self.config.max_iterations)
+            ),
+            "adaptive_parallelism": self._adaptive_controller_parallelism(
+                max(1, self.config.max_iterations)
+            ),
+            "islands": islands,
+        }
+
     def _register_submitted_proposal(self, inflight_proposals: int) -> Optional[str]:
         """Reserve one logical proposal-model call against the exact call cap."""
         self.submitted_proposal_count += 1
@@ -682,6 +1174,8 @@ class ProcessParallelController:
             "provider_usage_counting_basis": "unique_provider_receipts",
             "llm_calls_submitted": self.submitted_proposal_count,
             "llm_calls": self.llm_call_count,
+            "accepted_proposals": self.accepted_proposal_count,
+            "rejected_proposals": self.rejected_proposal_count,
             "prompt_tokens": self.prompt_token_count,
             "completion_tokens": self.completion_token_count,
             "total_provider_tokens": self.total_provider_tokens,
@@ -692,6 +1186,13 @@ class ProcessParallelController:
             "provider_token_budget_overshoot": self.provider_token_budget_overshoot,
             "limits_reached": list(self.budget_limits_reached),
             "inflight_proposals_at_budget_stop": self.inflight_proposals_at_budget_stop,
+            "measured_artifact_history": {
+                name: len(values)
+                for name, values in sorted(
+                    self._historical_artifact_values.items()
+                )
+            },
+            "controller_allocation": self.controller_allocation,
         }
 
     def _record_llm_usage(
@@ -746,7 +1247,21 @@ class ProcessParallelController:
         payload = {
             **metadata,
             "iteration": iteration,
+            "parent_id": result.parent_id,
+            "target_island": result.target_island,
+            "candidate_measured": bool(result.child_program_dict)
+            or bool(result.artifacts),
+            "accepted_for_archive": (
+                result.error is None and bool(result.child_program_dict)
+            ),
+            # Backward-compatible field retained for existing receipt readers.
             "accepted_for_evaluation": result.error is None,
+            "rejection_reason": result.error,
+            "llm_response_sha256": (
+                hashlib.sha256(result.llm_response.encode("utf-8")).hexdigest()
+                if isinstance(result.llm_response, str)
+                else None
+            ),
             "verified_provider_receipt": verified_receipt,
             "duplicate_provider_receipt": duplicate_receipt,
             "cumulative_usage": self.llm_usage,
@@ -796,6 +1311,8 @@ class ProcessParallelController:
             "strict_diff_application": config.strict_diff_application,
             "enforce_evolve_blocks": config.enforce_evolve_blocks,
             "max_diff_blocks": config.max_diff_blocks,
+            "program_identity_artifact": config.program_identity_artifact,
+            "phenotype_identity_artifact": config.phenotype_identity_artifact,
             "language": config.language,
             "file_suffix": self.file_suffix,
         }
@@ -856,6 +1373,12 @@ class ProcessParallelController:
             "current_island": self.database.current_island,
             "feature_dimensions": self.database.config.feature_dimensions,
             "artifacts": {},  # Will be populated selectively
+            "historical_artifact_values": {
+                name: sorted(values)
+                for name, values in sorted(
+                    self._historical_artifact_values.items()
+                )
+            },
         }
 
         # Include artifacts for programs that might be selected
@@ -898,16 +1421,36 @@ class ProcessParallelController:
         # Track pending futures by island to maintain distribution
         pending_futures: Dict[int, Future] = {}
         island_pending: Dict[int, List[int]] = {i: [] for i in range(self.num_islands)}
-        batch_size = min(self.num_workers * 2, max_iterations)
-
-        # Submit initial batch - distribute across islands
-        batch_per_island = max(1, batch_size // self.num_islands) if batch_size > 0 else 0
+        # Keep at most one proposal in flight per island. Multiple simultaneous
+        # calls from the same unchanged parent can carry identical prompts and
+        # waste the proposal budget on duplicate children.
+        batch_per_island = 1 if max_iterations > 0 else 0
         current_iteration = start_iteration
         stop_scheduling = False
         self.completion_reason = "running"
 
-        # Round-robin distribution across islands
-        for island_id in range(self.num_islands):
+        # The live controller deliberately leaves configured reserve islands
+        # outside the active frontier. With at least one free island, every
+        # completion creates a real allocation choice instead of mechanically
+        # refilling the island that just finished.
+        initial_parallelism = self._controller_parallelism(max_iterations)
+        initial_island_pending: Dict[int, List[int]] = {
+            i: [] for i in range(self.num_islands)
+        }
+        initial_islands: List[int] = []
+        for slot in range(initial_parallelism):
+            if self.config.database.controller_scheduler.enabled:
+                island_id = self._select_controller_island(
+                    initial_island_pending,
+                    batch_per_island,
+                )
+            else:
+                island_id = slot
+            initial_islands.append(island_id)
+            initial_island_pending[island_id].append(start_iteration + slot)
+
+        # Round-robin distribution across the active island frontier.
+        for island_id in initial_islands:
             for _ in range(batch_per_island):
                 if current_iteration < total_iterations and not stop_scheduling:
                     future = self._submit_iteration(current_iteration, island_id)
@@ -928,7 +1471,7 @@ class ProcessParallelController:
         # Early stopping tracking
         early_stopping_enabled = self.config.early_stopping_patience is not None
         if early_stopping_enabled:
-            best_score = float("-inf")
+            best_score = self._initial_early_stopping_score()
             iterations_without_improvement = 0
             if self.config.early_stopping_patience < 0:
                 logger.info(
@@ -939,7 +1482,8 @@ class ProcessParallelController:
                 logger.info(
                     f"Early stopping enabled: patience={self.config.early_stopping_patience}, "
                     f"threshold={self.config.convergence_threshold}, "
-                    f"metric={self.config.early_stopping_metric}"
+                    f"metric={self.config.early_stopping_metric}, "
+                    f"initial_best={best_score:.4f}"
                 )
         else:
             logger.info("Early stopping disabled")
@@ -968,11 +1512,6 @@ class ProcessParallelController:
                 # Use evaluator timeout + buffer to gracefully handle stuck processes
                 timeout_seconds = self.config.evaluator.timeout + 30
                 result = future.result(timeout=timeout_seconds)
-                budget_reason = self._record_llm_usage(
-                    completed_iteration,
-                    result,
-                    inflight_proposals=len(pending_futures),
-                )
                 completed_island = (
                     result.target_island
                     if isinstance(result.target_island, int)
@@ -985,7 +1524,14 @@ class ProcessParallelController:
                         None,
                     )
                 )
+                self._record_historical_artifacts(result.artifacts)
+                self._apply_program_identity_gate(result)
                 self._record_controller_result(completed_island, result)
+                budget_reason = self._record_llm_usage(
+                    completed_iteration,
+                    result,
+                    inflight_proposals=len(pending_futures),
+                )
                 if budget_reason:
                     if not stop_scheduling:
                         logger.info(
@@ -1140,21 +1686,14 @@ class ProcessParallelController:
 
                     # Check early stopping
                     if early_stopping_enabled and child_program.metrics:
-                        # Get the metric to track for early stopping
-                        current_score = None
-                        if self.config.early_stopping_metric in child_program.metrics:
-                            current_score = child_program.metrics[self.config.early_stopping_metric]
-                        elif self.config.early_stopping_metric == "combined_score":
-                            # Default metric not found, use safe average (standard pattern)
-                            current_score = safe_numeric_average(child_program.metrics)
-                        else:
-                            # User specified a custom metric that doesn't exist
+                        current_score = self._early_stopping_score(child_program.metrics)
+                        if current_score is None:
                             logger.warning(
-                                f"Early stopping metric '{self.config.early_stopping_metric}' not found, using safe numeric average"
+                                f"Early stopping metric '{self.config.early_stopping_metric}' "
+                                "not found or non-numeric; ignoring this result"
                             )
-                            current_score = safe_numeric_average(child_program.metrics)
 
-                        if current_score is not None and isinstance(current_score, (int, float)):
+                        if current_score is not None:
                             # Check for improvement
                             if self.config.early_stopping_patience > 0:
                                 improvement = current_score - best_score
@@ -1232,10 +1771,20 @@ class ProcessParallelController:
             # Submit the next iteration either with the original balanced
             # allocator or the explicitly enabled observed-result controller.
             if self.config.database.controller_scheduler.enabled:
-                island_order = [
-                    self._select_controller_island(island_pending, batch_size)
-                ]
-                per_island_limit = batch_size
+                target_parallelism = self._target_controller_parallelism(
+                    max_iterations
+                )
+                island_order = (
+                    [
+                        self._select_controller_island(
+                            island_pending,
+                            batch_per_island,
+                        )
+                    ]
+                    if len(pending_futures) < target_parallelism
+                    else []
+                )
+                per_island_limit = batch_per_island
             else:
                 island_order = range(self.num_islands)
                 per_island_limit = batch_per_island
@@ -1299,14 +1848,38 @@ class ProcessParallelController:
             # Inspirations are the diverse/creative examples; size them by
             # num_diverse_programs (not num_top_programs) so the config parameter
             # actually controls the inspiration count (GitHub issue #452).
-            parent, inspirations = self.database.sample_from_island(
-                island_id=target_island,
-                num_inspirations=self.config.prompt.num_diverse_programs,
-            )
+            scheduler = self.config.database.controller_scheduler
+            if (
+                scheduler.enabled
+                and self.submitted_proposal_count >= scheduler.minimum_calls
+                and scheduler.parent_score_band is not None
+            ):
+                parent, inspirations = (
+                    self.database.sample_from_island_score_band(
+                        target_island,
+                        score_metric=scheduler.score_metric,
+                        score_band=float(scheduler.parent_score_band),
+                        num_inspirations=(
+                            self.config.prompt.num_diverse_programs
+                        ),
+                    )
+                )
+            else:
+                parent, inspirations = self.database.sample_from_island(
+                    island_id=target_island,
+                    num_inspirations=(
+                        self.config.prompt.num_diverse_programs
+                    ),
+                )
 
             # Create database snapshot
             db_snapshot = self._create_database_snapshot()
             db_snapshot["sampling_island"] = target_island  # Mark which island this is for
+            # The selected parent must always carry its evaluator context even
+            # when snapshot artifact limits omit older archive entries.
+            parent_artifacts = self.database.get_artifacts(parent.id)
+            if parent_artifacts:
+                db_snapshot["artifacts"][parent.id] = parent_artifacts
 
             # Submit to process pool
             future = self.executor.submit(

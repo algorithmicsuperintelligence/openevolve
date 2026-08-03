@@ -162,6 +162,12 @@ class ProgramDatabase:
         # Track the last iteration number (for resuming)
         self.last_iteration: int = 0
 
+        # Complete text-artifact history used by controller-side identity and
+        # prompt filters. Unlike the live MAP-Elites population, this ledger is
+        # append-only so displaced or rejected measured candidates are not
+        # proposed again after a checkpoint resume.
+        self.historical_artifact_values: Dict[str, Set[str]] = {}
+
         # Load database from disk if path is provided
         if config.db_path and os.path.exists(config.db_path):
             self.load(config.db_path)
@@ -232,6 +238,22 @@ class ProgramDatabase:
             self.last_iteration = max(self.last_iteration, iteration)
 
         self.programs[program.id] = program
+
+        # Evaluators with an explicit admission stage may retain declined
+        # attempts for lineage and feedback without allowing them to become
+        # parents, MAP-Elites occupants, or archive members.
+        if "selection_eligible" in program.metrics:
+            try:
+                selection_eligible = float(program.metrics["selection_eligible"])
+            except (TypeError, ValueError, OverflowError):
+                selection_eligible = 0.0
+            if selection_eligible <= 0.0:
+                program.metadata["selection_ineligible"] = True
+                logger.info(
+                    "Retained ineligible program %s as a lineage record only",
+                    program.id,
+                )
+                return program.id
 
         # Calculate feature coordinates for MAP-Elites
         feature_coords = self._calculate_feature_coords(program)
@@ -481,6 +503,65 @@ class ProgramDatabase:
         )
         return parent, inspirations
 
+    def sample_from_island_score_band(
+        self,
+        island_id: int,
+        *,
+        score_metric: str,
+        score_band: float,
+        num_inspirations: Optional[int] = None,
+    ) -> Tuple[Program, List[Program]]:
+        """Sample a parent only from one island's retained quality frontier."""
+
+        island_id = island_id % len(self.islands)
+        programs = [
+            self.programs[program_id]
+            for program_id in self.islands[island_id]
+            if program_id in self.programs
+        ]
+        scored: list[tuple[Program, float]] = []
+        for program in programs:
+            value = program.metrics.get(score_metric)
+            if (
+                score_metric == "combined_score"
+                and (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                )
+            ):
+                value = safe_numeric_average(program.metrics)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                scored.append((program, float(value)))
+        if not scored:
+            return self.sample_from_island(island_id, num_inspirations)
+        best_score = max(score for _, score in scored)
+        frontier = sorted(
+            (
+                program
+                for program, score in scored
+                if best_score - score <= score_band
+            ),
+            key=lambda program: program.id,
+        )
+        parent = random.choice(frontier)
+        if num_inspirations is None:
+            num_inspirations = 5
+        inspirations = self._sample_inspirations(
+            parent,
+            n=num_inspirations,
+            island_id=island_id,
+        )
+        logger.debug(
+            "Sampled parent %s from island %d score band %.6f "
+            "(metric=%s, frontier=%d)",
+            parent.id,
+            island_id,
+            score_band,
+            score_metric,
+            len(frontier),
+        )
+        return parent, inspirations
+
     def get_best_program(self, metric: Optional[str] = None) -> Optional[Program]:
         """
         Get the best program based on a metric
@@ -641,6 +722,12 @@ class ProgramDatabase:
             "island_generations": self.island_generations,
             "last_migration_generation": self.last_migration_generation,
             "feature_stats": self._serialize_feature_stats(),
+            "historical_artifact_values": {
+                name: sorted(values)
+                for name, values in sorted(
+                    self.historical_artifact_values.items()
+                )
+            },
         }
 
         with open(os.path.join(save_path, "metadata.json"), "w") as f:
@@ -679,6 +766,15 @@ class ProgramDatabase:
             self.current_island = metadata.get("current_island", 0)
             self.island_generations = metadata.get("island_generations", [0] * len(saved_islands))
             self.last_migration_generation = metadata.get("last_migration_generation", 0)
+            raw_history = metadata.get("historical_artifact_values", {})
+            if isinstance(raw_history, dict):
+                self.historical_artifact_values = {
+                    str(name): {
+                        value for value in values if isinstance(value, str)
+                    }
+                    for name, values in raw_history.items()
+                    if isinstance(name, str) and isinstance(values, list)
+                }
 
             # Load feature_stats for MAP-Elites grid stability
             self.feature_stats = self._deserialize_feature_stats(metadata.get("feature_stats", {}))
@@ -1214,16 +1310,27 @@ class ProgramDatabase:
             old_id = self.best_program_id
             self.best_program_id = program.id
 
-            # Log the change
-            if "combined_score" in program.metrics and "combined_score" in current_best.metrics:
-                old_score = current_best.metrics["combined_score"]
-                new_score = program.metrics["combined_score"]
-                score_diff = new_score - old_score
-                logger.info(
-                    f"New best program {program.id} replaces {old_id} (combined_score: {old_score:.4f} → {new_score:.4f}, +{score_diff:.4f})"
-                )
-            else:
-                logger.info(f"New best program {program.id} replaces {old_id}")
+            # Report the same fitness that made the replacement decision.
+            old_score = get_fitness_score(
+                current_best.metrics, self.config.feature_dimensions
+            )
+            new_score = get_fitness_score(
+                program.metrics, self.config.feature_dimensions
+            )
+            metric_name = (
+                "selection_score"
+                if "selection_score" in program.metrics
+                and "selection_score" in current_best.metrics
+                else "combined_score"
+                if "combined_score" in program.metrics
+                and "combined_score" in current_best.metrics
+                else "fitness_score"
+            )
+            logger.info(
+                f"New best program {program.id} replaces {old_id} "
+                f"({metric_name}: {old_score:.4f} → {new_score:.4f}, "
+                f"{new_score - old_score:+.4f})"
+            )
 
     def _update_island_best_program(self, program: Program, island_idx: int) -> None:
         """
@@ -1260,22 +1367,26 @@ class ProgramDatabase:
             old_id = current_island_best_id
             self.island_best_programs[island_idx] = program.id
 
-            # Log the change
-            if (
-                "combined_score" in program.metrics
+            old_score = get_fitness_score(
+                current_island_best.metrics, self.config.feature_dimensions
+            )
+            new_score = get_fitness_score(
+                program.metrics, self.config.feature_dimensions
+            )
+            metric_name = (
+                "selection_score"
+                if "selection_score" in program.metrics
+                and "selection_score" in current_island_best.metrics
+                else "combined_score"
+                if "combined_score" in program.metrics
                 and "combined_score" in current_island_best.metrics
-            ):
-                old_score = current_island_best.metrics["combined_score"]
-                new_score = program.metrics["combined_score"]
-                score_diff = new_score - old_score
-                logger.debug(
-                    f"Island {island_idx}: New best program {program.id} replaces {old_id} "
-                    f"(combined_score: {old_score:.4f} → {new_score:.4f}, +{score_diff:.4f})"
-                )
-            else:
-                logger.debug(
-                    f"Island {island_idx}: New best program {program.id} replaces {old_id}"
-                )
+                else "fitness_score"
+            )
+            logger.debug(
+                f"Island {island_idx}: New best program {program.id} replaces {old_id} "
+                f"({metric_name}: {old_score:.4f} → {new_score:.4f}, "
+                f"{new_score - old_score:+.4f})"
+            )
 
     def _sample_parent(self) -> Program:
         """
@@ -1910,8 +2021,20 @@ class ProgramDatabase:
                         language=migrant.language,
                         parent_id=migrant.id,
                         generation=migrant.generation,
+                        timestamp=migrant.timestamp,
+                        iteration_found=migrant.iteration_found,
                         metrics=migrant.metrics.copy(),
+                        complexity=migrant.complexity,
+                        diversity=migrant.diversity,
                         metadata={**migrant.metadata, "island": target_island, "migrant": True},
+                        prompts=migrant.prompts,
+                        artifacts_json=migrant.artifacts_json,
+                        artifact_dir=migrant.artifact_dir,
+                        embedding=(
+                            list(migrant.embedding)
+                            if migrant.embedding is not None
+                            else None
+                        ),
                     )
 
                     # Use add() method to properly handle MAP-Elites deduplication,

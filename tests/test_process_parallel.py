@@ -25,7 +25,11 @@ os.environ["OPENAI_API_KEY"] = "test"
 from openevolve.config import Config, DatabaseConfig, EvaluatorConfig, LLMConfig, PromptConfig
 from openevolve.database import Program, ProgramDatabase
 from openevolve import process_parallel as process_parallel_module
-from openevolve.process_parallel import ProcessParallelController, SerializableResult
+from openevolve.process_parallel import (
+    ProcessParallelController,
+    SerializableResult,
+    _with_archive_context,
+)
 
 
 class TestProcessParallel(unittest.TestCase):
@@ -85,9 +89,29 @@ def evaluate(program_path):
         self.assertEqual(controller.llm_usage["llm_calls"], 0)
         self.assertEqual(controller.llm_usage["total_provider_tokens"], 0)
 
+    def test_early_stopping_starts_from_best_archived_program(self):
+        self.config.early_stopping_metric = "score"
+        controller = ProcessParallelController(
+            self.config, self.eval_file, self.database
+        )
+
+        self.assertEqual(controller._initial_early_stopping_score(), 0.7)
+
+    def test_missing_custom_early_stopping_metric_is_not_averaged(self):
+        self.config.early_stopping_metric = "missing"
+        controller = ProcessParallelController(
+            self.config, self.eval_file, self.database
+        )
+
+        self.assertEqual(
+            controller._initial_early_stopping_score(), float("-inf")
+        )
+
     def test_worker_config_serialization_preserves_llm_budgets(self):
         self.config.max_llm_calls = 9
         self.config.max_total_provider_tokens = 12_345
+        self.config.program_identity_artifact = "program-identity.txt"
+        self.config.phenotype_identity_artifact = "phenotype-identity.txt"
         controller = ProcessParallelController(
             self.config, self.eval_file, self.database
         )
@@ -96,6 +120,406 @@ def evaluate(program_path):
 
         self.assertEqual(serialized["max_llm_calls"], 9)
         self.assertEqual(serialized["max_total_provider_tokens"], 12_345)
+        self.assertEqual(
+            serialized["program_identity_artifact"], "program-identity.txt"
+        )
+        self.assertEqual(
+            serialized["phenotype_identity_artifact"], "phenotype-identity.txt"
+        )
+
+    def test_worker_rejects_unchanged_program_identity(self):
+        self.config.program_identity_artifact = "program-identity.txt"
+
+        class FakeLLM:
+            last_call_metadata = {
+                "provider_response_id": "response-semantic-noop",
+                "model": "fake-model",
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 3,
+                    "total_tokens": 8,
+                },
+            }
+
+            async def generate_with_context(self, **_kwargs):
+                return "\n".join(
+                    [
+                        "<" * 7 + " SEARCH",
+                        "    return 1",
+                        "=" * 7,
+                        "    return 2",
+                        ">" * 7 + " REPLACE",
+                    ]
+                )
+
+        class IdentityEvaluator:
+            async def evaluate_program(self, _code, _child_id):
+                return {"combined_score": 0.8}
+
+            def get_pending_artifacts(self, _child_id):
+                return {"program-identity.txt": "same-identity"}
+
+        class FakePromptSampler:
+            def build_prompt(self, **_kwargs):
+                return {"system": "system", "user": "user"}
+
+        parent = Program(
+            id="parent",
+            code="def solve():\n    return 1\n",
+            language="python",
+            metrics={"combined_score": 0.5},
+            metadata={"island": 0},
+        )
+        snapshot = {
+            "programs": {"parent": parent.to_dict()},
+            "artifacts": {
+                "parent": {"program-identity.txt": "same-identity"}
+            },
+            "current_island": 0,
+            "islands": [["parent"]],
+            "feature_dimensions": ["combined_score"],
+            "sampling_island": 0,
+        }
+
+        with (
+            patch.object(
+                process_parallel_module,
+                "_lazy_init_worker_components",
+                return_value=None,
+            ),
+            patch.object(
+                process_parallel_module,
+                "_worker_config",
+                self.config,
+                create=True,
+            ),
+            patch.object(
+                process_parallel_module,
+                "_worker_llm_ensemble",
+                FakeLLM(),
+                create=True,
+            ),
+            patch.object(
+                process_parallel_module,
+                "_worker_evaluator",
+                IdentityEvaluator(),
+                create=True,
+            ),
+            patch.object(
+                process_parallel_module,
+                "_worker_prompt_sampler",
+                FakePromptSampler(),
+                create=True,
+            ),
+        ):
+            result = process_parallel_module._run_iteration_worker(
+                9, snapshot, "parent", []
+            )
+
+        self.assertIsNone(result.child_program_dict)
+        self.assertIn("same program identity", result.error)
+
+    def test_worker_builds_deterministic_archive_context(self):
+        self.config.prompt.archive_context_artifact = "program-structure.json"
+        self.config.prompt.archive_context_max_items = 2
+        parent_artifacts = {
+            "program-structure.json": '{"schedule":[1]}',
+            "guidance": "keep this",
+        }
+        snapshot = {
+            "artifacts": {
+                "z": {"program-structure.json": '{"schedule":[2]}'},
+                "a": {"program-structure.json": '{"schedule":[1]}'},
+                "m": {"program-structure.json": '{"schedule":[3]}'},
+            }
+        }
+
+        with patch.object(
+            process_parallel_module,
+            "_worker_config",
+            self.config,
+            create=True,
+        ):
+            augmented = _with_archive_context(parent_artifacts, snapshot)
+
+        self.assertIsNot(augmented, parent_artifacts)
+        self.assertNotIn("archive-context.json", parent_artifacts)
+        context = json.loads(augmented["archive-context.json"])
+        self.assertEqual(context["archive_item_count"], 3)
+        self.assertEqual(context["included_item_count"], 2)
+        self.assertEqual(
+            context["items"],
+            ['{"schedule":[1]}', '{"schedule":[2]}'],
+        )
+        self.assertTrue(context["truncated"])
+
+    def test_worker_filters_retained_proposal_options(self):
+        self.config.prompt.proposal_neighborhood_artifact = (
+            "proposal-neighborhood.json"
+        )
+        self.config.prompt.proposal_options_max_items = 1
+        parent_artifacts = {
+            "program-structure.txt": "parent",
+            "proposal-neighborhood.json": json.dumps(
+                {
+                    "schema_version": 1,
+                    "identity_artifact": "program-structure.txt",
+                    "options": [
+                        {"id": "occupied", "identity": "held", "edit": "skip"},
+                        {"id": "first", "identity": "new-a", "edit": "use a"},
+                        {"id": "second", "identity": "new-b", "edit": "use b"},
+                    ],
+                }
+            ),
+        }
+        snapshot = {
+            "artifacts": {
+                "parent": {"program-structure.txt": "parent"},
+                "other": {"program-structure.txt": "held"},
+            }
+        }
+
+        with patch.object(
+            process_parallel_module,
+            "_worker_config",
+            self.config,
+            create=True,
+        ):
+            augmented = _with_archive_context(parent_artifacts, snapshot)
+
+        context = json.loads(augmented["proposal-options.json"])
+        self.assertEqual(context["declared_option_count"], 3)
+        self.assertEqual(context["excluded_retained_count"], 1)
+        self.assertEqual(context["available_option_count"], 2)
+        self.assertEqual(context["included_option_count"], 1)
+        self.assertEqual(context["options"][0]["id"], "first")
+        self.assertTrue(context["truncated"])
+
+    def test_worker_filters_options_from_complete_measured_history(self):
+        self.config.prompt.proposal_neighborhood_artifact = (
+            "proposal-neighborhood.json"
+        )
+        parent_artifacts = {
+            "program-structure.txt": "parent",
+            "proposal-neighborhood.json": json.dumps(
+                {
+                    "schema_version": 1,
+                    "identity_artifact": "program-structure.txt",
+                    "options": [
+                        {"id": "live", "identity": "held", "edit": "skip"},
+                        {
+                            "id": "displaced",
+                            "identity": "measured-before",
+                            "edit": "skip",
+                        },
+                        {"id": "fresh", "identity": "new", "edit": "use"},
+                    ],
+                }
+            ),
+        }
+        snapshot = {
+            "artifacts": {
+                "parent": {"program-structure.txt": "parent"},
+                "other": {"program-structure.txt": "held"},
+            },
+            "historical_artifact_values": {
+                "program-structure.txt": [
+                    "parent",
+                    "held",
+                    "measured-before",
+                ]
+            },
+        }
+
+        with patch.object(
+            process_parallel_module,
+            "_worker_config",
+            self.config,
+            create=True,
+        ):
+            augmented = _with_archive_context(parent_artifacts, snapshot)
+
+        context = json.loads(augmented["proposal-options.json"])
+        self.assertEqual(context["excluded_retained_count"], 1)
+        self.assertEqual(context["excluded_historical_count"], 2)
+        self.assertEqual(context["excluded_known_count"], 2)
+        self.assertEqual(
+            [option["id"] for option in context["options"]],
+            ["fresh"],
+        )
+
+    def test_worker_rejects_malformed_proposal_neighborhood(self):
+        self.config.prompt.proposal_neighborhood_artifact = (
+            "proposal-neighborhood.json"
+        )
+        with patch.object(
+            process_parallel_module,
+            "_worker_config",
+            self.config,
+            create=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "schema_version 1"):
+                _with_archive_context(
+                    {"proposal-neighborhood.json": "{}"},
+                    {"artifacts": {}},
+                )
+
+    def test_proposal_totals_include_rejections_without_live_scheduler(self):
+        controller = ProcessParallelController(
+            self.config, self.eval_file, self.database
+        )
+
+        controller._record_controller_result(
+            0, SerializableResult(error="invalid diff")
+        )
+        controller._record_controller_result(
+            0,
+            SerializableResult(
+                child_program_dict={"id": "child", "code": "pass"}
+            ),
+        )
+
+        self.assertEqual(controller.llm_usage["rejected_proposals"], 1)
+        self.assertEqual(controller.llm_usage["accepted_proposals"], 1)
+
+    def test_live_archive_rejects_duplicate_program_identity(self):
+        self.config.program_identity_artifact = "program-identity.txt"
+        self.database.store_artifacts(
+            "test_0",
+            {"program-identity.txt": "existing-program"},
+        )
+        usage_path = Path(self.test_dir) / "identity-usage.jsonl"
+        controller = ProcessParallelController(
+            self.config,
+            self.eval_file,
+            self.database,
+            usage_output_path=str(usage_path),
+        )
+        duplicate = SerializableResult(
+            child_program_dict={"id": "duplicate", "code": "pass"},
+            parent_id="test_0",
+            llm_response="duplicate proposal",
+            artifacts={"program-identity.txt": "existing-program"},
+            target_island=2,
+            llm_metadata={
+                "provider_response_id": "identity-duplicate",
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                },
+            },
+        )
+        first_new = SerializableResult(
+            child_program_dict={"id": "new", "code": "pass"},
+            artifacts={"program-identity.txt": "new-program"},
+        )
+        concurrent_duplicate = SerializableResult(
+            child_program_dict={"id": "duplicate-new", "code": "pass"},
+            artifacts={"program-identity.txt": "new-program"},
+        )
+
+        controller._apply_program_identity_gate(duplicate)
+        controller._record_controller_result(2, duplicate)
+        controller._record_llm_usage(4, duplicate)
+        controller._apply_program_identity_gate(first_new)
+        controller._apply_program_identity_gate(concurrent_duplicate)
+
+        self.assertIn("already exists", duplicate.error)
+        self.assertIsNone(first_new.error)
+        self.assertIn("already exists", concurrent_duplicate.error)
+        receipt = json.loads(usage_path.read_text(encoding="utf-8"))
+        self.assertFalse(receipt["accepted_for_evaluation"])
+        self.assertFalse(receipt["accepted_for_archive"])
+        self.assertTrue(receipt["candidate_measured"])
+        self.assertIn("already exists", receipt["rejection_reason"])
+        self.assertEqual(receipt["parent_id"], "test_0")
+        self.assertEqual(
+            receipt["llm_response_sha256"],
+            "e7eaec4f27fa10c6425a346a7697c42320588cfc59bc6b"
+            "ac458a5ddfb268c7a1",
+        )
+        self.assertEqual(receipt["target_island"], 2)
+        self.assertEqual(receipt["cumulative_usage"]["rejected_proposals"], 1)
+        self.assertEqual(
+            receipt["cumulative_usage"]["measured_artifact_history"],
+            {"program-identity.txt": 1},
+        )
+
+    def test_live_archive_rejects_duplicate_phenotype_identity(self):
+        self.config.phenotype_identity_artifact = "phenotype-identity.txt"
+        self.database.store_artifacts(
+            "test_0",
+            {"phenotype-identity.txt": "existing-phenotype"},
+        )
+        controller = ProcessParallelController(
+            self.config,
+            self.eval_file,
+            self.database,
+        )
+        duplicate = SerializableResult(
+            child_program_dict={"id": "duplicate", "code": "different source"},
+            artifacts={"phenotype-identity.txt": "existing-phenotype"},
+        )
+        novel = SerializableResult(
+            child_program_dict={"id": "novel", "code": "different source"},
+            artifacts={"phenotype-identity.txt": "novel-phenotype"},
+        )
+
+        controller._apply_program_identity_gate(duplicate)
+        controller._apply_program_identity_gate(novel)
+
+        self.assertIn("phenotype identity already exists", duplicate.error)
+        self.assertIsNone(novel.error)
+
+    def test_measured_history_survives_behavior_rejection_and_snapshot(self):
+        self.config.program_identity_artifact = "program-identity.txt"
+        self.config.phenotype_identity_artifact = "phenotype-identity.txt"
+        self.config.prompt.proposal_neighborhood_artifact = (
+            "proposal-neighborhood.json"
+        )
+        neighborhood = json.dumps(
+            {
+                "schema_version": 1,
+                "identity_artifact": "program-identity.txt",
+                "options": [],
+            }
+        )
+        self.database.store_artifacts(
+            "test_0",
+            {
+                "program-identity.txt": "baseline-program",
+                "phenotype-identity.txt": "baseline-behavior",
+                "proposal-neighborhood.json": neighborhood,
+            },
+        )
+        controller = ProcessParallelController(
+            self.config, self.eval_file, self.database
+        )
+        measured = SerializableResult(
+            child_program_dict={"id": "measured", "code": "pass"},
+            artifacts={
+                "program-identity.txt": "new-program",
+                "phenotype-identity.txt": "baseline-behavior",
+                "proposal-neighborhood.json": neighborhood,
+            },
+        )
+
+        controller._record_historical_artifacts(measured.artifacts)
+        controller._apply_program_identity_gate(measured)
+        snapshot = controller._create_database_snapshot()
+
+        self.assertIn("phenotype identity already exists", measured.error)
+        self.assertIn(
+            "new-program",
+            snapshot["historical_artifact_values"]["program-identity.txt"],
+        )
+        self.assertIn(
+            "new-program",
+            self.database.historical_artifact_values[
+                "program-identity.txt"
+            ],
+        )
 
     def test_controller_start_stop(self):
         """Test starting and stopping the controller"""
@@ -177,6 +601,21 @@ def evaluate(program_path):
             self.assertIsInstance(prog_dict, dict)
             self.assertIn("id", prog_dict)
             self.assertIn("code", prog_dict)
+
+    def test_database_checkpoint_preserves_measured_artifact_history(self):
+        checkpoint = Path(self.test_dir) / "history-checkpoint"
+        self.database.historical_artifact_values = {
+            "program-identity.txt": {"first", "displaced"}
+        }
+
+        self.database.save(str(checkpoint), iteration=7)
+        restored = ProgramDatabase(self.config.database)
+        restored.load(str(checkpoint))
+
+        self.assertEqual(
+            restored.historical_artifact_values,
+            {"program-identity.txt": {"first", "displaced"}},
+        )
 
     def test_run_evolution_basic(self):
         """Test basic evolution run"""
@@ -327,6 +766,8 @@ def evaluate(program_path):
                     "provider_usage_counting_basis": "unique_provider_receipts",
                     "llm_calls_submitted": 1,
                     "llm_calls": 1,
+                    "accepted_proposals": 0,
+                    "rejected_proposals": 1,
                     "prompt_tokens": 10,
                     "completion_tokens": 5,
                     "total_provider_tokens": 15,
@@ -337,6 +778,46 @@ def evaluate(program_path):
                     "provider_token_budget_overshoot": 0,
                     "limits_reached": ["max_llm_calls"],
                     "inflight_proposals_at_budget_stop": 1,
+                    "measured_artifact_history": {},
+                    "controller_allocation": {
+                        "enabled": False,
+                        "score_metric": "combined_score",
+                        "diversity_artifact": None,
+                        "leader_score_band": None,
+                        "parent_score_band": None,
+                        "reserve_islands": 1,
+                        "active_parallelism": 3,
+                        "adaptive_parallelism": 3,
+                        "islands": [
+                            {
+                                "island": 0,
+                                "calls": 0,
+                                "accepted": 0,
+                                "rejected": 0,
+                                "distinct_behaviors": 0,
+                                "best_score": 0.45,
+                                "tokens": 0,
+                            },
+                            {
+                                "island": 1,
+                                "calls": 0,
+                                "accepted": 0,
+                                "rejected": 0,
+                                "distinct_behaviors": 0,
+                                "best_score": 0.55,
+                                "tokens": 0,
+                            },
+                            {
+                                "island": 2,
+                                "calls": 0,
+                                "accepted": 0,
+                                "rejected": 0,
+                                "distinct_behaviors": 0,
+                                "best_score": 0.65,
+                                "tokens": 0,
+                            },
+                        ],
+                    },
                 },
             )
 

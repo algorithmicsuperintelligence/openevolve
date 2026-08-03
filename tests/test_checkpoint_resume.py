@@ -134,6 +134,51 @@ def evaluate(program_path):
         # Run the async test
         asyncio.run(run_test())
 
+    def test_fresh_start_distributes_additional_seed_programs(self):
+        """Additional starting parents are evaluated and placed on other islands."""
+
+        async def run_test():
+            seed_paths = []
+            for index in range(3):
+                path = os.path.join(self.test_dir, f"seed_{index}.py")
+                with open(path, "w") as stream:
+                    stream.write(f"def seed_{index}():\\n    return {index}\\n")
+                seed_paths.append(path)
+
+            with patch("openevolve.controller.Evaluator") as mock_evaluator_class:
+                mock_evaluator = MockEvaluator()
+                mock_evaluator_class.return_value = mock_evaluator
+                controller = OpenEvolve(
+                    initial_program_path=self.test_program_path,
+                    evaluation_file=self.evaluator_path,
+                    config=self.config,
+                    output_dir=self.test_dir,
+                    seed_program_paths=seed_paths,
+                )
+                with patch(
+                    "openevolve.controller.ProcessParallelController"
+                ) as mock_controller_class:
+                    mock_controller = Mock()
+                    mock_controller.run_evolution = AsyncMock(return_value=None)
+                    mock_controller.start = Mock(return_value=None)
+                    mock_controller.stop = Mock(return_value=None)
+                    mock_controller.shutdown_event = Mock()
+                    mock_controller.shutdown_event.is_set.return_value = False
+                    mock_controller_class.return_value = mock_controller
+                    await controller.run(iterations=0)
+
+            self.assertEqual(4, len(controller.database.programs))
+            self.assertEqual(4, mock_evaluator.call_count)
+            seeds = [
+                program
+                for program in controller.database.programs.values()
+                if program.metadata.get("seed_program")
+            ]
+            self.assertEqual(3, len(seeds))
+            self.assertEqual({1, 2, 3}, {program.metadata["island"] for program in seeds})
+
+        asyncio.run(run_test())
+
     def test_duplicate_content_prevention(self):
         """Test that programs with identical content are not added multiple times"""
 
