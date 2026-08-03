@@ -6,6 +6,49 @@ import re
 from typing import Dict, List, Optional, Tuple, Union
 
 
+class DiffApplicationError(ValueError):
+    """Raised when a strict SEARCH/REPLACE proposal cannot be applied exactly."""
+
+
+def validate_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
+    """Parse a balanced, non-nested set of EVOLVE blocks or raise."""
+    lines = code.split("\n")
+    blocks: List[Tuple[int, int, str]] = []
+    start_line: Optional[int] = None
+    content: List[str] = []
+    for index, line in enumerate(lines):
+        has_start = "# EVOLVE-BLOCK-START" in line
+        has_end = "# EVOLVE-BLOCK-END" in line
+        if has_start and has_end:
+            raise DiffApplicationError(
+                f"EVOLVE markers share a line at line {index + 1}"
+            )
+        if has_start:
+            if start_line is not None:
+                raise DiffApplicationError(
+                    f"nested EVOLVE block starts at line {index + 1}"
+                )
+            start_line = index
+            content = []
+            continue
+        if has_end:
+            if start_line is None:
+                raise DiffApplicationError(
+                    f"unmatched EVOLVE block end at line {index + 1}"
+                )
+            blocks.append((start_line, index, "\n".join(content)))
+            start_line = None
+            content = []
+            continue
+        if start_line is not None:
+            content.append(line)
+    if start_line is not None:
+        raise DiffApplicationError(
+            f"unclosed EVOLVE block starting at line {start_line + 1}"
+        )
+    return blocks
+
+
 def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
     """
     Parse evolve blocks from code
@@ -35,6 +78,105 @@ def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
             block_content.append(line)
 
     return blocks
+
+
+def _matching_line_offsets(haystack: List[str], needle: List[str]) -> List[int]:
+    """Return every exact line-wise occurrence of ``needle`` in ``haystack``."""
+    if not needle:
+        return []
+    return [
+        index
+        for index in range(len(haystack) - len(needle) + 1)
+        if haystack[index : index + len(needle)] == needle
+    ]
+
+
+def apply_diff_strict(
+    original_code: str,
+    diff_text: str,
+    diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE",
+    *,
+    enforce_evolve_blocks: bool = False,
+    max_diff_blocks: int = 32,
+) -> str:
+    """Apply an atomic proposal with exact-one-match semantics.
+
+    Every SEARCH block must be nonempty and match exactly once in the current
+    in-memory revision. Blocks are applied sequentially. When
+    ``enforce_evolve_blocks`` is enabled, each match must lie wholly inside an
+    existing EVOLVE block and the marker lines themselves cannot be replaced.
+    Any violation rejects the complete proposal.
+    """
+    diff_blocks = extract_diffs(diff_text, diff_pattern)
+    return apply_diff_blocks_strict(
+        original_code,
+        diff_blocks,
+        enforce_evolve_blocks=enforce_evolve_blocks,
+        max_diff_blocks=max_diff_blocks,
+    )
+
+
+def apply_diff_blocks_strict(
+    original_code: str,
+    diff_blocks: List[Tuple[str, str]],
+    *,
+    enforce_evolve_blocks: bool = False,
+    max_diff_blocks: int = 32,
+) -> str:
+    """Strictly apply an already parsed list of SEARCH/REPLACE blocks."""
+    if not diff_blocks:
+        raise DiffApplicationError("proposal contains no SEARCH/REPLACE blocks")
+    if len(diff_blocks) > max_diff_blocks:
+        raise DiffApplicationError(
+            f"proposal contains {len(diff_blocks)} blocks; maximum is {max_diff_blocks}"
+        )
+    original_ranges = (
+        validate_evolve_blocks(original_code) if enforce_evolve_blocks else []
+    )
+    if enforce_evolve_blocks and not original_ranges:
+        raise DiffApplicationError("proposal requires at least one EVOLVE block")
+
+    lines = original_code.split("\n")
+    for block_index, (search_text, replace_text) in enumerate(diff_blocks, start=1):
+        if not search_text:
+            raise DiffApplicationError(f"block {block_index} has an empty SEARCH section")
+        if search_text == replace_text:
+            raise DiffApplicationError(f"block {block_index} makes no change")
+        if "EVOLVE-BLOCK-START" in replace_text or "EVOLVE-BLOCK-END" in replace_text:
+            raise DiffApplicationError(f"block {block_index} attempts to modify scope markers")
+
+        search_lines = search_text.split("\n")
+        replacement_lines = replace_text.split("\n")
+        matches = _matching_line_offsets(lines, search_lines)
+        if len(matches) != 1:
+            raise DiffApplicationError(
+                f"block {block_index} SEARCH matched {len(matches)} times; expected exactly one"
+            )
+        start = matches[0]
+        stop = start + len(search_lines)
+
+        if enforce_evolve_blocks:
+            current_code = "\n".join(lines)
+            ranges = validate_evolve_blocks(current_code)
+            inside_scope = any(
+                start > block_start and stop <= block_end
+                for block_start, block_end, _ in ranges
+            )
+            if not inside_scope:
+                raise DiffApplicationError(
+                    f"block {block_index} changes text outside an EVOLVE block"
+                )
+
+        lines[start:stop] = replacement_lines
+
+    result = "\n".join(lines)
+    if result == original_code:
+        raise DiffApplicationError("proposal leaves the program unchanged")
+    if enforce_evolve_blocks and len(validate_evolve_blocks(result)) != len(
+        original_ranges
+    ):
+        raise DiffApplicationError("proposal changed the EVOLVE block structure")
+    return result
 
 
 def apply_diff(

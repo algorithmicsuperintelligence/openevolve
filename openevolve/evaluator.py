@@ -19,7 +19,10 @@ import traceback
 
 from openevolve.config import EvaluatorConfig
 from openevolve.database import ProgramDatabase
-from openevolve.evaluation_result import EvaluationResult
+from openevolve.evaluation_result import (
+    EVALUATION_FAILED_METRIC,
+    EvaluationResult,
+)
 from openevolve.database import ProgramDatabase
 from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.utils.async_utils import TaskPool, run_in_executor
@@ -262,7 +265,11 @@ class Evaluator:
                         "error_type": "timeout",
                     }
 
-                return {"error": 0.0, "timeout": True}
+                return {
+                    EVALUATION_FAILED_METRIC: 1.0,
+                    "error": 0.0,
+                    "timeout": True,
+                }
 
             except Exception as e:
                 last_exception = e
@@ -293,7 +300,7 @@ class Evaluator:
         logger.error(
             f"All evaluation attempts failed for program{program_id_str}. Last error: {str(last_exception)}"
         )
-        return {"error": 0.0}
+        return {EVALUATION_FAILED_METRIC: 1.0, "error": 0.0}
 
     def _process_evaluation_result(self, result: Any) -> EvaluationResult:
         """
@@ -314,7 +321,9 @@ class Evaluator:
         else:
             # Error case - return error metrics
             logger.warning(f"Unexpected evaluation result type: {type(result)}")
-            return EvaluationResult(metrics={"error": 0.0})
+            return EvaluationResult(
+                metrics={EVALUATION_FAILED_METRIC: 1.0, "error": 0.0}
+            )
 
     def get_pending_artifacts(self, program_id: str) -> Optional[Dict[str, Union[str, bytes]]]:
         """
@@ -669,7 +678,7 @@ class Evaluator:
         """
         Check if metrics pass a threshold
 
-        Uses 'combined_score' if available (for consistency with evolution),
+        Uses 'selection_score' when supplied, then 'combined_score',
         otherwise falls back to averaging all numeric metrics except 'error'
 
         Args:
@@ -681,6 +690,16 @@ class Evaluator:
         """
         if not metrics:
             return False
+
+        if "selection_eligible" in metrics:
+            eligible = metrics.get("selection_eligible")
+            if not isinstance(eligible, (int, float)) or float(eligible) <= 0.0:
+                return False
+
+        if "selection_score" in metrics:
+            score = metrics.get("selection_score")
+            if isinstance(score, (int, float)):
+                return float(score) >= threshold
 
         # Use combined_score if available - this is what evolution uses
         if "combined_score" in metrics:

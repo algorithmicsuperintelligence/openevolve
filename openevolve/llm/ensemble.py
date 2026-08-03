@@ -38,6 +38,7 @@ class LLMEnsemble:
 
     def __init__(self, models_cfg: List[LLMModelConfig]):
         self.models_cfg = models_cfg
+        self.last_call_metadata: Dict[str, object] = {}
 
         # Initialize models from the configuration
         self.models = [_create_model(model_cfg) for model_cfg in models_cfg]
@@ -81,7 +82,9 @@ class LLMEnsemble:
     ) -> str:
         """Generate text using a system message and conversational context"""
         model = self._sample_model()
-        return await model.generate_with_context(system_message, messages, **kwargs)
+        response = await model.generate_with_context(system_message, messages, **kwargs)
+        self.last_call_metadata = dict(getattr(model, "last_call_metadata", {}) or {})
+        return response
 
     def _sample_model(self) -> LLMInterface:
         """Sample a model from the ensemble based on weights"""

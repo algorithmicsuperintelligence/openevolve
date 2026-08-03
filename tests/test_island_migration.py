@@ -215,6 +215,11 @@ class TestIslandMigration(unittest.TestCase):
         """Test that migration creates proper program copies"""
         program = self._create_test_program("original", 0.7, 0)
         self.db.add(program, target_island=0)
+        artifacts = {
+            "program-identity.txt": "stable-program-identity",
+            "search-map.txt": "compact-search-map",
+        }
+        self.db.store_artifacts(program.id, artifacts)
 
         # Set up for migration
         self.db.island_generations = [6, 6, 6]
@@ -248,6 +253,10 @@ class TestIslandMigration(unittest.TestCase):
 
             # Should be marked as migrant
             self.assertTrue(migrant.metadata.get("migrant", False))
+
+            # A migrated program can be sampled as a parent. Preserve the
+            # evaluator context required by identity and archive gates.
+            self.assertEqual(artifacts, self.db.get_artifacts(migrant.id))
 
             # Should be in correct target island
             target_island = migrant.metadata["island"]

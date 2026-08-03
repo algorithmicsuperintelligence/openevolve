@@ -663,8 +663,16 @@ class PromptSampler:
 
         sections = []
 
-        # Process all artifacts using .items()
-        for key, value in artifacts.items():
+        if self.config.artifact_include_names is None:
+            artifact_items = artifacts.items()
+        else:
+            artifact_items = (
+                (key, artifacts[key])
+                for key in self.config.artifact_include_names
+                if key in artifacts
+            )
+
+        for key, value in artifact_items:
             content = self._safe_decode_artifact(value)
             # Truncate if too long
             if len(content) > self.config.max_artifact_bytes:

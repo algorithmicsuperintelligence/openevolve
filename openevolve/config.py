@@ -4,6 +4,7 @@ Configuration handling for OpenEvolve
 
 import os
 import re
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
@@ -281,6 +282,19 @@ class PromptConfig:
     include_artifacts: bool = True
     max_artifact_bytes: int = 20 * 1024  # 20KB in prompt
     artifact_security_filter: bool = True
+    # Optional ordered subset of evaluator artifacts rendered in prompts.
+    # Stored artifacts remain complete.
+    artifact_include_names: Optional[List[str]] = None
+    # Optional evaluator artifact collected across the complete live archive
+    # and rendered as one compact deterministic prompt artifact.
+    archive_context_artifact: Optional[str] = None
+    archive_context_max_items: int = 64
+    # Optional evaluator-produced neighborhood. The artifact must be schema
+    # version 1 JSON with an identity_artifact name and ordered options carrying
+    # identity fields. The controller removes identities already retained in the
+    # live archive and renders the remainder as proposal-options.json.
+    proposal_neighborhood_artifact: Optional[str] = None
+    proposal_options_max_items: int = 32
 
     # Feature extraction and program labeling
     suggest_simplification_after_chars: Optional[int] = (
@@ -307,6 +321,40 @@ class PromptConfig:
 
 
 @dataclass
+class ControllerSchedulerConfig:
+    """Optional observed-result island allocator for bounded live comparisons."""
+
+    enabled: bool = False
+    score_metric: str = "combined_score"
+    # Optional evaluator artifact used to count distinct measured phenotypes.
+    # When absent, source-code hashes preserve the legacy definition.
+    diversity_artifact: Optional[str] = None
+    exploitation_weight: float = 0.0
+    underexplored_weight: float = 0.0
+    validity_weight: float = 0.0
+    diversity_weight: float = 0.0
+    token_efficiency_weight: float = 0.0
+    rejection_penalty: float = 0.0
+    minimum_calls: int = 1
+    # Optional post-warmup quality band. When set, allocate only among islands
+    # whose retained best score is within this absolute distance of the global
+    # retained leader. None preserves unrestricted legacy allocation.
+    leader_score_band: Optional[float] = None
+    # Optional post-warmup parent band within the selected island. When set,
+    # parent sampling is limited to retained programs whose score is within
+    # this absolute distance of that island's retained leader.
+    parent_score_band: Optional[float] = None
+    # Keep this many islands outside the active worker frontier so a completed
+    # call leaves the allocator a real choice. This does not reduce concurrency
+    # when num_islands > parallel_evaluations.
+    reserve_islands: int = 1
+    # Optional lower in-flight limit after the balanced warmup proposal count
+    # has been submitted. This trades some throughput for fresher archive
+    # context during quality-focused adaptive search.
+    adaptive_parallelism: Optional[int] = None
+
+
+@dataclass
 class DatabaseConfig:
     """Configuration for the program database"""
 
@@ -326,6 +374,9 @@ class DatabaseConfig:
     elite_selection_ratio: float = 0.1
     exploration_ratio: float = 0.2
     exploitation_ratio: float = 0.7
+    controller_scheduler: ControllerSchedulerConfig = field(
+        default_factory=ControllerSchedulerConfig
+    )
     # Note: diversity_metric fixed to "edit_distance"
     diversity_metric: str = "edit_distance"  # Options: "edit_distance", "feature_based"
 
@@ -418,6 +469,10 @@ class Config:
 
     # General settings
     max_iterations: int = 10000
+    # Optional per-run proposal-model budgets. Calls are reserved before
+    # submission; provider-token totals come from completed unique receipts.
+    max_llm_calls: Optional[int] = None
+    max_total_provider_tokens: Optional[int] = None
     checkpoint_interval: int = 100
     log_level: str = "INFO"
     log_dir: Optional[str] = None
@@ -436,6 +491,17 @@ class Config:
     diff_based_evolution: bool = True
     max_code_length: int = 10000
     diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+    strict_diff_application: bool = False
+    enforce_evolve_blocks: bool = False
+    max_diff_blocks: int = 32
+    # Optional evaluator artifact whose exact value identifies the candidate's
+    # behaviorally meaningful contents. When configured, a child duplicating
+    # any program already known to the live archive is rejected.
+    program_identity_artifact: Optional[str] = None
+    # Optional second evaluator identity for exact measured behavior. This is
+    # checked only after evaluation, so structurally different programs that
+    # produce an already archived phenotype do not bloat parent selection.
+    phenotype_identity_artifact: Optional[str] = None
 
     # Early stopping settings
     early_stopping_patience: Optional[int] = None
@@ -489,13 +555,192 @@ class Config:
         if config.database.random_seed is None and config.random_seed is not None:
             config.database.random_seed = config.random_seed
 
-        if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        """Validate combinations used by both YAML and programmatic callers."""
+        for field_name in ("max_llm_calls", "max_total_provider_tokens"):
+            value = getattr(self, field_name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                raise ValueError(f"{field_name} must be a positive integer or None")
+        try:
+            re.compile(self.diff_pattern)
+        except re.error as error:
+            raise ValueError(f"Invalid regex pattern in diff_pattern: {error}") from error
+        if self.prompt.programs_as_changes_description and not self.diff_based_evolution:
             raise ValueError(
                 "prompt.programs_as_changes_description=true requires diff_based_evolution=true "
                 "(full rewrites cannot reliably update code and changes_description together)"
             )
-
-        return config
+        if self.enforce_evolve_blocks and not self.strict_diff_application:
+            raise ValueError(
+                "enforce_evolve_blocks=true requires strict_diff_application=true"
+            )
+        if self.enforce_evolve_blocks and not self.diff_based_evolution:
+            raise ValueError(
+                "enforce_evolve_blocks=true requires diff_based_evolution=true"
+            )
+        if self.max_diff_blocks < 1:
+            raise ValueError("max_diff_blocks must be at least 1")
+        if self.prompt.archive_context_artifact is not None and (
+            not isinstance(self.prompt.archive_context_artifact, str)
+            or not self.prompt.archive_context_artifact.strip()
+        ):
+            raise ValueError(
+                "prompt.archive_context_artifact must be a non-empty string or None"
+            )
+        if self.prompt.proposal_neighborhood_artifact is not None and (
+            not isinstance(self.prompt.proposal_neighborhood_artifact, str)
+            or not self.prompt.proposal_neighborhood_artifact.strip()
+        ):
+            raise ValueError(
+                "prompt.proposal_neighborhood_artifact must be a non-empty "
+                "string or None"
+            )
+        artifact_names = self.prompt.artifact_include_names
+        if artifact_names is not None:
+            if not isinstance(artifact_names, list) or any(
+                not isinstance(name, str) or not name.strip()
+                for name in artifact_names
+            ):
+                raise ValueError(
+                    "prompt.artifact_include_names must be a list of non-empty strings or None"
+                )
+            if len(set(artifact_names)) != len(artifact_names):
+                raise ValueError(
+                    "prompt.artifact_include_names must not contain duplicates"
+                )
+            if (
+                self.prompt.archive_context_artifact is not None
+                and "archive-context.json" not in artifact_names
+            ):
+                raise ValueError(
+                    "prompt.artifact_include_names must include archive-context.json "
+                    "when archive_context_artifact is configured"
+                )
+            if (
+                self.prompt.proposal_neighborhood_artifact is not None
+                and "proposal-options.json" not in artifact_names
+            ):
+                raise ValueError(
+                    "prompt.artifact_include_names must include "
+                    "proposal-options.json when proposal_neighborhood_artifact "
+                    "is configured"
+                )
+        if (
+            isinstance(self.prompt.archive_context_max_items, bool)
+            or not isinstance(self.prompt.archive_context_max_items, int)
+            or self.prompt.archive_context_max_items < 1
+        ):
+            raise ValueError(
+                "prompt.archive_context_max_items must be a positive integer"
+            )
+        if (
+            isinstance(self.prompt.proposal_options_max_items, bool)
+            or not isinstance(self.prompt.proposal_options_max_items, int)
+            or self.prompt.proposal_options_max_items < 1
+        ):
+            raise ValueError(
+                "prompt.proposal_options_max_items must be a positive integer"
+            )
+        for field_name in (
+            "program_identity_artifact",
+            "phenotype_identity_artifact",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and (
+                not isinstance(value, str) or not value.strip()
+            ):
+                raise ValueError(f"{field_name} must be a non-empty string or None")
+        scheduler = self.database.controller_scheduler
+        if not isinstance(scheduler.enabled, bool):
+            raise ValueError("database.controller_scheduler.enabled must be boolean")
+        if not isinstance(scheduler.score_metric, str) or not scheduler.score_metric.strip():
+            raise ValueError(
+                "database.controller_scheduler.score_metric "
+                "must be a non-empty string"
+            )
+        if scheduler.diversity_artifact is not None and (
+            not isinstance(scheduler.diversity_artifact, str)
+            or not scheduler.diversity_artifact.strip()
+        ):
+            raise ValueError(
+                "database.controller_scheduler.diversity_artifact "
+                "must be a non-empty string or None"
+            )
+        for field_name in (
+            "exploitation_weight",
+            "underexplored_weight",
+            "validity_weight",
+            "diversity_weight",
+            "token_efficiency_weight",
+            "rejection_penalty",
+        ):
+            value = getattr(scheduler, field_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or value < 0
+            ):
+                raise ValueError(
+                    f"database.controller_scheduler.{field_name} "
+                    "must be finite and nonnegative"
+                )
+        for field_name in ("leader_score_band", "parent_score_band"):
+            value = getattr(scheduler, field_name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0.0
+            ):
+                raise ValueError(
+                    f"database.controller_scheduler.{field_name} "
+                    "must be finite and nonnegative when provided"
+                )
+        if (
+            isinstance(scheduler.minimum_calls, bool)
+            or not isinstance(scheduler.minimum_calls, int)
+            or scheduler.minimum_calls < 1
+        ):
+            raise ValueError(
+                "database.controller_scheduler.minimum_calls "
+                "must be a positive integer"
+            )
+        if (
+            isinstance(scheduler.reserve_islands, bool)
+            or not isinstance(scheduler.reserve_islands, int)
+            or scheduler.reserve_islands < 0
+            or (
+                scheduler.enabled
+                and scheduler.reserve_islands >= self.database.num_islands
+            )
+        ):
+            raise ValueError(
+                "database.controller_scheduler.reserve_islands must be an integer "
+                "in [0, database.num_islands) when the scheduler is enabled"
+            )
+        if scheduler.adaptive_parallelism is not None and (
+            isinstance(scheduler.adaptive_parallelism, bool)
+            or not isinstance(scheduler.adaptive_parallelism, int)
+            or scheduler.adaptive_parallelism < 1
+            or scheduler.adaptive_parallelism
+            > self.evaluator.parallel_evaluations
+            or (
+                scheduler.enabled
+                and scheduler.adaptive_parallelism
+                > self.database.num_islands - scheduler.reserve_islands
+            )
+        ):
+            raise ValueError(
+                "database.controller_scheduler.adaptive_parallelism must be a "
+                "positive integer no greater than the evaluator worker count or "
+                "selectable island count"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

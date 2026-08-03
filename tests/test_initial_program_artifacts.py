@@ -84,8 +84,22 @@ class TestInitialProgramArtifacts(unittest.TestCase):
             instance = mock_ppc.return_value
             instance.start.return_value = None
             instance.stop.return_value = None
+            instance.completion_reason = "target_score_reached"
+            instance.last_completed_iteration = 3
+            instance.completed_iteration_count = 3
+            instance.llm_usage = {
+                "llm_calls_submitted": 3,
+                "llm_calls": 3,
+                "total_provider_tokens": 120,
+            }
 
             asyncio.run(controller.run(iterations=1))
+
+        self.assertEqual(controller.completion_reason, "target_score_reached")
+        self.assertEqual(controller.last_completed_iteration, 3)
+        self.assertEqual(controller.completed_iteration_count, 3)
+        self.assertEqual(controller.llm_usage["llm_calls_submitted"], 3)
+        self.assertEqual(controller.llm_usage["total_provider_tokens"], 120)
 
         # Exactly one (initial) program should have been added
         self.assertEqual(len(controller.database.programs), 1)

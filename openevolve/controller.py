@@ -45,9 +45,11 @@ class OpenEvolve:
         evaluation_file: str,
         config: Config,
         output_dir: Optional[str] = None,
+        seed_program_paths: Optional[List[str]] = None,
     ):
         # Load configuration (loaded in main_async)
         self.config = config
+        self.config.validate()
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
@@ -95,6 +97,11 @@ class OpenEvolve:
         # Load initial program
         self.initial_program_path = initial_program_path
         self.initial_program_code = self._load_initial_program()
+        self.seed_program_paths = [
+            str(Path(path).expanduser().resolve())
+            for path in (seed_program_paths or [])
+        ]
+        self.seed_program_codes = self._load_seed_programs()
         if not self.config.language:
             self.config.language = extract_code_language(self.initial_program_code)
 
@@ -163,6 +170,12 @@ class OpenEvolve:
 
         # Initialize improved parallel processing components
         self.parallel_controller = None
+        # Preserve authoritative run completion metadata after the process
+        # controller is stopped and released.
+        self.completion_reason = "not_started"
+        self.last_completed_iteration: Optional[int] = None
+        self.completed_iteration_count = 0
+        self.llm_usage: Dict[str, Any] = {}
 
     def _setup_logging(self) -> None:
         """Set up logging"""
@@ -221,6 +234,22 @@ class OpenEvolve:
         """Load the initial program from file"""
         with open(self.initial_program_path, "r") as f:
             return f.read()
+
+    def _load_seed_programs(self) -> List[tuple[str, str]]:
+        """Load distinct optional starting parents without replacing the incumbent."""
+
+        loaded: List[tuple[str, str]] = []
+        seen = {self.initial_program_code}
+        for path in self.seed_program_paths:
+            if not Path(path).is_file():
+                raise ValueError(f"Seed program does not exist: {path}")
+            code = Path(path).read_text(encoding="utf-8")
+            if code in seen:
+                logger.info("Skipping duplicate seed program %s", path)
+                continue
+            seen.add(code)
+            loaded.append((path, code))
+        return loaded
 
     async def run(
         self,
@@ -300,6 +329,38 @@ class OpenEvolve:
                         f"For better evolution results, please modify your evaluator to return a 'combined_score' "
                         f"metric that properly weights different aspects of program performance."
                     )
+
+            for index, (seed_path, seed_code) in enumerate(self.seed_program_codes):
+                seed_program_id = str(uuid.uuid4())
+                seed_metrics = await self.evaluator.evaluate_program(
+                    seed_code,
+                    seed_program_id,
+                )
+                seed_program = Program(
+                    id=seed_program_id,
+                    code=seed_code,
+                    changes_description=f"Starting parent from {Path(seed_path).name}",
+                    language=self.config.language,
+                    metrics=seed_metrics,
+                    iteration_found=start_iteration,
+                    metadata={
+                        "seed_program": True,
+                        "seed_program_path": seed_path,
+                    },
+                )
+                target_island = (index + 1) % self.config.database.num_islands
+                self.database.add(
+                    seed_program,
+                    target_island=target_island,
+                )
+                seed_artifacts = self.evaluator.get_pending_artifacts(seed_program_id)
+                if seed_artifacts:
+                    self.database.store_artifacts(seed_program_id, seed_artifacts)
+                logger.info(
+                    "Added seed program %s to island %s",
+                    Path(seed_path).name,
+                    target_island,
+                )
         else:
             logger.info(
                 f"Skipping initial program addition (resuming from iteration {start_iteration} "
@@ -314,6 +375,7 @@ class OpenEvolve:
                 self.database,
                 self.evolution_tracer,
                 file_suffix=self.config.file_suffix,
+                usage_output_path=os.path.join(self.output_dir, "llm_usage.jsonl"),
             )
 
             # Set up signal handlers for graceful shutdown
@@ -354,6 +416,15 @@ class OpenEvolve:
         finally:
             # Clean up parallel processing resources
             if self.parallel_controller:
+                self.completion_reason = self.parallel_controller.completion_reason
+                self.last_completed_iteration = (
+                    self.parallel_controller.last_completed_iteration
+                )
+                self.completed_iteration_count = (
+                    self.parallel_controller.completed_iteration_count
+                )
+                llm_usage = getattr(self.parallel_controller, "llm_usage", {})
+                self.llm_usage = dict(llm_usage) if isinstance(llm_usage, dict) else {}
                 self.parallel_controller.stop()
                 self.parallel_controller = None
 
@@ -501,15 +572,36 @@ class OpenEvolve:
         if self.parallel_controller.shutdown_event.is_set():
             logger.info("Evolution stopped due to shutdown request")
             return
-        elif self.parallel_controller.early_stopping_triggered:
+        elif getattr(self.parallel_controller, "early_stopping_triggered", False) is True:
             logger.info("Evolution stopped due to early stopping - saving final checkpoint")
             # Continue to save final checkpoint for early stopping
 
-        # Save final checkpoint if needed
-        # Note: start_iteration here is the evolution start (1 for fresh start, not 0)
-        # max_iterations is the number of evolution iterations to run
-        final_iteration = start_iteration + max_iterations - 1
-        if final_iteration > 0 and final_iteration % self.config.checkpoint_interval == 0:
+        # Bind the final checkpoint to work that actually completed. A target
+        # reached by one worker can leave higher-numbered work in flight, so
+        # the requested budget is not a valid completion cursor.
+        final_iteration = getattr(
+            self.parallel_controller, "last_completed_iteration", None
+        )
+        target_score_reached = (
+            getattr(self.parallel_controller, "target_score_reached", False) is True
+        )
+        early_stopping_triggered = (
+            getattr(self.parallel_controller, "early_stopping_triggered", False) is True
+        )
+        budget_triggered = bool(
+            getattr(self.parallel_controller, "budget_completion_reason", None)
+        )
+        should_save_final = (
+            isinstance(final_iteration, int)
+            and final_iteration > 0
+            and (
+                target_score_reached
+                or early_stopping_triggered
+                or budget_triggered
+                or final_iteration % self.config.checkpoint_interval == 0
+            )
+        )
+        if should_save_final:
             self._save_checkpoint(final_iteration)
 
     def _save_best_program(self, program: Optional[Program] = None) -> None:

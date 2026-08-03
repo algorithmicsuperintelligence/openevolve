@@ -215,6 +215,40 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 - **Adaptive Feature Dimensions**: Custom quality-diversity metrics
 - **Migration Patterns**: Ring topology with controlled gene flow
 - **Multi-Strategy Sampling**: Elite, diverse, and exploratory selection
+- **Evaluator-Defined Identity**: Set `program_identity_artifact` to reject
+  structurally duplicate measured children across the complete run history
+- **Measured-Phenotype Identity**: Set `phenotype_identity_artifact` to reject
+  structurally different children whose complete measured behavior is already
+  present
+- **Observed-Result Allocation**: Optional `database.controller_scheduler`
+  routes new calls using a domain-selected `score_metric`, validity, diversity,
+  rejection rate, exploration, and token efficiency. Set `diversity_artifact`
+  to count evaluator-defined niches, and reserve at least one island so live
+  parallel scheduling retains a real allocation choice. Optionally set
+  `adaptive_parallelism` below the worker count to use fast balanced warmup
+  followed by a fresher-context quality phase. Set it to `1` when complete
+  archive freshness matters more than late-stage throughput. The allocator
+  reads retained seed and migrated-program scores as well as child results.
+  Set `leader_score_band` to keep post-warmup calls within an absolute score
+  distance of the best retained population. Set `parent_score_band` to keep
+  post-warmup parents within a score distance of the selected population's
+  retained leader
+- **Compact Measured-History Context**: Set
+  `prompt.archive_context_artifact` to show the proposal model a deterministic,
+  bounded inventory of one evaluator-defined artifact from measured programs.
+  The append-only values survive MAP-Elites displacement and checkpoint resume
+- **Filtered Proposal Neighborhoods**: Set
+  `prompt.proposal_neighborhood_artifact` when an evaluator can enumerate
+  valid parent-local options. The controller removes identities measured
+  anywhere in the complete persisted history, including behaviorally rejected
+  or displaced programs, and renders the bounded remainder as
+  `proposal-options.json` without embedding domain rules in OpenEvolve
+- **Prompt Artifact Selection**: Set ordered
+  `prompt.artifact_include_names` to keep complete evaluator receipts in the
+  archive while rendering only task-relevant artifacts to the proposal model
+- **Auditable Rejections**: Usage receipts distinguish measured candidates
+  from archive admission and record the selected parent plus a provider-response
+  digest without duplicating full prompt content
 
 </details>
 
@@ -859,13 +893,19 @@ Just set the `api_base` in your config to point to your endpoint.
 
 **Multiple success metrics:**
 
-1. **Primary Metric**: Your evaluator's `combined_score` or metric average
+1. **Primary Metric**: `selection_score` when supplied, then `combined_score`
 2. **Convergence**: Best score improvement over time
 3. **Diversity**: MAP-Elites grid coverage
 4. **Efficiency**: Iterations to reach target performance
 5. **Robustness**: Performance across different test cases
 
 **Use the visualizer** to track all metrics in real-time and identify when evolution has converged.
+
+For exact scientific searches, an evaluator can additionally return
+`selection_eligible`. A value at or below zero retains the attempt in lineage
+records but excludes it from parent selection, MAP-Elites cells, and the elite
+archive. This separates non-negotiable admission checks from the
+multi-objective quality score while preserving older evaluator behavior.
 
 </details>
 

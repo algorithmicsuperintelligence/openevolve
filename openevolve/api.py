@@ -8,7 +8,7 @@ import os
 import uuid
 import inspect
 from typing import Union, Callable, Optional, List, Dict, Any, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from openevolve.controller import OpenEvolve
@@ -25,6 +25,10 @@ class EvolutionResult:
     best_code: str
     metrics: Dict[str, Any]
     output_dir: Optional[str]
+    completion_reason: str = "unknown"
+    last_completed_iteration: Optional[int] = None
+    completed_iteration_count: int = 0
+    llm_usage: Dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self):
         return f"EvolutionResult(best_score={self.best_score:.4f})"
@@ -171,19 +175,26 @@ async def _run_evolution_async(
             best_code = best_program.code
             metrics = best_program.metrics or {}
 
-            if "combined_score" in metrics:
+            if "selection_score" in metrics:
+                best_score = metrics["selection_score"]
+            elif "combined_score" in metrics:
                 best_score = metrics["combined_score"]
             elif metrics:
                 numeric_metrics = [v for v in metrics.values() if isinstance(v, (int, float))]
                 if numeric_metrics:
                     best_score = sum(numeric_metrics) / len(numeric_metrics)
 
+        llm_usage = getattr(controller, "llm_usage", {})
         return EvolutionResult(
             best_program=best_program,
             best_score=best_score,
             best_code=best_code,
             metrics=metrics,
             output_dir=actual_output_dir if not cleanup else None,
+            completion_reason=controller.completion_reason,
+            last_completed_iteration=controller.last_completed_iteration,
+            completed_iteration_count=controller.completed_iteration_count,
+            llm_usage=dict(llm_usage) if isinstance(llm_usage, dict) else {},
         )
 
     finally:

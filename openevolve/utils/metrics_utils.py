@@ -82,11 +82,31 @@ def get_fitness_score(
         metrics: All metrics from evaluation
         feature_dimensions: List of MAP-Elites dimensions to exclude from fitness
 
+    Evaluators may expose ``selection_eligible`` and ``selection_score`` when
+    admission is separate from scientific quality.  An ineligible result always
+    ranks below an eligible one; otherwise the explicit selection score wins.
+    Older evaluators retain their original combined-score behavior.
+
     Returns:
-        Fitness score (combined_score if available, otherwise average of non-feature metrics)
+        Explicit selection score, combined score, or an average of non-feature metrics
     """
     if not metrics:
         return 0.0
+
+    if "selection_eligible" in metrics:
+        try:
+            if float(metrics["selection_eligible"]) <= 0.0:
+                return float("-inf")
+        except (ValueError, TypeError, OverflowError):
+            return float("-inf")
+
+    if "selection_score" in metrics:
+        try:
+            score = float(metrics["selection_score"])
+            if not (score != score):
+                return score
+        except (ValueError, TypeError, OverflowError):
+            pass
 
     # Always prefer combined_score if available
     if "combined_score" in metrics:
