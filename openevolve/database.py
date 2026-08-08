@@ -620,7 +620,8 @@ class ProgramDatabase:
 
         # Create the programs directory once rather than once per program
         programs_dir = os.path.join(save_path, "programs")
-        os.makedirs(programs_dir, exist_ok=True)
+        if self.programs:
+            os.makedirs(programs_dir, exist_ok=True)
 
         # Neither of these can change while the loop runs
         prompts_by_program = self.prompts_by_program
