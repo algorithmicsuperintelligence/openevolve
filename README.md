@@ -384,6 +384,33 @@ See the [Claude Code quickstart example](examples/claude_code_quickstart/) for a
 
 </details>
 
+<details>
+<summary><b>🤖 GitHub Copilot CLI (No API Key)</b></summary>
+
+Use the [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) as the LLM backend — no API keys needed, authentication uses your GitHub Copilot subscription.
+
+```bash
+# Install and authenticate
+npm install -g @github/copilot
+copilot login
+```
+
+```yaml
+# config.yaml
+llm:
+  provider: "copilot_cli"
+  models:
+    - name: "claude-sonnet-4.6"
+      weight: 0.8
+      reasoning_effort: "medium"
+    - name: "gpt-5.4"
+      weight: 0.2
+```
+
+See the [Copilot CLI quickstart example](examples/copilot_cli_quickstart/) for a complete walkthrough.
+
+</details>
+
 ## Examples Gallery
 
 <div align="center">

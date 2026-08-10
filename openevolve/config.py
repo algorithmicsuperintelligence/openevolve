@@ -57,6 +57,7 @@ class LLMModelConfig:
     name: str = None
 
     # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
+    # Also supports "copilot_cli" (GitHub Copilot CLI)
     provider: Optional[str] = None
 
     # Custom LLM client
@@ -84,6 +85,12 @@ class LLMModelConfig:
 
     # Claude Code CLI budget per call (USD)
     max_budget_usd: Optional[float] = None
+
+    # GitHub Copilot CLI budget per call (AI credits)
+    max_ai_credits: Optional[float] = None
+
+    # GitHub Copilot CLI: run the agent with all tools pre-approved
+    allow_all_tools: Optional[bool] = None
 
     # Manual mode (human-in-the-loop)
     manual_mode: Optional[bool] = None
