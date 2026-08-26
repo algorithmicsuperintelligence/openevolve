@@ -13,6 +13,7 @@ import tempfile
 import time
 import traceback
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import traceback
@@ -55,6 +56,13 @@ class Evaluator:
 
         # Create a task pool for parallel evaluation
         self.task_pool = TaskPool(max_concurrency=config.parallel_evaluations)
+
+        # Dedicated executor (not the loop's default) so a timed-out evaluation's
+        # orphaned thread can't block asyncio.run()'s shutdown_default_executor().
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(1, config.parallel_evaluations),
+            thread_name_prefix="openevolve-eval",
+        )
 
         # Set up evaluation function if file exists
         self._load_evaluation_function()
@@ -348,7 +356,7 @@ class Evaluator:
         # Create a coroutine that runs the evaluation function in an executor
         async def run_evaluation():
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.evaluate_function, program_path)
+            return await loop.run_in_executor(self._executor, self.evaluate_function, program_path)
 
         # Run the evaluation with timeout - let exceptions bubble up for retry handling
         result = await asyncio.wait_for(run_evaluation(), timeout=self.config.timeout)
@@ -393,7 +401,9 @@ class Evaluator:
 
                 async def run_stage1():
                     loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(None, module.evaluate_stage1, program_path)
+                    return await loop.run_in_executor(
+                        self._executor, module.evaluate_stage1, program_path
+                    )
 
                 stage1_result = await asyncio.wait_for(run_stage1(), timeout=self.config.timeout)
                 stage1_eval_result = self._process_evaluation_result(stage1_result)
@@ -434,7 +444,9 @@ class Evaluator:
 
                 async def run_stage2():
                     loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(None, module.evaluate_stage2, program_path)
+                    return await loop.run_in_executor(
+                        self._executor, module.evaluate_stage2, program_path
+                    )
 
                 stage2_result = await asyncio.wait_for(run_stage2(), timeout=self.config.timeout)
                 stage2_eval_result = self._process_evaluation_result(stage2_result)
@@ -496,7 +508,9 @@ class Evaluator:
 
                 async def run_stage3():
                     loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(None, module.evaluate_stage3, program_path)
+                    return await loop.run_in_executor(
+                        self._executor, module.evaluate_stage3, program_path
+                    )
 
                 stage3_result = await asyncio.wait_for(run_stage3(), timeout=self.config.timeout)
                 stage3_eval_result = self._process_evaluation_result(stage3_result)
