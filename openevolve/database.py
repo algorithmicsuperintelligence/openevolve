@@ -1045,8 +1045,9 @@ class ProgramDatabase:
             content = content.strip()
 
             # Parse the response
-            NOVEL_i = content.upper().find("NOVEL")
-            NOT_NOVEL_i = content.upper().find("NOT NOVEL")
+            parsed_content = content.upper().replace("NOT_NOVEL", "NOT NOVEL")
+            NOVEL_i = parsed_content.find("NOVEL")
+            NOT_NOVEL_i = parsed_content.find("NOT NOVEL")
 
             if NOVEL_i == -1 and NOT_NOVEL_i == -1:
                 logger.warning(f"Unexpected novelty LLM response: {content}")
