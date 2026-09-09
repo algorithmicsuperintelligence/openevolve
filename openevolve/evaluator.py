@@ -18,7 +18,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import traceback
 
 from openevolve.config import EvaluatorConfig
-from openevolve.database import ProgramDatabase
 from openevolve.evaluation_result import EvaluationResult
 from openevolve.database import ProgramDatabase
 from openevolve.llm.ensemble import LLMEnsemble
@@ -563,7 +562,9 @@ class Evaluator:
 
         try:
             # Create prompt for LLM
-            feature_dimensions = self.database.config.feature_dimensions if self.database else []
+            feature_dimensions = (
+                list(self.database.get_state().feature_dimensions) if self.database else []
+            )
             prompt = self.prompt_sampler.build_prompt(
                 current_program=program_code,
                 template_key="evaluation",

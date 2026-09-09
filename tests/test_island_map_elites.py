@@ -9,7 +9,8 @@ that caused duplicate program chains.
 import unittest
 import uuid
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestIslandMapElites(unittest.TestCase):
@@ -170,41 +171,6 @@ class TestIslandMapElites(unittest.TestCase):
         self.assertEqual(len(migrant_programs), 0, 
                         f"Found programs with _migrant suffix: {migrant_programs}")
 
-    def test_checkpoint_serialization_preserves_island_maps(self):
-        """Test that saving/loading preserves island feature maps correctly"""
-        import tempfile
-        import shutil
-        
-        # Add programs to different islands
-        prog1 = self._create_test_program("prog1", 0.8, [0.1, 0.2], island=0)
-        prog2 = self._create_test_program("prog2", 0.7, [0.3, 0.4], island=1)
-        
-        self.db.add(prog1, target_island=0)
-        self.db.add(prog2, target_island=1)
-
-        # Get the current state
-        original_maps = [dict(island_map) for island_map in self.db.island_feature_maps]
-
-        # Save to temporary directory
-        temp_dir = tempfile.mkdtemp()
-        try:
-            self.db.save(temp_dir)
-
-            # Create new database and load from checkpoint
-            config = Config()
-            config.database.in_memory = True
-            config.database.num_islands = 3
-            new_db = ProgramDatabase(config.database)
-            new_db.load(temp_dir)
-
-            # Verify island feature maps are preserved
-            self.assertEqual(len(new_db.island_feature_maps), 3)
-            for i, (original_map, loaded_map) in enumerate(zip(original_maps, new_db.island_feature_maps)):
-                self.assertEqual(original_map, loaded_map, 
-                               f"Island {i} feature map not preserved correctly")
-                               
-        finally:
-            shutil.rmtree(temp_dir)
 
 
 if __name__ == '__main__':

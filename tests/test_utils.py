@@ -124,7 +124,6 @@ def get_integration_config(port: int = DEFAULT_PORT) -> Config:
     """Get config for integration tests with optillm"""
     config = Config()
     config.max_iterations = 5  # Very small for CI speed
-    config.checkpoint_interval = 2
     config.database.in_memory = True
     config.evaluator.parallel_evaluations = 2
     config.evaluator.timeout = 10  # Short timeout for CI

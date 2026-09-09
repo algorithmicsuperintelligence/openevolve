@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from openevolve.config import DatabaseConfig, EvaluatorConfig, PromptConfig
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 from openevolve.evaluation_result import EvaluationResult
 from openevolve.evaluator import Evaluator
 from openevolve.prompt.sampler import PromptSampler

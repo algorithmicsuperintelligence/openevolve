@@ -1,5 +1,5 @@
 """
-Tests for checkpoint resume functionality and initial program deduplication
+Tests for continuation within a database session and initial program deduplication
 """
 
 import asyncio
@@ -15,7 +15,8 @@ os.environ["OPENAI_API_KEY"] = "test"
 
 from openevolve.config import Config
 from openevolve.controller import OpenEvolve
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class MockEvaluator:
@@ -42,8 +43,8 @@ class MockEvaluator:
         return None
 
 
-class TestCheckpointResume(unittest.TestCase):
-    """Tests for checkpoint resume functionality"""
+class TestSessionContinuation(unittest.TestCase):
+    """Tests for continuation within a database session"""
 
     def setUp(self):
         """Set up test environment"""
@@ -76,7 +77,6 @@ def evaluate(program_path):
         # Create test config
         self.config = Config()
         self.config.max_iterations = 2  # Keep tests fast
-        self.config.checkpoint_interval = 1
         self.config.database.in_memory = True
 
     def tearDown(self):
@@ -184,8 +184,8 @@ def evaluate(program_path):
                 # Verify evaluator was not called for initial program
                 self.assertEqual(mock_evaluator.call_count, 0)
 
-    def test_checkpoint_resume_skips_initial_program(self):
-        """Test that initial program is not re-added when resuming from checkpoint"""
+    def test_existing_session_skips_initial_program(self):
+        """Test that initial program is not re-added when continuing a session"""
 
         async def run_test():
             with patch("openevolve.controller.Evaluator") as mock_evaluator_class:
@@ -199,7 +199,7 @@ def evaluate(program_path):
                     output_dir=self.test_dir,
                 )
 
-                # Simulate existing database state (as if loaded from checkpoint)
+                # Simulate existing database state (as if already processed)
                 existing_program = Program(
                     id="existing_program_id",
                     code=self.test_program_content,  # Same content as initial program

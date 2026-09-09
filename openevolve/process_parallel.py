@@ -5,12 +5,11 @@ Process-based parallel controller for true parallelism
 import asyncio
 import logging
 import multiprocessing as mp
-import pickle
 import signal
 import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +18,18 @@ from openevolve.database import Program, ProgramDatabase
 from openevolve.utils.metrics_utils import safe_numeric_average
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IterationContext:
+    """Selected values for one worker; its size does not grow with the population."""
+
+    parent: Program
+    inspirations: List[Program]
+    top_programs: List[Program]
+    parent_artifacts: Dict[str, Any]
+    target_island: int
+    feature_dimensions: Tuple[str, ...]
 
 
 @dataclass
@@ -131,42 +142,16 @@ def _lazy_init_worker_components():
         )
 
 
-def _run_iteration_worker(
-    iteration: int, db_snapshot: Dict[str, Any], parent_id: str, inspiration_ids: List[str]
-) -> SerializableResult:
+def _run_iteration_worker(iteration: int, context: IterationContext) -> SerializableResult:
     """Run a single iteration in a worker process"""
     try:
         # Lazy initialization
         _lazy_init_worker_components()
 
-        # Reconstruct programs from snapshot
-        programs = {pid: Program(**prog_dict) for pid, prog_dict in db_snapshot["programs"].items()}
-
-        parent = programs[parent_id]
-        inspirations = [programs[pid] for pid in inspiration_ids if pid in programs]
-
-        # Get parent artifacts if available
-        parent_artifacts = db_snapshot["artifacts"].get(parent_id)
-
-        # Get island-specific programs for context
-        parent_island = parent.metadata.get("island", db_snapshot["current_island"])
-        island_programs = [
-            programs[pid] for pid in db_snapshot["islands"][parent_island] if pid in programs
-        ]
-
-        # Sort by metrics for top programs
-        island_programs.sort(
-            key=lambda p: p.metrics.get("combined_score", safe_numeric_average(p.metrics)),
-            reverse=True,
-        )
-
-        # Use config values for limits instead of hardcoding
-        # Programs for LLM display (includes both top and diverse for inspiration)
-        programs_for_prompt = island_programs[
-            : _worker_config.prompt.num_top_programs + _worker_config.prompt.num_diverse_programs
-        ]
-        # Best programs only (for previous attempts section, focused on top performers)
-        best_programs_only = island_programs[: _worker_config.prompt.num_top_programs]
+        parent = context.parent
+        inspirations = context.inspirations
+        programs_for_prompt = context.top_programs
+        best_programs_only = programs_for_prompt[: _worker_config.prompt.num_top_programs]
 
         # Build prompt
         if _worker_config.prompt.programs_as_changes_description:
@@ -188,8 +173,8 @@ def _run_iteration_worker(
             language=_worker_config.language,
             evolution_round=iteration,
             diff_based_evolution=_worker_config.diff_based_evolution,
-            program_artifacts=parent_artifacts,
-            feature_dimensions=db_snapshot.get("feature_dimensions", []),
+            program_artifacts=context.parent_artifacts,
+            feature_dimensions=list(context.feature_dimensions),
             current_changes_description=parent_changes_desc,
         )
 
@@ -307,14 +292,11 @@ def _run_iteration_worker(
             metadata={
                 "changes": changes_summary,
                 "parent_metrics": parent.metrics,
-                "island": parent_island,
+                "island": context.target_island,
             },
         )
 
         iteration_time = time.time() - iteration_start
-
-        # Get target island from snapshot (where child should be placed)
-        target_island = db_snapshot.get("sampling_island")
 
         return SerializableResult(
             child_program_dict=child_program.to_dict(),
@@ -324,7 +306,7 @@ def _run_iteration_worker(
             llm_response=llm_response,
             artifacts=artifacts,
             iteration=iteration,
-            target_island=target_island,
+            target_island=context.target_island,
         )
 
     except Exception as e:
@@ -410,7 +392,7 @@ class ProcessParallelController:
 
         # Number of worker processes
         self.num_workers = config.evaluator.parallel_evaluations
-        self.num_islands = config.database.num_islands
+        self.num_islands = database.get_state().num_islands
 
         logger.info(f"Initialized process parallel controller with {self.num_workers} workers")
 
@@ -418,8 +400,8 @@ class ProcessParallelController:
         """Serialize config object to a dictionary that can be pickled"""
         # Manual serialization to handle nested objects properly
 
-        # The asdict() call itself triggers the deepcopy which tries to serialize novelty_llm. Remove it first.
-        config.database.novelty_llm = None
+        # Keep runtime clients out of worker configuration without changing the store.
+        database_config = replace(config.database, novelty_llm=None)
 
         return {
             "llm": {
@@ -435,10 +417,9 @@ class ProcessParallelController:
                 "retry_delay": config.llm.retry_delay,
             },
             "prompt": asdict(config.prompt),
-            "database": asdict(config.database),
+            "database": asdict(database_config),
             "evaluator": asdict(config.evaluator),
             "max_iterations": config.max_iterations,
-            "checkpoint_interval": config.checkpoint_interval,
             "log_level": config.log_level,
             "log_dir": config.log_dir,
             "random_seed": config.random_seed,
@@ -495,42 +476,11 @@ class ProcessParallelController:
         logger.info("Graceful shutdown requested...")
         self.shutdown_event.set()
 
-    def _create_database_snapshot(self) -> Dict[str, Any]:
-        """Create a serializable snapshot of the database state"""
-        # Only include necessary data for workers
-        snapshot = {
-            "programs": {pid: prog.to_dict() for pid, prog in self.database.programs.items()},
-            "islands": [list(island) for island in self.database.islands],
-            "current_island": self.database.current_island,
-            "feature_dimensions": self.database.config.feature_dimensions,
-            "artifacts": {},  # Will be populated selectively
-        }
-
-        # Include artifacts for programs that might be selected
-        # This limits artifacts (execution outputs/errors) to avoid large snapshot sizes.
-        # This does NOT affect program code - all programs are fully serialized above.
-        # With max_artifact_bytes=20KB and population_size=1000, artifacts could be 20MB total,
-        # which would significantly slow worker process initialization. The default limit of 100
-        # keeps artifact data under 2MB while still providing execution context for recent programs.
-        # Workers can still evolve properly as they have access to ALL program code.
-        # Configure via database.max_snapshot_artifacts (None for unlimited).
-        max_artifacts = self.database.config.max_snapshot_artifacts
-        program_ids = list(self.database.programs.keys())
-        if max_artifacts is not None:
-            program_ids = program_ids[:max_artifacts]
-        for pid in program_ids:
-            artifacts = self.database.get_artifacts(pid)
-            if artifacts:
-                snapshot["artifacts"][pid] = artifacts
-
-        return snapshot
-
     async def run_evolution(
         self,
         start_iteration: int,
         max_iterations: int,
         target_score: Optional[float] = None,
-        checkpoint_callback=None,
     ):
         """Run evolution with process-based parallelism"""
         if not self.executor:
@@ -636,8 +586,12 @@ class ProcessParallelController:
                         )
                         if parent_program:
                             # Determine island ID
-                            island_id = child_program.metadata.get(
-                                "island", self.database.current_island
+                            island_id = (
+                                result.target_island
+                                if result.target_island is not None
+                                else child_program.metadata.get(
+                                    "island", self.database.get_state().current_island
+                                )
                             )
 
                             self.evolution_tracer.log_trace(
@@ -669,7 +623,13 @@ class ProcessParallelController:
 
                     # Island management
                     # get current program island id
-                    island_id = child_program.metadata.get("island", self.database.current_island)
+                    island_id = (
+                        result.target_island
+                        if result.target_island is not None
+                        else child_program.metadata.get(
+                            "island", self.database.get_state().current_island
+                        )
+                    )
                     # use this to increment island generation
                     self.database.increment_island_generation(island_idx=island_id)
 
@@ -677,7 +637,7 @@ class ProcessParallelController:
                     if self.database.should_migrate():
                         logger.info(f"Performing migration at iteration {completed_iteration}")
                         self.database.migrate_programs()
-                        self.database.log_island_status()
+                        logger.info("Island statistics: %s", self.database.get_island_stats())
 
                     # Log progress
                     logger.info(
@@ -714,24 +674,12 @@ class ProcessParallelController:
                             self._warned_about_combined_score = True
 
                     # Check for new best
-                    if self.database.best_program_id == child_program.id:
+                    best_program = self.database.get_best_program()
+                    if best_program and best_program.id == child_program.id:
                         logger.info(
                             f"🌟 New best solution found at iteration {completed_iteration}: "
                             f"{child_program.id}"
                         )
-
-                    # Checkpoint callback
-                    # Don't checkpoint at iteration 0 (that's just the initial program)
-                    if (
-                        completed_iteration > 0
-                        and completed_iteration % self.config.checkpoint_interval == 0
-                    ):
-                        logger.info(
-                            f"Checkpoint interval reached at iteration {completed_iteration}"
-                        )
-                        self.database.log_island_status()
-                        if checkpoint_callback:
-                            checkpoint_callback(completed_iteration)
 
                     # Check target score
                     if target_score is not None and child_program.metrics:
@@ -811,6 +759,9 @@ class ProcessParallelController:
             except Exception as e:
                 logger.error(f"Error processing result from iteration {completed_iteration}: {e}")
 
+            finally:
+                self.database.record_iteration(completed_iteration)
+
             completed_iterations += 1
 
             # Remove completed iteration from island tracking
@@ -849,36 +800,36 @@ class ProcessParallelController:
 
         return self.database.get_best_program()
 
+    def _select_iteration_context(self, island_id: Optional[int] = None) -> IterationContext:
+        """Query only the programs and evidence needed for this candidate."""
+        state = self.database.get_state()
+        target_island = island_id if island_id is not None else state.current_island
+        parent, inspirations = self.database.sample_from_island(
+            island_id=target_island,
+            num_inspirations=self.config.prompt.num_diverse_programs,
+        )
+        # Preserve the existing prompt context when sampling falls back to another island.
+        context_island = parent.metadata.get("island", target_island)
+        top_programs = self.database.get_top_programs(
+            n=self.config.prompt.num_top_programs + self.config.prompt.num_diverse_programs,
+            island_idx=context_island,
+        )
+        return IterationContext(
+            parent=parent,
+            inspirations=inspirations,
+            top_programs=top_programs,
+            parent_artifacts=self.database.get_artifacts(parent.id),
+            target_island=target_island,
+            feature_dimensions=state.feature_dimensions,
+        )
+
     def _submit_iteration(
         self, iteration: int, island_id: Optional[int] = None
     ) -> Optional[Future]:
         """Submit an iteration to the process pool, optionally pinned to a specific island"""
         try:
-            # Use specified island or current island
-            target_island = island_id if island_id is not None else self.database.current_island
-
-            # Use thread-safe sampling that doesn't modify shared state
-            # This fixes the race condition from GitHub issue #246
-            # Inspirations are the diverse/creative examples; size them by
-            # num_diverse_programs (not num_top_programs) so the config parameter
-            # actually controls the inspiration count (GitHub issue #452).
-            parent, inspirations = self.database.sample_from_island(
-                island_id=target_island,
-                num_inspirations=self.config.prompt.num_diverse_programs,
-            )
-
-            # Create database snapshot
-            db_snapshot = self._create_database_snapshot()
-            db_snapshot["sampling_island"] = target_island  # Mark which island this is for
-
-            # Submit to process pool
-            future = self.executor.submit(
-                _run_iteration_worker,
-                iteration,
-                db_snapshot,
-                parent.id,
-                [insp.id for insp in inspirations],
-            )
+            context = self._select_iteration_context(island_id)
+            future = self.executor.submit(_run_iteration_worker, iteration, context)
 
             return future
 

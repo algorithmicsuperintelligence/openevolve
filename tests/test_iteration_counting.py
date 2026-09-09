@@ -1,150 +1,178 @@
-"""
-Tests for iteration counting and checkpoint behavior
-"""
+"""Exercise progress and continuation against the database interface."""
 
-import os
+import asyncio
 import tempfile
 import unittest
+from concurrent.futures import Future
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
-# Set dummy API key for testing
-os.environ["OPENAI_API_KEY"] = "test"
+from openevolve.config import Config, LLMModelConfig
+from openevolve.api import run_evolution
+from openevolve.controller import OpenEvolve
+from openevolve.database import Program, ProgramDatabase
+from openevolve.database_memory import InMemoryProgramDatabase
+from openevolve.process_parallel import ProcessParallelController, SerializableResult
 
-from openevolve.config import Config
+
+class ImmediateExecutor:
+    """Complete worker results locally without making model requests."""
+
+    def __init__(self, succeed=False):
+        self.iterations = []
+        self.contexts = []
+        self.succeed = succeed
+
+    def submit(self, fn, iteration, context):
+        self.iterations.append(iteration)
+        self.contexts.append(context)
+        future = Future()
+        if self.succeed:
+            child = Program(
+                id=f"child-{iteration}",
+                code=f"return {iteration}",
+                parent_id=context.parent.id,
+                metrics={"combined_score": 1.0},
+            )
+            future.set_result(
+                SerializableResult(
+                    iteration=iteration,
+                    child_program_dict=child.to_dict(),
+                    parent_id=context.parent.id,
+                    target_island=context.target_island,
+                    artifacts={"stderr": "child evidence"},
+                    prompt={"system": "system", "user": "user"},
+                    llm_response="response",
+                )
+            )
+        else:
+            future.set_result(SerializableResult(iteration=iteration, error="No valid code"))
+        return future
+
+    def shutdown(self, **kwargs):
+        pass
 
 
 class TestIterationCounting(unittest.TestCase):
-    """Tests for correct iteration counting behavior"""
-
     def setUp(self):
-        """Set up test environment"""
-        self.test_dir = tempfile.mkdtemp()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.program_path = Path(self.temp_dir.name) / "program.py"
+        self.program_path.write_text("def solve(): return 1\n")
+        self.eval_path = Path(self.temp_dir.name) / "evaluator.py"
+        self.eval_path.write_text("def evaluate(path): return {'combined_score': 0.5}\n")
+        self.config = Config()
+        self.config.database.num_islands = 2
+        self.config.evaluator.parallel_evaluations = 1
+        self.config.evaluator.cascade_evaluation = False
+        self.store = InMemoryProgramDatabase(self.config.database)
+        # This facade raises AttributeError for backing maps, config, and progress fields.
+        self.database = Mock(spec_set=ProgramDatabase, wraps=self.store)
 
-        # Create test program
-        self.program_content = """# EVOLVE-BLOCK-START
-def compute(x):
-    return x * 2
-# EVOLVE-BLOCK-END
-"""
-        self.program_file = os.path.join(self.test_dir, "test_program.py")
-        with open(self.program_file, "w") as f:
-            f.write(self.program_content)
-
-        # Create test evaluator
-        self.eval_content = """
-def evaluate(program_path):
-    return {"score": 0.5, "performance": 0.6}
-"""
-        self.eval_file = os.path.join(self.test_dir, "evaluator.py")
-        with open(self.eval_file, "w") as f:
-            f.write(self.eval_content)
-
-    def tearDown(self):
-        """Clean up test environment"""
-        import shutil
-
-        shutil.rmtree(self.test_dir, ignore_errors=True)
-
-    def test_fresh_start_iteration_counting(self):
-        """Test that fresh start correctly handles iteration 0 as special"""
-        # Test the logic without actually running evolution
-        config = Config()
-        config.max_iterations = 20
-        config.checkpoint_interval = 10
-
-        # Simulate fresh start
-        start_iteration = 0
-        should_add_initial = True
-
-        # Apply the logic from controller.py
-        evolution_start = start_iteration
-        evolution_iterations = config.max_iterations
-
-        if should_add_initial and start_iteration == 0:
-            evolution_start = 1
-
-        # Verify
-        self.assertEqual(evolution_start, 1, "Evolution should start at iteration 1")
-        self.assertEqual(evolution_iterations, 20, "Should run 20 evolution iterations")
-
-        # Simulate what process_parallel would do
-        total_iterations = evolution_start + evolution_iterations
-        self.assertEqual(total_iterations, 21, "Total range should be 21 (1 through 20)")
-
-        # Check checkpoint alignment
-        expected_checkpoints = []
-        for i in range(evolution_start, total_iterations):
-            if i > 0 and i % config.checkpoint_interval == 0:
-                expected_checkpoints.append(i)
-
-        self.assertEqual(expected_checkpoints, [10, 20], "Checkpoints should be at 10 and 20")
-
-    def test_resume_iteration_counting(self):
-        """Test that resume correctly continues from checkpoint"""
-        config = Config()
-        config.max_iterations = 10
-        config.checkpoint_interval = 10
-
-        # Simulate resume from checkpoint 10
-        start_iteration = 11  # Last iteration was 10, so start at 11
-        should_add_initial = False
-
-        # Apply the logic
-        evolution_start = start_iteration
-        evolution_iterations = config.max_iterations
-
-        if should_add_initial and start_iteration == 0:
-            evolution_start = 1
-
-        # Verify
-        self.assertEqual(evolution_start, 11, "Evolution should continue from iteration 11")
-        self.assertEqual(evolution_iterations, 10, "Should run 10 more iterations")
-
-        # Total iterations
-        total_iterations = evolution_start + evolution_iterations
-        self.assertEqual(total_iterations, 21, "Should run through iteration 20")
-
-        # Check checkpoint at 20
-        expected_checkpoints = []
-        for i in range(evolution_start, total_iterations):
-            if i > 0 and i % config.checkpoint_interval == 0:
-                expected_checkpoints.append(i)
-
-        self.assertEqual(expected_checkpoints, [20], "Should checkpoint at 20")
-
-    def test_checkpoint_boundary_conditions(self):
-        """Test checkpoint behavior at various boundaries"""
-        test_cases = [
-            # (start_iter, max_iter, checkpoint_interval, expected_checkpoints)
-            (1, 100, 10, list(range(10, 101, 10))),  # Standard case
-            (1, 99, 10, list(range(10, 100, 10))),  # Just short of last checkpoint
-            (1, 101, 10, list(range(10, 101, 10))),  # Just past checkpoint
-            (0, 20, 5, [5, 10, 15, 20]),  # Special case with iteration 0
-        ]
-
-        for start, max_iter, interval, expected in test_cases:
-            # Apply fresh start logic
-            evolution_start = start
-            if start == 0:
-                evolution_start = 1
-
-            total = evolution_start + max_iter
-
-            checkpoints = []
-            for i in range(evolution_start, total):
-                if i > 0 and i % interval == 0:
-                    checkpoints.append(i)
-
-            self.assertEqual(
-                checkpoints,
-                expected,
-                f"Failed for start={start}, max={max_iter}, interval={interval}",
+    def controller(self):
+        with patch("openevolve.controller.LLMEnsemble"), patch.object(OpenEvolve, "_setup_logging"):
+            controller = OpenEvolve(
+                str(self.program_path),
+                str(self.eval_path),
+                self.config,
+                output_dir=self.temp_dir.name,
+                database=self.database,
             )
+        controller.evaluator.evaluate_program = AsyncMock(return_value={"combined_score": 0.5})
+        controller.evaluator.get_pending_artifacts = Mock(return_value={"stdout": "initial"})
+        return controller
 
-    # NOTE: The real-LLM test that exercised controller.run() against a live optillm
-    # server was moved to tests/integration/test_iteration_counting_with_llm.py so it
-    # runs against the shared model fixtures instead of being skipped when no server
-    # is reachable. This module now contains only server-free logic tests.
+    def test_fresh_run_and_continuation_count_failed_iterations(self):
+        controller = self.controller()
+        executor = ImmediateExecutor()
 
+        def start(parallel):
+            parallel.executor = executor
 
-if __name__ == "__main__":
-    unittest.main()
+        with patch.object(ProcessParallelController, "start", start), patch("signal.signal"):
+            asyncio.run(controller.run(iterations=3))
+            self.assertEqual(executor.iterations, [1, 2, 3])
+            self.assertEqual(self.database.get_state().last_iteration, 3)
+            # A second controller can continue against the same database instance.
+            next_controller = self.controller()
+            asyncio.run(next_controller.run(iterations=2))
+
+        self.assertEqual(executor.iterations, [1, 2, 3, 4, 5])
+        self.assertEqual(self.database.get_state().last_iteration, 5)
+        self.assertEqual(self.database.get_state().program_count, 1)
+        controller.evaluator.evaluate_program.assert_awaited_once()
+        next_controller.evaluator.evaluate_program.assert_not_awaited()
+        self.assertEqual(self.database.sample_from_island.call_count, 5)
+        self.assertEqual(self.database.get_top_programs.call_count, 5)
+        self.assertFalse((Path(self.temp_dir.name) / "checkpoints").exists())
+        self.assertTrue((Path(self.temp_dir.name) / "best" / "best_program.py").exists())
+
+    def test_zero_iterations_only_evaluates_initial_program(self):
+        controller = self.controller()
+        executor = ImmediateExecutor()
+        with (
+            patch.object(
+                ProcessParallelController, "start", lambda p: setattr(p, "executor", executor)
+            ),
+            patch("signal.signal"),
+        ):
+            asyncio.run(controller.run(iterations=0))
+        self.assertEqual(executor.iterations, [])
+        self.assertEqual(self.database.get_state().last_iteration, 0)
+        self.assertEqual(self.database.get_state().program_count, 1)
+        controller.evaluator.evaluate_program.assert_awaited_once()
+
+    def test_library_api_accepts_an_existing_database(self):
+        self.config.llm.models = [LLMModelConfig(name="test")]
+        self.database.add(Program(id="existing", code="return 1", metrics={"combined_score": 0.5}))
+        self.database.record_iteration(10)
+        executor = ImmediateExecutor()
+        with (
+            patch.object(
+                ProcessParallelController, "start", lambda p: setattr(p, "executor", executor)
+            ),
+            patch.object(OpenEvolve, "_setup_logging"),
+            patch("openevolve.controller.LLMEnsemble"),
+            patch("signal.signal"),
+        ):
+            result = run_evolution(
+                self.program_path,
+                self.eval_path,
+                config=self.config,
+                iterations=1,
+                output_dir=self.temp_dir.name,
+                cleanup=False,
+                database=self.database,
+            )
+        self.assertEqual(executor.iterations, [11])
+        self.assertEqual(self.database.get_state().last_iteration, 11)
+        self.assertEqual(result.best_program.id, "existing")
+
+    def test_successful_result_uses_only_interface_and_records_target_stop(self):
+        self.database.add(
+            Program(id="initial", code="return 0", metrics={"combined_score": 0.5}), target_island=0
+        )
+        tracer = Mock()
+        parallel = ProcessParallelController(
+            self.config, str(self.eval_path), self.database, tracer
+        )
+        parallel.executor = ImmediateExecutor(succeed=True)
+        result = asyncio.run(parallel.run_evolution(1, 1, target_score=1.0))
+        self.assertEqual(result.id, "child-1")
+        self.assertEqual(self.database.get_state().last_iteration, 1)
+        self.assertEqual(self.database.get_artifacts(result.id), {"stderr": "child evidence"})
+        self.assertEqual(
+            self.database.get_prompt_history(result.id)["diff_user"]["responses"], ["response"]
+        )
+        self.assertEqual(self.database.get_island_stats()[0]["generation"], 1)
+        tracer.log_trace.assert_called_once()
+
+    def test_worker_exception_also_advances_progress(self):
+        self.database.add(Program(id="initial", code="pass"))
+        parallel = ProcessParallelController(self.config, str(self.eval_path), self.database)
+        parallel.executor = Mock()
+        future = Future()
+        future.set_exception(RuntimeError("worker exited"))
+        parallel.executor.submit.return_value = future
+        asyncio.run(parallel.run_evolution(1, 1))
+        self.assertEqual(self.database.get_state().last_iteration, 1)

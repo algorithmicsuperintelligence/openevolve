@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch, MagicMock
 import asyncio
 
 from openevolve.config import Config, DatabaseConfig, EvaluatorConfig
-from openevolve.database import ProgramDatabase, Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+from openevolve.database import Program
 from openevolve.process_parallel import ProcessParallelController
 
 
@@ -56,10 +57,10 @@ class TestIslandIsolation(unittest.TestCase):
 
             # Get the snapshot that was passed to worker
             call_args = mock_executor.submit.call_args[0]
-            db_snapshot = call_args[2]  # Third argument is db_snapshot
+            context = call_args[2]  # Third argument is the selected iteration context
 
             # Verify snapshot has island marking
-            self.assertEqual(db_snapshot["sampling_island"], 1)
+            self.assertEqual(context.target_island, 1)
 
     def test_island_isolation_during_evolution(self):
         """Test that parallel workers maintain island isolation"""

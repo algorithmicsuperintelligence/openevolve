@@ -9,7 +9,8 @@ from concurrent.futures import Future
 
 from openevolve.process_parallel import ProcessParallelController
 from openevolve.config import Config
-from openevolve.database import ProgramDatabase, Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+from openevolve.database import Program
 
 
 class TestProcessParallelFix(unittest.TestCase):

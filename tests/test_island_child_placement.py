@@ -8,7 +8,8 @@ instead of being placed in the target island that was requested for the iteratio
 import unittest
 
 from openevolve.config import Config, DatabaseConfig
-from openevolve.database import ProgramDatabase, Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+from openevolve.database import Program
 
 
 class TestIslandChildPlacement(unittest.TestCase):
@@ -43,7 +44,7 @@ class TestIslandChildPlacement(unittest.TestCase):
         self.db.add(child)  # No target_island specified
 
         # Child should inherit parent's island (island 0)
-        self.assertEqual(child.metadata.get("island"), 0)
+        self.assertEqual(self.db.get(child.id).metadata.get("island"), 0)
         self.assertIn("child_0", self.db.islands[0])
 
     def test_child_placed_in_target_island_when_specified(self):
@@ -68,7 +69,7 @@ class TestIslandChildPlacement(unittest.TestCase):
         self.db.add(child, target_island=2)
 
         # Child should be in island 2, NOT island 0
-        self.assertEqual(child.metadata.get("island"), 2)
+        self.assertEqual(self.db.get(child.id).metadata.get("island"), 2)
         self.assertIn("child_1", self.db.islands[2])
         self.assertNotIn("child_1", self.db.islands[0])
 
@@ -143,7 +144,7 @@ class TestEmptyIslandChildPlacement(unittest.TestCase):
 
         # Child should be in island 1 (target), not island 0 (parent's island)
         self.assertEqual(
-            child.metadata.get("island"), 1,
+            self.db.get(child.id).metadata.get("island"), 1,
             "Child should be in target island 1, not parent's island 0."
         )
         self.assertIn("child_for_island_1", self.db.islands[1])
@@ -169,7 +170,7 @@ class TestEmptyIslandChildPlacement(unittest.TestCase):
         self.db.add(child, target_island=2)
 
         # This should work - explicit target_island is respected
-        self.assertEqual(child.metadata.get("island"), 2)
+        self.assertEqual(self.db.get(child.id).metadata.get("island"), 2)
         self.assertIn("child_for_island_2", self.db.islands[2])
 
 
@@ -286,7 +287,7 @@ class TestRegressionOldBehavior(unittest.TestCase):
         # Without target_island, child inherits parent's island (0), not target (2)
         # This is the BUG - child should be in island 2 but ends up in island 0
         self.assertEqual(
-            child.metadata.get("island"), 0,
+            self.db.get(child.id).metadata.get("island"), 0,
             "Without target_island, child incorrectly inherits parent's island"
         )
 
@@ -320,7 +321,7 @@ class TestRegressionOldBehavior(unittest.TestCase):
 
         # With target_island, child goes to island 2 (correct)
         self.assertEqual(
-            child.metadata.get("island"), 2,
+            self.db.get(child.id).metadata.get("island"), 2,
             "With target_island, child should go to target island"
         )
 

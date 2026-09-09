@@ -13,7 +13,8 @@ See: https://github.com/algorithmicsuperintelligence/openevolve/issues/454
 import unittest
 
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestPopulationEliteProtection(unittest.TestCase):

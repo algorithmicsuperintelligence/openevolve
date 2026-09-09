@@ -11,7 +11,8 @@ import unittest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch, Mock
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class MockLLM:

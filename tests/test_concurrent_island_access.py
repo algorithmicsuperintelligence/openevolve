@@ -9,7 +9,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
-from openevolve.database import ProgramDatabase
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 from openevolve.config import Config
 from openevolve.database import Program
 

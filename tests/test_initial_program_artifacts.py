@@ -75,13 +75,11 @@ class TestInitialProgramArtifacts(unittest.TestCase):
         # Neutralize the parallel evolution loop - we only want the initial-program
         # handling in run() to execute.
         with (
-            patch.object(
-                controller, "_run_evolution_with_checkpoints", new=AsyncMock(return_value=None)
-            ),
             patch("openevolve.controller.ProcessParallelController") as mock_ppc,
         ):
             # start()/stop()/request_shutdown() are called on the instance
             instance = mock_ppc.return_value
+            instance.run_evolution = AsyncMock(return_value=None)
             instance.start.return_value = None
             instance.stop.return_value = None
 
@@ -111,11 +109,9 @@ class TestInitialProgramArtifacts(unittest.TestCase):
         )
 
         with (
-            patch.object(
-                controller, "_run_evolution_with_checkpoints", new=AsyncMock(return_value=None)
-            ),
             patch("openevolve.controller.ProcessParallelController") as mock_ppc,
         ):
+            mock_ppc.return_value.run_evolution = AsyncMock(return_value=None)
             mock_ppc.return_value.start.return_value = None
             mock_ppc.return_value.stop.return_value = None
             asyncio.run(controller.run(iterations=1))

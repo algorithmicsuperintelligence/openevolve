@@ -5,7 +5,8 @@ Tests for ProgramDatabase in openevolve.database
 import unittest
 import uuid
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestProgramDatabase(unittest.TestCase):
@@ -97,7 +98,7 @@ class TestProgramDatabase(unittest.TestCase):
 
         # Should be in island 0
         self.assertIn("island_test", self.db.islands[0])
-        self.assertEqual(program.metadata.get("island"), 0)
+        self.assertEqual(self.db.get(program.id).metadata.get("island"), 0)
 
     def test_multi_island_setup(self):
         """Test database with multiple islands"""
@@ -122,7 +123,7 @@ class TestProgramDatabase(unittest.TestCase):
 
             # Verify assignment
             self.assertIn(f"test_island_{i}", multi_db.islands[i])
-            self.assertEqual(program.metadata.get("island"), i)
+            self.assertEqual(multi_db.get(program.id).metadata.get("island"), i)
 
     def test_feature_coordinates_calculation(self):
         """Test MAP-Elites feature coordinate calculation"""

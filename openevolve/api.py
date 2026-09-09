@@ -13,7 +13,7 @@ from pathlib import Path
 
 from openevolve.controller import OpenEvolve
 from openevolve.config import Config, load_config, LLMModelConfig
-from openevolve.database import Program
+from openevolve.database import Program, ProgramDatabase
 
 
 @dataclass
@@ -38,7 +38,7 @@ def run_evolution(
     output_dir: Optional[str] = None,
     cleanup: bool = True,
     target_score: Optional[float] = None,
-    checkpoint_path: Optional[str] = None,
+    database: Optional[ProgramDatabase] = None,
 ) -> EvolutionResult:
     """
     Run evolution with flexible inputs - the main library API
@@ -58,6 +58,8 @@ def run_evolution(
         iterations: Number of iterations (overrides config)
         output_dir: Output directory (None for temp directory)
         cleanup: If True, clean up temp files after evolution
+        target_score: Stop once this combined score is reached
+        database: Session database (defaults to a new in-memory implementation)
 
     Returns:
         EvolutionResult with best program and metrics
@@ -92,7 +94,16 @@ def run_evolution(
         )
     """
     return asyncio.run(
-        _run_evolution_async(initial_program, evaluator, config, iterations, output_dir, cleanup, target_score, checkpoint_path)
+        _run_evolution_async(
+            initial_program,
+            evaluator,
+            config,
+            iterations,
+            output_dir,
+            cleanup,
+            target_score,
+            database,
+        )
     )
 
 
@@ -104,7 +115,7 @@ async def _run_evolution_async(
     output_dir: Optional[str],
     cleanup: bool,
     target_score: Optional[float] = None,
-    checkpoint_path: Optional[str] = None,
+    database: Optional[ProgramDatabase] = None,
 ) -> EvolutionResult:
     """Async implementation of run_evolution"""
 
@@ -158,9 +169,10 @@ async def _run_evolution_async(
             evaluation_file=evaluator_path,
             config=config_obj,
             output_dir=actual_output_dir,
+            database=database,
         )
 
-        best_program = await controller.run(iterations=iterations,target_score=target_score,checkpoint_path=checkpoint_path)
+        best_program = await controller.run(iterations=iterations, target_score=target_score)
 
         # Prepare result
         best_score = 0.0

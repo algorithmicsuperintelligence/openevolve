@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from openevolve.config import Config, DatabaseConfig, EvaluatorConfig, PromptConfig
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 from openevolve.evaluation_result import EvaluationResult
 from openevolve.evaluator import Evaluator
 from openevolve.prompt.sampler import PromptSampler
@@ -257,7 +258,7 @@ def evaluate_stage1(program_path):
             self.assertIn("successful", artifacts["stdout"].lower())
 
 
-class TestArtifactsPersistence(unittest.TestCase):
+class TestArtifactsRoundTrip(unittest.TestCase):
     """Test that artifacts persist correctly across save/load cycles"""
 
     def setUp(self):
@@ -283,8 +284,8 @@ class TestArtifactsPersistence(unittest.TestCase):
             if pending:
                 self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 
-    def test_save_load_artifacts(self):
-        """Test that artifacts survive database save/load cycle"""
+    def test_small_and_large_artifacts_round_trip(self):
+        """Test that stored artifacts can be fetched without saving the database"""
         # Create program with artifacts
         program = Program(id="persist_test_1", code="print('test')", metrics={"score": 0.8})
 
@@ -298,15 +299,7 @@ class TestArtifactsPersistence(unittest.TestCase):
         self.database.add(program)
         self.database.store_artifacts(program.id, artifacts)
 
-        # Save database
-        self.database.save()
-
-        # Create new database instance and load
-        new_database = ProgramDatabase(DatabaseConfig(db_path=self.temp_dir))
-        new_database.load(self.temp_dir)
-
-        # Check that artifacts are preserved
-        loaded_artifacts = new_database.get_artifacts(program.id)
+        loaded_artifacts = self.database.get_artifacts(program.id)
 
         self.assertEqual(loaded_artifacts["stderr"], artifacts["stderr"])
         self.assertEqual(loaded_artifacts["stdout"], artifacts["stdout"])

@@ -22,7 +22,8 @@ def _slow_test_worker(marker_path: str) -> str:
 os.environ["OPENAI_API_KEY"] = "test"
 
 from openevolve.config import Config, DatabaseConfig, EvaluatorConfig, LLMConfig, PromptConfig
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 from openevolve import process_parallel as process_parallel_module
 from openevolve.process_parallel import ProcessParallelController, SerializableResult
 
@@ -43,7 +44,6 @@ class TestProcessParallel(unittest.TestCase):
         # displaced (MAP-Elites removes programs displaced from their cell).
         self.config.database.num_islands = 3
         self.config.database.in_memory = True
-        self.config.checkpoint_interval = 5
 
         # Create test evaluation file
         self.eval_content = """
@@ -144,24 +144,18 @@ def evaluate(program_path):
         process.terminate.assert_called_once_with()
         process.kill.assert_called_once_with()
 
-    def test_database_snapshot_creation(self):
-        """Test creating database snapshot for workers"""
+    def test_select_iteration_context(self):
+        """Workers receive selected programs and the parent's artifacts."""
         controller = ProcessParallelController(self.config, self.eval_file, self.database)
+        self.database.store_artifacts("test_2", {"stderr": "parent evidence"})
 
-        snapshot = controller._create_database_snapshot()
+        context = controller._select_iteration_context(2)
 
-        # Verify snapshot structure
-        self.assertIn("programs", snapshot)
-        self.assertIn("islands", snapshot)
-        self.assertIn("current_island", snapshot)
-        self.assertIn("artifacts", snapshot)
-
-        # Verify programs are serialized
-        self.assertEqual(len(snapshot["programs"]), 3)
-        for pid, prog_dict in snapshot["programs"].items():
-            self.assertIsInstance(prog_dict, dict)
-            self.assertIn("id", prog_dict)
-            self.assertIn("code", prog_dict)
+        self.assertEqual(context.target_island, 2)
+        self.assertEqual(context.parent.id, "test_2")
+        self.assertEqual(context.parent_artifacts, {"stderr": "parent evidence"})
+        self.assertEqual([p.id for p in context.top_programs], ["test_2"])
+        self.assertLessEqual(len(context.inspirations), self.config.prompt.num_diverse_programs)
 
     def test_run_evolution_basic(self):
         """Test basic evolution run"""

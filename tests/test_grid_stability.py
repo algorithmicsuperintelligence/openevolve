@@ -1,5 +1,5 @@
 """
-Integration tests for MAP-Elites grid stability across checkpoints
+Integration tests for MAP-Elites grid stability during evolution
 """
 
 import os
@@ -7,12 +7,13 @@ import tempfile
 import shutil
 import unittest
 
-from openevolve.database import ProgramDatabase, Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+from openevolve.database import Program
 from openevolve.config import DatabaseConfig
 
 
 class TestGridStability(unittest.TestCase):
-    """Integration tests for MAP-Elites grid stability when resuming from checkpoints"""
+    """Integration tests for MAP-Elites grid stability as programs are added"""
 
     def setUp(self):
         """Set up test environment"""
@@ -22,8 +23,8 @@ class TestGridStability(unittest.TestCase):
         """Clean up test environment"""
         shutil.rmtree(self.test_dir)
 
-    def test_feature_ranges_preserved_across_checkpoints(self):
-        """Test that feature ranges are preserved across checkpoint save/load cycles"""
+    def test_feature_ranges_do_not_contract(self):
+        """Test that feature ranges are preserved as more programs are added"""
         config = DatabaseConfig(
             db_path=self.test_dir,
             feature_dimensions=["score", "prompt_length", "reasoning_sophistication"],
@@ -55,15 +56,7 @@ class TestGridStability(unittest.TestCase):
                 "value_count": len(stats["values"]),
             }
 
-        # Save checkpoint
-        db1.save(self.test_dir, iteration=25)
-
-        # Phase 2: Resume from checkpoint
-        db2 = ProgramDatabase(config)
-        db2.load(self.test_dir)
-
-        # Verify all programs were loaded
-        self.assertEqual(len(db2.programs), len(test_cases))
+        db2 = db1
 
         # Verify feature ranges are preserved
         for dim, original_range in original_ranges.items():
@@ -136,12 +129,8 @@ class TestGridStability(unittest.TestCase):
         original_time_min = db1.feature_stats["execution_time"]["min"]
         original_time_max = db1.feature_stats["execution_time"]["max"]
 
-        # Save checkpoint
-        db1.save(self.test_dir, iteration=30)
-
-        # Phase 2: Resume and add program outside range
-        db2 = ProgramDatabase(config)
-        db2.load(self.test_dir)
+        # Phase 2: Add a program outside the established range
+        db2 = db1
 
         # Verify ranges were preserved
         self.assertAlmostEqual(db2.feature_stats["score"]["min"], original_score_min)
@@ -167,76 +156,8 @@ class TestGridStability(unittest.TestCase):
         self.assertLessEqual(db2.feature_stats["execution_time"]["min"], original_time_min)
         self.assertGreaterEqual(db2.feature_stats["execution_time"]["max"], 50)
 
-    def test_feature_stats_consistency_across_cycles(self):
-        """Test that feature_stats remain consistent across multiple save/load cycles"""
-        config = DatabaseConfig(
-            db_path=self.test_dir, feature_dimensions=["score", "memory_usage"], feature_bins=4
-        )
-
-        # Initial program to establish baseline
-        reference_program = Program(
-            id="reference",
-            code="# Reference program for consistency testing",
-            metrics={"combined_score": 0.5, "memory_usage": 1024},
-        )
-
-        # Cycle 1: Establish initial feature stats
-        db1 = ProgramDatabase(config)
-        db1.add(reference_program)
-
-        # Record initial feature stats
-        cycle1_stats = {}
-        for dim, stats in db1.feature_stats.items():
-            cycle1_stats[dim] = {"min": stats["min"], "max": stats["max"]}
-
-        db1.save(self.test_dir, iteration=10)
-
-        # Cycle 2: Load and verify stats preservation
-        db2 = ProgramDatabase(config)
-        db2.load(self.test_dir)
-
-        # Verify feature stats were preserved
-        for dim, original_stats in cycle1_stats.items():
-            self.assertIn(dim, db2.feature_stats)
-            self.assertAlmostEqual(db2.feature_stats[dim]["min"], original_stats["min"])
-            self.assertAlmostEqual(db2.feature_stats[dim]["max"], original_stats["max"])
-
-        # Add another program and save again
-        db2.add(
-            Program(
-                id="cycle2_program",
-                code="# Cycle 2 program",
-                metrics={"combined_score": 0.3, "memory_usage": 512},
-            )
-        )
-
-        # Record expanded stats after adding new program
-        cycle2_stats = {}
-        for dim, stats in db2.feature_stats.items():
-            cycle2_stats[dim] = {"min": stats["min"], "max": stats["max"]}
-
-        db2.save(self.test_dir, iteration=20)
-
-        # Cycle 3: Verify stats are still preserved
-        db3 = ProgramDatabase(config)
-        db3.load(self.test_dir)
-
-        # Verify expanded feature stats were preserved
-        for dim, cycle2_stats_dim in cycle2_stats.items():
-            self.assertIn(dim, db3.feature_stats)
-            self.assertAlmostEqual(
-                db3.feature_stats[dim]["min"],
-                cycle2_stats_dim["min"],
-                msg=f"Min value changed for {dim} in cycle 3",
-            )
-            self.assertAlmostEqual(
-                db3.feature_stats[dim]["max"],
-                cycle2_stats_dim["max"],
-                msg=f"Max value changed for {dim} in cycle 3",
-            )
-
     def test_feature_stats_accumulation(self):
-        """Test that feature_stats accumulate correctly across checkpoint cycles"""
+        """Test that feature_stats accumulate correctly as programs are added"""
         config = DatabaseConfig(
             db_path=self.test_dir, feature_dimensions=["score", "complexity"], feature_bins=10
         )
@@ -256,11 +177,8 @@ class TestGridStability(unittest.TestCase):
         phase1_score_values = set(db1.feature_stats["score"]["values"])
         phase1_complexity_values = set(db1.feature_stats["complexity"]["values"])
 
-        db1.save(self.test_dir, iteration=15)
-
-        # Cycle 2: Load and add more programs
-        db2 = ProgramDatabase(config)
-        db2.load(self.test_dir)
+        # Phase 2: Add more programs
+        db2 = db1
 
         for i in range(2):
             program = Program(
@@ -277,11 +195,11 @@ class TestGridStability(unittest.TestCase):
         # Phase 1 values should be preserved (subset relationship)
         self.assertTrue(
             phase1_score_values.issubset(phase2_score_values),
-            "Phase 1 score values were lost after loading checkpoint",
+            "Phase 1 score values were lost while adding programs",
         )
         self.assertTrue(
             phase1_complexity_values.issubset(phase2_complexity_values),
-            "Phase 1 complexity values were lost after loading checkpoint",
+            "Phase 1 complexity values were lost while adding programs",
         )
 
 

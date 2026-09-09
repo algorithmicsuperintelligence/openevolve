@@ -7,7 +7,8 @@ import time
 import unittest
 
 from openevolve.config import DatabaseConfig
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestArtifactCleanup(unittest.TestCase):
@@ -44,8 +45,9 @@ class TestArtifactCleanup(unittest.TestCase):
         self.assertTrue(os.path.exists(dir_to_keep))
         self.assertTrue(os.path.exists(dir_to_delete))
 
-        # 4. Call the save method, which should trigger the cleanup
-        db.save()
+        # 4. Storing evaluation evidence triggers retention cleanup
+        db.add(Program(id="new", code="pass"))
+        db.store_artifacts("new", {"stdout": "new evidence"})
 
         # 5. Assert that the old directory was deleted and the new one was kept
         self.assertTrue(

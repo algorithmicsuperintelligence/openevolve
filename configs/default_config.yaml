@@ -4,7 +4,6 @@
 
 # General settings
 max_iterations: 100                  # Maximum number of evolution iterations
-checkpoint_interval: 10               # Save checkpoints every N iterations
 log_level: "INFO"                     # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 log_dir: null                         # Custom directory for logs (default: output_dir/logs)
 random_seed: 42                       # Random seed for reproducibility (null = random, 42 = default)
@@ -92,8 +91,8 @@ prompt:
 # Database configuration
 database:
   # General settings
-  db_path: null                       # Path to persist database (null = in-memory only)
-  in_memory: true                     # Keep database in memory for faster access
+  db_path: null                       # Legacy fallback base directory for artifacts
+  in_memory: true                     # Legacy option; use database= to supply an implementation
   log_prompts: true                  # If true, log all prompts and responses into the database
 
   # Evolutionary parameters

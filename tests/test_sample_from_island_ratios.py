@@ -8,7 +8,8 @@ to maintain consistent behavior between single-process and parallel execution mo
 import random
 import unittest
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestSampleFromIslandRatios(unittest.TestCase):

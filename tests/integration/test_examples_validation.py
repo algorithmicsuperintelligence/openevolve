@@ -232,7 +232,9 @@ class TestEndToEndWithMockedLLM(unittest.TestCase):
 
     def test_database_stores_and_retrieves_programs(self):
         """Test that the database can store and retrieve programs"""
-        from openevolve.database import ProgramDatabase, Program, DatabaseConfig
+        from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+        from openevolve.database import Program
+        from openevolve.config import DatabaseConfig
 
         config = DatabaseConfig(population_size=100)
         db = ProgramDatabase(config)
@@ -253,7 +255,9 @@ class TestEndToEndWithMockedLLM(unittest.TestCase):
 
     def test_program_evolution_tracking(self):
         """Test that program generations are tracked correctly"""
-        from openevolve.database import ProgramDatabase, Program, DatabaseConfig
+        from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+        from openevolve.database import Program
+        from openevolve.config import DatabaseConfig
 
         config = DatabaseConfig(population_size=100)
         db = ProgramDatabase(config)

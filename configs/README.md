@@ -2,6 +2,13 @@
 
 This directory contains configuration files for OpenEvolve with examples for different use cases.
 
+The default program database is `InMemoryProgramDatabase`. Supply a database implementation
+through `OpenEvolve(..., database=...)` or `run_evolution(..., database=...)`.
+Population checkpoint saving/loading has been removed. Older YAML files may still contain
+`checkpoint_interval` and `database.max_snapshot_artifacts`; these keys are ignored.
+`database.db_path` is now only a fallback directory for artifacts. `database.in_memory`
+is retained for configuration compatibility and does not enable disk persistence.
+
 ## Configuration Files
 
 ### `default_config.yaml`
@@ -65,9 +72,10 @@ Then use with OpenEvolve:
 
 ```python
 from openevolve import OpenEvolve
+from openevolve.config import load_config
 evolve = OpenEvolve(
     initial_program_path="program.py",
     evaluation_file="evaluator.py", 
-    config_path="my_config.yaml"
+    config=load_config("my_config.yaml")
 )
 ```

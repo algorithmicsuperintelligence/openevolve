@@ -4,7 +4,8 @@ Test for island parent-child consistency - Programs' parents should be in the co
 
 import unittest
 from openevolve.config import Config
-from openevolve.database import ProgramDatabase, Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
+from openevolve.database import Program
 
 
 class TestIslandParentConsistency(unittest.TestCase):
@@ -24,7 +25,7 @@ class TestIslandParentConsistency(unittest.TestCase):
 
         # Verify initial program is on island 0
         self.assertIn("initial", database.islands[0])
-        self.assertEqual(initial_program.metadata.get("island"), 0)
+        self.assertEqual(database.get(initial_program.id).metadata.get("island"), 0)
 
         # Now switch to island 1
         database.next_island()
@@ -94,7 +95,7 @@ class TestIslandParentConsistency(unittest.TestCase):
                 )
 
             database.add(prog)
-            programs.append(prog)
+            programs.append(database.get(prog.id))
 
             # Switch islands periodically (simulating what happens in evolution)
             if i % 3 == 0:
@@ -155,7 +156,7 @@ class TestIslandParentConsistency(unittest.TestCase):
         # Verify migrant went to island 2, not parent's island 0
         self.assertIn("migrant", database.islands[2])
         self.assertNotIn("migrant", database.islands[0])
-        self.assertEqual(migrant_child.metadata.get("island"), 2)
+        self.assertEqual(database.get(migrant_child.id).metadata.get("island"), 2)
 
         # Parent should still be on island 0
         self.assertEqual(database.programs["parent"].metadata.get("island"), 0)

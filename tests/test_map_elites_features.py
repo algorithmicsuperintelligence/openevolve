@@ -5,7 +5,8 @@ Tests for MAP-Elites feature enhancements in openevolve.database
 import unittest
 from unittest.mock import MagicMock, patch
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestMapElitesFeatures(unittest.TestCase):

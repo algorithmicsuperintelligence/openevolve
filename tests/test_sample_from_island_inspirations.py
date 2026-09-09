@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from openevolve.config import Config
-from openevolve.database import Program, ProgramDatabase
+from openevolve.database import Program
+from openevolve.database_memory import InMemoryProgramDatabase as ProgramDatabase
 
 
 class TestSampleFromIslandInspirations(unittest.TestCase):
@@ -54,7 +55,8 @@ class TestSampleFromIslandInspirations(unittest.TestCase):
                 num_inspirations=2,
             )
 
-        self.assertIs(parent, self.parent)
+        self.assertEqual(parent, self.parent)
+        self.assertIsNot(parent, self.parent)
         self.assertEqual(inspirations, [self.elite])
         sample_inspirations.assert_called_once_with(
             self.parent,

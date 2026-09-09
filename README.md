@@ -755,9 +755,41 @@ return EvaluationResult(
 
 This creates a **feedback loop** where each generation learns from previous mistakes!
 
+## Program database
+
+`ProgramDatabase` in `openevolve/database.py` is the storage interface.
+`InMemoryProgramDatabase` in `openevolve/database_memory.py` implements the existing
+MAP-Elites and island policies. The controller queries this interface for each
+candidate and sends workers only the selected programs and parent artifacts.
+Programs returned by queries are detached values; editing them does not change
+the database. Writes go through database operations.
+
+```python
+from openevolve import OpenEvolve
+from openevolve.config import load_config
+from openevolve.database_memory import InMemoryProgramDatabase
+
+config = load_config("config.yaml")
+database = InMemoryProgramDatabase(config.database)
+evolve = OpenEvolve("program.py", "evaluator.py", config, database=database)
+# In an async entry point:
+best = await evolve.run(iterations=50)
+best = await evolve.run(iterations=50)  # Continues the same database session
+```
+
+The library's `run_evolution` function also accepts `database=`. A future PostgreSQL
+implementation will use the same interface. The in-memory implementation lasts for
+the lifetime of its instance; it does not save or restore population checkpoints.
+The `--checkpoint` CLI option and `checkpoint_path` API argument have been removed.
+Best-program exports, logs, optional evolution traces, and evaluation artifacts remain
+available. Legacy YAML keys `checkpoint_interval` and `database.max_snapshot_artifacts`
+are ignored.
+
 ## Visualization
 
-**Real-time evolution tracking** with interactive web interface:
+The existing visualizer reads archived checkpoint files from older runs. It has not
+yet been adapted to the program database interface, so new runs cannot use it for
+live population tracking.
 
 ```bash
 # Install visualization dependencies

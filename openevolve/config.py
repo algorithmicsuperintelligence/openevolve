@@ -311,10 +311,10 @@ class DatabaseConfig:
     """Configuration for the program database"""
 
     # General settings
-    db_path: Optional[str] = None  # Path to store database on disk
-    in_memory: bool = True
+    db_path: Optional[str] = None  # Legacy fallback base directory for artifacts
+    in_memory: bool = True  # Legacy option; implementations are supplied via database=
 
-    # Prompt and response logging to programs/<id>.json
+    # Prompt and response history in the session database
     log_prompts: bool = True
 
     # Evolutionary parameters
@@ -359,9 +359,6 @@ class DatabaseConfig:
     artifact_size_threshold: int = 32 * 1024  # 32KB threshold
     cleanup_old_artifacts: bool = True
     artifact_retention_days: int = 30
-    max_snapshot_artifacts: Optional[int] = (
-        100  # Max artifacts in worker snapshots (None=unlimited)
-    )
 
     novelty_llm: Optional["LLMInterface"] = None
     embedding_model: Optional[str] = None
@@ -418,7 +415,6 @@ class Config:
 
     # General settings
     max_iterations: int = 10000
-    checkpoint_interval: int = 100
     log_level: str = "INFO"
     log_dir: Optional[str] = None
     random_seed: Optional[int] = 42

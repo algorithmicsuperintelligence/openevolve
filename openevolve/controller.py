@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from openevolve.config import Config, load_config
 from openevolve.database import Program, ProgramDatabase
+from openevolve.database_memory import InMemoryProgramDatabase
 from openevolve.evaluator import Evaluator
 from openevolve.evolution_trace import EvolutionTracer
 from openevolve.llm.ensemble import LLMEnsemble
@@ -45,6 +46,7 @@ class OpenEvolve:
         evaluation_file: str,
         config: Config,
         output_dir: Optional[str] = None,
+        database: Optional[ProgramDatabase] = None,
     ):
         # Load configuration (loaded in main_async)
         self.config = config
@@ -125,7 +127,9 @@ class OpenEvolve:
             self.config.database.random_seed = self.config.random_seed
 
         self.config.database.novelty_llm = self.llm_ensemble
-        self.database = ProgramDatabase(self.config.database)
+        self.database: ProgramDatabase = (
+            database if database is not None else InMemoryProgramDatabase(self.config.database)
+        )
 
         self.evaluator = Evaluator(
             self.config.evaluator,
@@ -226,7 +230,6 @@ class OpenEvolve:
         self,
         iterations: Optional[int] = None,
         target_score: Optional[float] = None,
-        checkpoint_path: Optional[str] = None,
     ) -> Optional[Program]:
         """
         Run the evolution process with improved parallel processing
@@ -234,29 +237,16 @@ class OpenEvolve:
         Args:
             iterations: Maximum number of iterations (uses config if None)
             target_score: Target score to reach (continues until reached if specified)
-            checkpoint_path: Path to resume from checkpoint
 
         Returns:
             Best program found
         """
-        max_iterations = iterations or self.config.max_iterations
-        # Determine starting iteration
-        start_iteration = 0
-        if checkpoint_path and os.path.exists(checkpoint_path):
-            self._load_checkpoint(checkpoint_path)
-            start_iteration = self.database.last_iteration + 1
-            logger.info(f"Resuming from checkpoint at iteration {start_iteration}")
-        else:
-            start_iteration = self.database.last_iteration
-
-        # Only add initial program if starting fresh (not resuming from checkpoint)
-        should_add_initial = (
-            start_iteration == 0
-            and len(self.database.programs) == 0
-            and not any(
-                p.code == self.initial_program_code for p in self.database.programs.values()
-            )
-        )
+        max_iterations = iterations if iterations is not None else self.config.max_iterations
+        if max_iterations < 0:
+            raise ValueError("iterations must be non-negative")
+        state = self.database.get_state()
+        should_add_initial = state.program_count == 0
+        start_iteration = 0 if should_add_initial else state.last_iteration + 1
 
         if should_add_initial:
             logger.info("Adding initial program to database")
@@ -303,7 +293,7 @@ class OpenEvolve:
         else:
             logger.info(
                 f"Skipping initial program addition (resuming from iteration {start_iteration} "
-                f"with {len(self.database.programs)} existing programs)"
+                f"with {state.program_count} existing programs)"
             )
 
         # Initialize improved parallel processing
@@ -346,8 +336,8 @@ class OpenEvolve:
                 # User expects max_iterations evolutionary iterations AFTER the initial program
                 # So we don't need to reduce evolution_iterations
 
-            # Run evolution with improved parallel processing and checkpoint callback
-            await self._run_evolution_with_checkpoints(
+            # Every iteration selects its context through the database interface.
+            await self.parallel_controller.run_evolution(
                 evolution_start, evolution_iterations, target_score
             )
 
@@ -362,15 +352,7 @@ class OpenEvolve:
                 self.evolution_tracer.close()
                 logger.info("Evolution tracer closed")
 
-        # Get the best program
-        best_program = None
-        if self.database.best_program_id:
-            best_program = self.database.get(self.database.best_program_id)
-            logger.info(f"Using tracked best program: {self.database.best_program_id}")
-
-        if best_program is None:
-            best_program = self.database.get_best_program()
-            logger.info("Using calculated best program (tracked program not found)")
+        best_program = self.database.get_best_program()
 
         if best_program:
             if (
@@ -419,99 +401,6 @@ class OpenEvolve:
             f"(Δ: {improvement_str})"
         )
 
-    def _save_checkpoint(self, iteration: int) -> None:
-        """
-        Save a checkpoint
-
-        Args:
-            iteration: Current iteration number
-        """
-        checkpoint_dir = os.path.join(self.output_dir, "checkpoints")
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-        # Create specific checkpoint directory
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{iteration}")
-        os.makedirs(checkpoint_path, exist_ok=True)
-
-        # Save the database
-        self.database.save(checkpoint_path, iteration)
-
-        # Save the best program found so far
-        best_program = None
-        if self.database.best_program_id:
-            best_program = self.database.get(self.database.best_program_id)
-        else:
-            best_program = self.database.get_best_program()
-
-        if best_program:
-            # Save the best program at this checkpoint
-            best_program_path = os.path.join(checkpoint_path, f"best_program{self.file_extension}")
-            with open(best_program_path, "w") as f:
-                f.write(best_program.code)
-
-            # Save metrics
-            best_program_info_path = os.path.join(checkpoint_path, "best_program_info.json")
-            with open(best_program_info_path, "w") as f:
-                import json
-
-                json.dump(
-                    {
-                        "id": best_program.id,
-                        "generation": best_program.generation,
-                        "iteration": best_program.iteration_found,
-                        "current_iteration": iteration,
-                        "metrics": best_program.metrics,
-                        "language": best_program.language,
-                        "timestamp": best_program.timestamp,
-                        "saved_at": time.time(),
-                    },
-                    f,
-                    indent=2,
-                )
-
-            logger.info(
-                f"Saved best program at checkpoint {iteration} with metrics: "
-                f"{format_metrics_safe(best_program.metrics)}"
-            )
-
-        logger.info(f"Saved checkpoint at iteration {iteration} to {checkpoint_path}")
-
-    def _load_checkpoint(self, checkpoint_path: str) -> None:
-        """Load state from a checkpoint directory"""
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint directory {checkpoint_path} not found")
-
-        logger.info(f"Loading checkpoint from {checkpoint_path}")
-        self.database.load(checkpoint_path)
-        logger.info(f"Checkpoint loaded successfully (iteration {self.database.last_iteration})")
-
-    async def _run_evolution_with_checkpoints(
-        self, start_iteration: int, max_iterations: int, target_score: Optional[float]
-    ) -> None:
-        """Run evolution with checkpoint saving support"""
-        logger.info(f"Using island-based evolution with {self.config.database.num_islands} islands")
-        self.database.log_island_status()
-
-        # Run the evolution process with checkpoint callback
-        await self.parallel_controller.run_evolution(
-            start_iteration, max_iterations, target_score, checkpoint_callback=self._save_checkpoint
-        )
-
-        # Check if shutdown or early stopping was triggered
-        if self.parallel_controller.shutdown_event.is_set():
-            logger.info("Evolution stopped due to shutdown request")
-            return
-        elif self.parallel_controller.early_stopping_triggered:
-            logger.info("Evolution stopped due to early stopping - saving final checkpoint")
-            # Continue to save final checkpoint for early stopping
-
-        # Save final checkpoint if needed
-        # Note: start_iteration here is the evolution start (1 for fresh start, not 0)
-        # max_iterations is the number of evolution iterations to run
-        final_iteration = start_iteration + max_iterations - 1
-        if final_iteration > 0 and final_iteration % self.config.checkpoint_interval == 0:
-            self._save_checkpoint(final_iteration)
-
     def _save_best_program(self, program: Optional[Program] = None) -> None:
         """
         Save the best program
@@ -519,13 +408,8 @@ class OpenEvolve:
         Args:
             program: Best program (if None, uses the tracked best program)
         """
-        # If no program is provided, use the tracked best program from the database
         if program is None:
-            if self.database.best_program_id:
-                program = self.database.get(self.database.best_program_id)
-            else:
-                # Fallback to calculating best program if no tracked best program
-                program = self.database.get_best_program()
+            program = self.database.get_best_program()
 
         if not program:
             logger.warning("No best program found to save")

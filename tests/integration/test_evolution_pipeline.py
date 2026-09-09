@@ -23,7 +23,6 @@ class TestEvolutionPipeline:
         """Test complete evolution with real LLM"""
         # Configure smaller iteration count for testing
         evolution_config.max_iterations = 8
-        evolution_config.checkpoint_interval = 4
         
         # Run evolution
         controller = OpenEvolve(
