@@ -109,7 +109,7 @@ def _lazy_init_worker_components():
     if _worker_prompt_sampler is None:
         from openevolve.prompt.sampler import PromptSampler
 
-        _worker_prompt_sampler = PromptSampler(_worker_config.prompt)
+        _worker_prompt_sampler = PromptSampler(_worker_config.prompt, objectives=list(_worker_config.database.objectives or []))
 
     if _worker_evaluator is None:
         from openevolve.evaluator import Evaluator
@@ -118,7 +118,7 @@ def _lazy_init_worker_components():
 
         # Create evaluator-specific components
         evaluator_llm = LLMEnsemble(_worker_config.llm.evaluator_models)
-        evaluator_prompt = PromptSampler(_worker_config.prompt)
+        evaluator_prompt = PromptSampler(_worker_config.prompt, objectives=list(_worker_config.database.objectives or []))
         evaluator_prompt.set_templates("evaluator_system_message")
 
         _worker_evaluator = Evaluator(
@@ -154,11 +154,17 @@ def _run_iteration_worker(
             programs[pid] for pid in db_snapshot["islands"][parent_island] if pid in programs
         ]
 
-        # Sort by metrics for top programs
-        island_programs.sort(
-            key=lambda p: p.metrics.get("combined_score", safe_numeric_average(p.metrics)),
-            reverse=True,
-        )
+        # Sort by metrics for top programs (Pareto key against the island when objectives are configured)
+        objectives = list(getattr(_worker_config.database, "objectives", []) or [])
+        if objectives:
+            from openevolve.pareto import objective_values, pareto_keys
+            keys = pareto_keys([(p.id, objective_values(p.metrics, objectives, _worker_config.database.objective_directions)) for p in island_programs])
+            island_programs.sort(key=lambda p: keys[p.id][2], reverse=True)
+        else:
+            island_programs.sort(
+                key=lambda p: p.metrics.get("combined_score", safe_numeric_average(p.metrics)),
+                reverse=True,
+            )
 
         # Use config values for limits instead of hardcoding
         # Programs for LLM display (includes both top and diverse for inspiration)

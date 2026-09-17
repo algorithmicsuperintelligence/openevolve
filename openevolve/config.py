@@ -334,6 +334,26 @@ class DatabaseConfig:
     # CRITICAL: For custom dimensions, evaluators must return RAW VALUES, not bin indices
     # Built-in: "complexity", "diversity", "score" (always available)
     # Custom: Any metric from your evaluator (must be continuous values)
+    # Pareto selection over several objectives (openevolve/pareto.py). When `objectives` names two or more evaluator
+    # metrics, programs are compared by dominance (better on every objective, strictly on one) and, when neither
+    # dominates, by NSGA-II rank then crowding distance against the current population. No weights, no order between
+    # objectives. Empty (default): the usual single fitness (combined_score, else the average of non-feature metrics).
+    objectives: List[str] = field(
+        default_factory=list,
+        metadata={"help": "Metric names to optimise jointly by Pareto dominance; empty = single-fitness selection."},
+    )
+    # Per-objective direction, "max" (default) or "min"; shorter lists are padded with "max".
+    objective_directions: List[str] = field(default_factory=list)
+    # Which front member get_best_program() reports when objectives are set (reporting only: the search never uses it;
+    # the whole front is written to pareto_front.json at every checkpoint):
+    #   "first_objective" (default): the best value of objectives[0] on the front. The primary-best program of a
+    #                     population is always on the front, so this reports the same program a single-objective run
+    #                     would report from the same population, which keeps arms comparable;
+    #   "knee": objectives normalized to their range on the front, the member closest to the ideal point, i.e. the
+    #                     most balanced trade-off, with no objective preferred;
+    #   "crowding": the most isolated member, which is a boundary point, i.e. an extreme.
+    best_selection: str = "first_objective"
+
     feature_dimensions: List[str] = field(
         default_factory=lambda: ["complexity", "diversity"],
         metadata={

@@ -20,6 +20,7 @@ import numpy as np
 from openevolve.config import DatabaseConfig
 from openevolve.utils.code_utils import calculate_edit_distance
 from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+from openevolve.pareto import dominates, objective_values, pareto_keys, key_of
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,9 @@ class ProgramDatabase:
 
         # In-memory program storage
         self.programs: Dict[str, Program] = {}
+        # Pareto selection (config.objectives): (rank, crowding, key) per program, recomputed when the population changes
+        self._pareto_cache: Dict[str, Tuple[int, float, float]] = {}
+        self._pareto_dirty: bool = True
 
         # Per-island feature grids for MAP-Elites
         self.island_feature_maps: List[Dict[str, str]] = [{} for _ in range(config.num_islands)]
@@ -232,6 +236,7 @@ class ProgramDatabase:
             self.last_iteration = max(self.last_iteration, iteration)
 
         self.programs[program.id] = program
+        self._pareto_dirty = True
 
         # Calculate feature coordinates for MAP-Elites
         feature_coords = self._calculate_feature_coords(program)
@@ -323,10 +328,8 @@ class ProgramDatabase:
                 existing_program_id = island_feature_map[feature_key]
                 if existing_program_id in self.programs:
                     existing_program = self.programs[existing_program_id]
-                    new_fitness = get_fitness_score(program.metrics, self.config.feature_dimensions)
-                    existing_fitness = get_fitness_score(
-                        existing_program.metrics, self.config.feature_dimensions
-                    )
+                    new_fitness = self.fitness(program)
+                    existing_fitness = self.fitness(existing_program)
                     logger.info(
                         "Island %d MAP-Elites cell improved: %s (fitness: %.3f -> %.3f)",
                         island_idx,
@@ -494,6 +497,15 @@ class ProgramDatabase:
         if not self.programs:
             return None
 
+        # Pareto selection: the reported best is the front member chosen by config.best_selection
+        if metric is None and self.config.objectives:
+            best = self._best_on_front()
+            if best is not None:
+                if best.id != self.best_program_id:
+                    logger.info(f"Updated best program tracking from {self.best_program_id} to {best.id} (Pareto front, {self.config.best_selection})")
+                    self.best_program_id = best.id
+                return best
+
         # If no specific metric and we have a tracked best program, return it
         if metric is None and self.best_program_id:
             if self.best_program_id in self.programs:
@@ -518,7 +530,7 @@ class ProgramDatabase:
             # Sort by fitness (excluding feature dimensions)
             sorted_programs = sorted(
                 self.programs.values(),
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=lambda p: self.fitness(p),
                 reverse=True,
             )
             if sorted_programs:
@@ -593,7 +605,7 @@ class ProgramDatabase:
             # Sort by combined_score if available, otherwise by average of all numeric metrics
             sorted_programs = sorted(
                 candidates,
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=lambda p: self.fitness(p),
                 reverse=True,
             )
 
@@ -645,6 +657,17 @@ class ProgramDatabase:
 
         with open(os.path.join(save_path, "metadata.json"), "w") as f:
             json.dump(metadata, f)
+
+        if self.config.objectives:
+            front = self.pareto_front()
+            with open(os.path.join(save_path, "pareto_front.json"), "w") as f:
+                json.dump({
+                    "objectives": list(self.config.objectives),
+                    "best_selection": self.config.best_selection,
+                    "best_program_id": self.best_program_id,
+                    "front": [{"id": p.id, "objectives": {o: p.metrics.get(o) for o in self.config.objectives},
+                               "crowding": self._pareto_cache[p.id][1]} for p in front],
+                }, f, indent=1)
 
         logger.info(f"Saved database with {len(self.programs)} programs to {save_path}")
 
@@ -699,6 +722,7 @@ class ProgramDatabase:
 
                         program = Program.from_dict(program_data)
                         self.programs[program.id] = program
+                        self._pareto_dirty = True
                     except Exception as e:
                         logger.warning(f"Error loading program {program_file}: {str(e)}")
 
@@ -888,7 +912,7 @@ class ProgramDatabase:
                     bin_idx = 0
                 else:
                     # Use fitness score for "score" dimension (consistent with rest of system)
-                    avg_score = get_fitness_score(program.metrics, self.config.feature_dimensions)
+                    avg_score = self.fitness(program)
                     # Update stats and scale
                     self._update_feature_stats("score", avg_score)
                     scaled_value = self._scale_feature_value("score", avg_score)
@@ -1108,6 +1132,66 @@ class ProgramDatabase:
 
         return self._llm_judge_novelty(program, self.programs[max_smlty_pid])
 
+    # ---- Pareto selection -------------------------------------------------------------------------------------
+    def objective_values(self, program: Program):
+        """The program's objective vector (larger is better on every coordinate), or None if it lacks an objective."""
+        if not self.config.objectives:
+            return None
+        return objective_values(program.metrics, self.config.objectives, self.config.objective_directions)
+
+    def _refresh_pareto(self) -> None:
+        self._pareto_cache = pareto_keys([(pid, self.objective_values(p)) for pid, p in self.programs.items()])
+        self._pareto_dirty = False
+
+    def pareto_rank(self, program: Program) -> Tuple[int, float]:
+        """(rank, crowding distance) of a program against the current population."""
+        if self._pareto_dirty or program.id not in self._pareto_cache:
+            self._refresh_pareto()
+        if program.id in self._pareto_cache:
+            r, c, _ = self._pareto_cache[program.id]
+            return r, c
+        # not in the database (a candidate): rank it among the population without caching
+        items = [(pid, self.objective_values(p)) for pid, p in self.programs.items()] + [(program.id, self.objective_values(program))]
+        r, c, _ = pareto_keys(items)[program.id]
+        return r, c
+
+    def fitness(self, program: Program) -> float:
+        """The scalar every ranking in this class sorts on: the single fitness (combined_score or the average of
+        non-feature metrics) or, with config.objectives, the Pareto key -rank + crowding term (openevolve/pareto.py)."""
+        if not self.config.objectives:
+            return get_fitness_score(program.metrics, self.config.feature_dimensions)
+        r, c = self.pareto_rank(program)
+        return key_of(r, c)
+
+    def pareto_front(self) -> List[Program]:
+        """The rank-0 programs (empty without objectives)."""
+        if not self.config.objectives or not self.programs:
+            return []
+        if self._pareto_dirty:
+            self._refresh_pareto()
+        return [self.programs[pid] for pid, (r, _, _) in self._pareto_cache.items() if r == 0 and pid in self.programs]
+
+    def _best_on_front(self) -> Optional[Program]:
+        """The reported best under config.best_selection; None without objectives or programs."""
+        front = self.pareto_front()
+        if not front:
+            return None
+        rule = self.config.best_selection
+        if rule == "crowding":                       # the most isolated member: a boundary point, i.e. an extreme
+            return max(front, key=lambda p: self._pareto_cache[p.id][1])
+        if rule == "first_objective":                # orders the objectives, for reporting only
+            return max(front, key=lambda p: (self.objective_values(p) or (float("-inf"),))[0])
+        # knee (default): each objective normalized to its range on the front, the member closest to the ideal point
+        # (the best value of every objective at once). No objective is preferred; a front of one or two members or a
+        # degenerate range falls back to the member with the largest normalized sum.
+        vals = {p.id: self.objective_values(p) for p in front}
+        m = len(self.config.objectives)
+        lo = [min(v[j] for v in vals.values()) for j in range(m)]
+        hi = [max(v[j] for v in vals.values()) for j in range(m)]
+        def norm(v):
+            return [((v[j] - lo[j]) / (hi[j] - lo[j])) if hi[j] > lo[j] else 1.0 for j in range(m)]
+        return min(front, key=lambda p: sum((1.0 - x) ** 2 for x in norm(vals[p.id])))
+
     def _is_better(self, program1: Program, program2: Program) -> bool:
         """
         Determine if program1 has better FITNESS than program2
@@ -1132,9 +1216,22 @@ class ProgramDatabase:
         if not program1.metrics and program2.metrics:
             return False
 
+        # Pareto: dominance decides when it can; otherwise rank, then crowding (both inside self.fitness)
+        if self.config.objectives:
+            v1, v2 = self.objective_values(program1), self.objective_values(program2)
+            if v1 is not None and v2 is not None:
+                if dominates(v1, v2):
+                    return True
+                if dominates(v2, v1):
+                    return False
+            elif v1 is not None:
+                return True
+            elif v2 is not None:
+                return False
+
         # Compare fitness (excluding feature dimensions)
-        fitness1 = get_fitness_score(program1.metrics, self.config.feature_dimensions)
-        fitness2 = get_fitness_score(program2.metrics, self.config.feature_dimensions)
+        fitness1 = self.fitness(program1)
+        fitness2 = self.fitness(program2)
 
         return fitness1 > fitness2
 
@@ -1174,7 +1271,7 @@ class ProgramDatabase:
         if valid_archive_programs:
             worst_program = min(
                 valid_archive_programs,
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=lambda p: self.fitness(p),
             )
 
             # Replace if new program is better
@@ -1208,6 +1305,13 @@ class ProgramDatabase:
             return
 
         current_best = self.programs[self.best_program_id]
+
+        if self.config.objectives:
+            best = self._best_on_front()
+            if best is not None and best.id != self.best_program_id:
+                logger.info(f"New best program {best.id} replaces {self.best_program_id} (Pareto front, {self.config.best_selection})")
+                self.best_program_id = best.id
+            return
 
         # Update if the new program is better
         if self._is_better(program, current_best):
@@ -1468,7 +1572,7 @@ class ProgramDatabase:
                 # Calculate weights based on fitness scores
                 weights = []
                 for prog in island_program_objects:
-                    fitness = get_fitness_score(prog.metrics, self.config.feature_dimensions)
+                    fitness = self.fitness(prog)
                     # Add small epsilon to avoid zero weights
                     weights.append(max(fitness, 0.001))
 
@@ -1724,6 +1828,7 @@ class ProgramDatabase:
 
         # Fully orphaned - remove from all remaining structures.
         del self.programs[program_id]
+        self._pareto_dirty = True
         self.archive.discard(program_id)
         self._cleanup_stale_island_bests()
         logger.debug(f"Removed orphaned program {program_id} displaced from its cell")
@@ -1762,11 +1867,11 @@ class ProgramDatabase:
         # fitness worst-first. Non-elite programs are removed before elite ones.
         non_elite = sorted(
             [p for p in all_programs if p.id not in elite_ids and p.id not in protected_ids],
-            key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+            key=lambda p: self.fitness(p),
         )
         elite = sorted(
             [p for p in all_programs if p.id in elite_ids and p.id not in protected_ids],
-            key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+            key=lambda p: self.fitness(p),
         )
 
         # Remove non-elite programs first; only fall back to evicting elite cell
@@ -1783,6 +1888,7 @@ class ProgramDatabase:
             # Remove from main programs dict
             if program_id in self.programs:
                 del self.programs[program_id]
+                self._pareto_dirty = True
 
             # Remove from island feature maps
             for island_idx, island_map in enumerate(self.island_feature_maps):
@@ -1852,7 +1958,7 @@ class ProgramDatabase:
 
             # Sort by fitness (using combined_score or average metrics)
             island_programs.sort(
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=lambda p: self.fitness(p),
                 reverse=True,
             )
 
@@ -2033,7 +2139,7 @@ class ProgramDatabase:
 
             if island_programs:
                 scores = [
-                    get_fitness_score(p.metrics, self.config.feature_dimensions)
+                    self.fitness(p)
                     for p in island_programs
                 ]
 

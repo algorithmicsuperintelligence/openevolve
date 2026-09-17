@@ -121,6 +121,11 @@ database:
   #   - "diversity": Code structure diversity
   #
   # You can mix built-in features with custom metrics from your evaluator:
+  # Pareto selection (this fork): name two or more evaluator metrics here and programs are compared by dominance,
+  # then NSGA-II rank and crowding distance, with no weights and no order between objectives (see README).
+  # objectives: [primary_score, robustness_a, robustness_b]
+  # objective_directions: [max, max, max]     # optional, "min" flips an objective
+  # best_selection: first_objective           # reporting rule for the single "best": first_objective | knee | crowding
   feature_dimensions:                 # Dimensions for MAP-Elites feature map (for diversity, NOT fitness)
     - "complexity"                    # Code length (built-in)
     - "diversity"                     # Code diversity (built-in)

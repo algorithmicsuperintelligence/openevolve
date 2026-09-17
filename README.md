@@ -22,6 +22,32 @@
 
 ---
 
+## Feature: Pareto selection over several objectives
+
+This fork adds multi-objective selection. Set `database.objectives` to two or more metric names your evaluator
+returns, and programs are compared by **Pareto dominance** instead of by one number: A beats B only if A is at least
+as good on every objective and strictly better on one. When neither dominates, NSGA-II's secondary keys decide,
+computed against the current population: lower **rank** first (rank 0 is the non-dominated front; rank k is what is
+non-dominated once fronts 0..k-1 are removed), then larger **crowding distance** (the normalized gap to the nearest
+neighbours on the front; boundary programs count as infinitely isolated), which keeps the front spread out. No
+objective is weighted or ordered above another, and nothing is summed.
+
+```yaml
+database:
+  objectives: [primary_score, availability_robustness, changeover_robustness]   # evaluator metrics, larger is better
+  objective_directions: [max, max, max]        # optional; "min" flips an objective
+  best_selection: first_objective              # what get_best_program() reports from the front (reporting only)
+```
+
+What changes with `objectives` set: MAP-Elites cell replacement, archive membership, parent and inspiration
+sampling, island migration and population trimming all use dominance / rank / crowding (`openevolve/pareto.py`,
+`ProgramDatabase.fitness`, `ProgramDatabase._is_better`); the prompt shows the LLM every objective's value for the
+current and the top programs instead of a single score; each checkpoint writes `pareto_front.json` with the front
+and its objective values. `get_best_program()` returns one front member under `best_selection` (`first_objective`, the default: the best
+value of `objectives[0]` on the front, which is the program a single-objective run would report from the same
+population; `knee`: objectives normalized to their range on the front, the member closest to the ideal point;
+`crowding`: the most isolated member, an extreme), a reporting rule that selection never uses. With `objectives` empty, behaviour is identical to upstream OpenEvolve. Tests: `tests/test_pareto.py`.
+
 ## Why OpenEvolve?
 
 <table>

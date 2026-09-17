@@ -10,9 +10,9 @@ from openevolve.config import PromptConfig
 from openevolve.prompt.templates import TemplateManager
 from openevolve.utils.format_utils import format_metrics_safe
 from openevolve.utils.metrics_utils import (
-    safe_numeric_average,
-    get_fitness_score,
     format_feature_coordinates,
+    get_fitness_score,
+    safe_numeric_average,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 class PromptSampler:
     """Generates prompts for code evolution"""
 
-    def __init__(self, config: PromptConfig):
+    def __init__(self, config: PromptConfig, objectives: Optional[List[str]] = None):
         self.config = config
+        # Pareto selection (database.objectives): the prompt shows every objective's value instead of one fitness
+        self.objectives = list(objectives or [])
         self.template_manager = TemplateManager(custom_template_dir=config.template_dir)
 
         # Store custom template mappings
@@ -150,12 +152,13 @@ class PromptSampler:
         # Calculate fitness and feature coordinates for the new template format
         feature_dimensions = feature_dimensions or []
         fitness_score = get_fitness_score(program_metrics, feature_dimensions)
+        fitness_str = self._score_str(program_metrics, feature_dimensions)
         feature_coords = format_feature_coordinates(program_metrics, feature_dimensions)
 
         # Format the final user message
         user_message = user_template.format(
             metrics=metrics_str,
-            fitness_score=f"{fitness_score:.4f}",
+            fitness_score=fitness_str,
             feature_coords=feature_coords,
             feature_dimensions=", ".join(feature_dimensions) if feature_dimensions else "None",
             improvement_areas=improvement_areas,
@@ -178,6 +181,16 @@ class PromptSampler:
             "system": system_message,
             "user": user_message,
         }
+
+    def _score_str(self, metrics: Dict[str, Any], feature_dimensions: Optional[List[str]] = None) -> str:
+        """One fitness as text; with Pareto objectives, every objective's value (no single number exists)."""
+        if self.objectives:
+            parts = []
+            for o in self.objectives:
+                v = metrics.get(o)
+                parts.append(f"{o}={v:.4f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else f"{o}=n/a")
+            return ", ".join(parts)
+        return f"{get_fitness_score(metrics, feature_dimensions or []):.4f}"
 
     def _format_metrics(self, metrics: Dict[str, float]) -> str:
         """Format metrics for the prompt using safe formatting"""
@@ -345,7 +358,7 @@ class PromptSampler:
                 program_code = "<missing changes_description>" if use_changes else ""
 
             # Calculate fitness score (prefers combined_score, excludes feature dimensions)
-            score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
+            score = self._score_str(program.get("metrics", {}), feature_dimensions or [])
 
             # Extract key features (this could be more sophisticated)
             key_features = program.get("key_features", [])
@@ -374,7 +387,7 @@ class PromptSampler:
             top_programs_str += (
                 top_program_template.format(
                     program_number=i + 1,
-                    score=f"{score:.4f}",
+                    score=score,
                     language=("text" if self.config.programs_as_changes_description else language),
                     program_snippet=program_code,
                     key_features=key_features_str,
@@ -415,7 +428,7 @@ class PromptSampler:
                         program_code = "<missing changes_description>" if use_changes else ""
 
                     # Calculate fitness score (prefers combined_score, excludes feature dimensions)
-                    score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
+                    score = self._score_str(program.get("metrics", {}), feature_dimensions or [])
 
                     # Extract key features
                     key_features = program.get("key_features", [])
@@ -433,7 +446,7 @@ class PromptSampler:
                     diverse_programs_str += (
                         top_program_template.format(
                             program_number=f"D{i + 1}",
-                            score=f"{score:.4f}",
+                            score=score,
                             language=(
                                 "text" if self.config.programs_as_changes_description else language
                             ),
@@ -500,7 +513,7 @@ class PromptSampler:
                 program_code = "<missing changes_description>" if use_changes else ""
 
             # Calculate fitness score (prefers combined_score, excludes feature dimensions)
-            score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
+            score = self._score_str(program.get("metrics", {}), feature_dimensions or [])
 
             # Determine program type based on metadata and score
             program_type = self._determine_program_type(program, feature_dimensions or [])
@@ -511,7 +524,7 @@ class PromptSampler:
             inspiration_programs_str += (
                 inspiration_program_template.format(
                     program_number=i + 1,
-                    score=f"{score:.4f}",
+                    score=score,
                     program_type=program_type,
                     language=("text" if self.config.programs_as_changes_description else language),
                     program_snippet=program_code,
@@ -537,7 +550,7 @@ class PromptSampler:
             String describing the program type
         """
         metadata = program.get("metadata", {})
-        score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])
+        score = get_fitness_score(program.get("metrics", {}), feature_dimensions or [])   # numeric: classified below
 
         # Check metadata for explicit type markers
         if metadata.get("diverse", False):

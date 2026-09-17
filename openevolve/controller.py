@@ -116,8 +116,8 @@ class OpenEvolve:
         self.llm_ensemble = LLMEnsemble(self.config.llm.models)
         self.llm_evaluator_ensemble = LLMEnsemble(self.config.llm.evaluator_models)
 
-        self.prompt_sampler = PromptSampler(self.config.prompt)
-        self.evaluator_prompt_sampler = PromptSampler(self.config.prompt)
+        self.prompt_sampler = PromptSampler(self.config.prompt, objectives=list(self.config.database.objectives or []))
+        self.evaluator_prompt_sampler = PromptSampler(self.config.prompt, objectives=list(self.config.database.objectives or []))
         self.evaluator_prompt_sampler.set_templates("evaluator_system_message")
 
         # Pass random seed to database if specified
