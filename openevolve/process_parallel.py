@@ -11,14 +11,20 @@ import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
+from openevolve.selection import IslandSelectionContext, IslandSelector, IslandState
 from openevolve.utils.metrics_utils import safe_numeric_average
 
 logger = logging.getLogger(__name__)
+
+
+class _CandidateRejected(Exception):
+    """Stop processing an iteration after admission rejects its child."""
 
 
 @dataclass
@@ -397,12 +403,14 @@ class ProcessParallelController:
         database: ProgramDatabase,
         evolution_tracer=None,
         file_suffix: str = ".py",
+        island_selector: Optional[IslandSelector] = None,
     ):
         self.config = config
         self.evaluation_file = evaluation_file
         self.database = database
         self.evolution_tracer = evolution_tracer
         self.file_suffix = file_suffix
+        self.island_selector = island_selector
 
         self.executor: Optional[ProcessPoolExecutor] = None
         self.shutdown_event = mp.Event()
@@ -525,6 +533,42 @@ class ProcessParallelController:
 
         return snapshot
 
+    def _select_island(self, iteration: int, island_pending: Dict[int, List[int]]) -> int:
+        """Ask a custom policy for an island using a read-only state snapshot."""
+        stats = self.database.get_island_stats()
+        context = IslandSelectionContext(
+            iteration=iteration,
+            pending_counts=tuple(len(island_pending[i]) for i in range(self.num_islands)),
+            islands=tuple(
+                IslandState(
+                    population_size=stat["population_size"],
+                    best_score=stat["best_score"],
+                    average_score=stat["average_score"],
+                    diversity=stat["diversity"],
+                    generation=stat["generation"],
+                )
+                for stat in stats
+            ),
+        )
+        island_id = self.island_selector(context)
+        if (
+            isinstance(island_id, bool)
+            or not isinstance(island_id, Integral)
+            or not 0 <= island_id < self.num_islands
+        ):
+            raise ValueError(
+                f"island_selector must return an integer island ID in [0, {self.num_islands - 1}], "
+                f"got {island_id!r}"
+            )
+        return int(island_id)
+
+    def _checkpoint_if_due(self, iteration: int, callback=None) -> None:
+        if iteration > 0 and iteration % self.config.checkpoint_interval == 0:
+            logger.info("Checkpoint interval reached at iteration %d", iteration)
+            self.database.log_island_status()
+            if callback:
+                callback(iteration)
+
     async def run_evolution(
         self,
         start_iteration: int,
@@ -552,15 +596,26 @@ class ProcessParallelController:
         batch_per_island = max(1, batch_size // self.num_islands) if batch_size > 0 else 0
         current_iteration = start_iteration
 
-        # Round-robin distribution across islands
-        for island_id in range(self.num_islands):
-            for _ in range(batch_per_island):
-                if current_iteration < total_iterations:
-                    future = self._submit_iteration(current_iteration, island_id)
-                    if future:
-                        pending_futures[current_iteration] = future
-                        island_pending[island_id].append(current_iteration)
-                    current_iteration += 1
+        if self.island_selector is None:
+            # Preserve the original round-robin distribution by default.
+            for island_id in range(self.num_islands):
+                for _ in range(batch_per_island):
+                    if current_iteration < total_iterations:
+                        future = self._submit_iteration(current_iteration, island_id)
+                        if future:
+                            pending_futures[current_iteration] = future
+                            island_pending[island_id].append(current_iteration)
+                        current_iteration += 1
+        else:
+            # Keep the original initial batch size, but let the policy place each task.
+            initial_slots = min(max_iterations, batch_per_island * self.num_islands)
+            for _ in range(initial_slots):
+                island_id = self._select_island(current_iteration, island_pending)
+                future = self._submit_iteration(current_iteration, island_id)
+                if future:
+                    pending_futures[current_iteration] = future
+                    island_pending[island_id].append(current_iteration)
+                current_iteration += 1
 
         next_iteration = current_iteration
         completed_iterations = 0
@@ -618,11 +673,13 @@ class ProcessParallelController:
                     # Add to database with explicit target_island to ensure proper island placement
                     # This fixes issue #391: children should go to the target island, not inherit
                     # from the parent (which may be from a different island due to fallback sampling)
-                    self.database.add(
+                    admitted_id = self.database.add(
                         child_program,
                         iteration=completed_iteration,
                         target_island=result.target_island,
                     )
+                    if admitted_id is None:
+                        raise _CandidateRejected(child_program.id)
 
                     # Store artifacts
                     if result.artifacts:
@@ -720,18 +777,7 @@ class ProcessParallelController:
                             f"{child_program.id}"
                         )
 
-                    # Checkpoint callback
-                    # Don't checkpoint at iteration 0 (that's just the initial program)
-                    if (
-                        completed_iteration > 0
-                        and completed_iteration % self.config.checkpoint_interval == 0
-                    ):
-                        logger.info(
-                            f"Checkpoint interval reached at iteration {completed_iteration}"
-                        )
-                        self.database.log_island_status()
-                        if checkpoint_callback:
-                            checkpoint_callback(completed_iteration)
+                    self._checkpoint_if_due(completed_iteration, checkpoint_callback)
 
                     # Check target score
                     if target_score is not None and child_program.metrics:
@@ -800,7 +846,12 @@ class ProcessParallelController:
                                     self.early_stopping_triggered = True
                                     break
 
-            except FutureTimeoutError:
+            except _CandidateRejected as rejected:
+                logger.info("Admission strategy rejected program %s", rejected)
+                self._checkpoint_if_due(completed_iteration, checkpoint_callback)
+            except FutureTimeoutError as e:
+                if getattr(e, "_openevolve_strategy_error", False):
+                    raise
                 logger.error(
                     f"⏰ Iteration {completed_iteration} timed out after {timeout_seconds}s "
                     f"(evaluator timeout: {self.config.evaluator.timeout}s + 30s buffer). "
@@ -809,6 +860,8 @@ class ProcessParallelController:
                 # Cancel the future to clean up the process
                 future.cancel()
             except Exception as e:
+                if getattr(e, "_openevolve_strategy_error", False):
+                    raise
                 logger.error(f"Error processing result from iteration {completed_iteration}: {e}")
 
             completed_iterations += 1
@@ -819,19 +872,29 @@ class ProcessParallelController:
                     iteration_list.remove(completed_iteration)
                     break
 
-            # Submit next iterations maintaining island balance
-            for island_id in range(self.num_islands):
-                if (
-                    len(island_pending[island_id]) < batch_per_island
-                    and next_iteration < total_iterations
-                    and not self.shutdown_event.is_set()
-                ):
+            # Submit one replacement task per completion. Custom policies control
+            # placement; the default path retains the original balancing logic.
+            if self.island_selector is not None:
+                if next_iteration < total_iterations and not self.shutdown_event.is_set():
+                    island_id = self._select_island(next_iteration, island_pending)
                     future = self._submit_iteration(next_iteration, island_id)
                     if future:
                         pending_futures[next_iteration] = future
                         island_pending[island_id].append(next_iteration)
                         next_iteration += 1
-                        break  # Only submit one iteration per completion to maintain balance
+            else:
+                for island_id in range(self.num_islands):
+                    if (
+                        len(island_pending[island_id]) < batch_per_island
+                        and next_iteration < total_iterations
+                        and not self.shutdown_event.is_set()
+                    ):
+                        future = self._submit_iteration(next_iteration, island_id)
+                        if future:
+                            pending_futures[next_iteration] = future
+                            island_pending[island_id].append(next_iteration)
+                            next_iteration += 1
+                            break  # Only submit one iteration per completion to maintain balance
 
         # Handle shutdown
         if self.shutdown_event.is_set():

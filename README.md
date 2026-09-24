@@ -126,6 +126,49 @@ result = evolve_function(
 print(f"Evolved sorting algorithm: {result.best_code}")
 ```
 
+To experiment with island scheduling, pass an optional selector to `run_evolution`:
+
+```python
+def select_island(context):
+    # Schedule the next iteration on the island with the fewest pending tasks.
+    return min(range(len(context.islands)), key=lambda i: context.pending_counts[i])
+
+result = run_evolution(
+    initial_program="program.py",
+    evaluator="evaluator.py",
+    island_selector=select_island,
+)
+```
+
+The selector receives a read-only `IslandSelectionContext` with the iteration number,
+pending task counts, and each island's population size, best and average score, diversity, and
+generation. It must return an island ID from `0` to `num_islands - 1`. It runs in the
+main process before each iteration is submitted. Without a selector, OpenEvolve uses
+its existing balanced island scheduling.
+
+Population management can also use decision hooks. For example, this policy lets a
+candidate replace an island's MAP-Elites cell occupant when their scores tie:
+
+```python
+from openevolve import PopulationStrategy, run_evolution
+
+strategy = PopulationStrategy(
+    replace_cell=lambda state, candidate, incumbent, island: (
+        candidate.metrics["combined_score"] >= incumbent.metrics["combined_score"]
+    ),
+)
+result = run_evolution("program.py", "evaluator.py", population_strategy=strategy)
+```
+
+Other optional hooks are `admit(state, candidate, island) -> bool`,
+`archive(state, candidate) -> ArchiveDecision`,
+`evict(state, count, protected_ids) -> sequence of program IDs`,
+`migration_due(state) -> bool`, and `migrate(state) -> sequence of MigrationMove`.
+`state` is a detached `PopulationSnapshot` of programs, island memberships, cell owners,
+the archive, population limits, and migration generations. Unspecified hooks retain
+the existing rules. `ProgramDatabase` validates decisions and applies all changes;
+the strategy never receives the mutable database. The initial seed cannot be rejected.
+
 **Prefer Docker?** See the [Installation & Setup](#installation--setup) section for Docker options.
 
 ## See It In Action
