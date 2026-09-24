@@ -507,7 +507,7 @@ class ProgramDatabase:
 
     def get(self, program_id: str) -> Optional[Program]:
         """
-        Get a program by ID.
+        Get a program by ID
 
         Args:
             program_id: Program ID
@@ -614,10 +614,9 @@ class ProgramDatabase:
 
         # If no specific metric and we have a tracked best program, return it
         if metric is None and self.best_program_id:
-            best = self.get(self.best_program_id)
-            if best is not None:
+            if self.best_program_id in self.programs:
                 logger.debug(f"Using tracked best program: {self.best_program_id}")
-                return best
+                return self.programs[self.best_program_id]
             else:
                 logger.warning(
                     f"Tracked best program {self.best_program_id} no longer exists, will recalculate"
@@ -1353,15 +1352,16 @@ class ProgramDatabase:
             logger.debug(f"Set initial best program to {program.id}")
             return
 
-        # Compare with current best program.
-        current_best = self.programs.get(self.best_program_id)
-        if current_best is None:
+        # Compare with current best program (if it still exists)
+        if self.best_program_id not in self.programs:
             logger.warning(
                 f"Best program {self.best_program_id} no longer exists, clearing reference"
             )
             self.best_program_id = program.id
             logger.info(f"Set new best program to {program.id}")
             return
+
+        current_best = self.programs[self.best_program_id]
 
         # Update if the new program is better
         if self._is_better(program, current_best):
