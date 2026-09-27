@@ -6,6 +6,12 @@ import re
 from typing import Dict, List, Optional, Tuple, Union
 
 
+_STANDARD_DIFF_PATTERN = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+_STANDARD_DIFF_MARKER = re.compile(
+    r"^[ \t]*(<<<<<<< SEARCH|=======|>>>>>>> REPLACE)[ \t]*\r?$", re.MULTILINE
+)
+
+
 def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
     """
     Parse evolve blocks from code
@@ -40,7 +46,7 @@ def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
 def apply_diff(
     original_code: str,
     diff_text: str,
-    diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE",
+    diff_pattern: str = _STANDARD_DIFF_PATTERN,
 ) -> str:
     """
     Apply a diff to the original code
@@ -76,7 +82,7 @@ def apply_diff(
 
 
 def extract_diffs(
-    diff_text: str, diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+    diff_text: str, diff_pattern: str = _STANDARD_DIFF_PATTERN
 ) -> List[Tuple[str, str]]:
     """
     Extract diff blocks from the diff text
@@ -87,9 +93,29 @@ def extract_diffs(
 
     Returns:
         List of tuples (search_text, replace_text)
+
+    Raises:
+        ValueError: The standard SEARCH/REPLACE response has an extra or
+            unmatched delimiter line. Custom diff patterns retain their own grammar.
     """
-    diff_blocks = re.findall(diff_pattern, diff_text, re.DOTALL)
-    return [(match[0].rstrip(), match[1].rstrip()) for match in diff_blocks]
+    matches = list(re.finditer(diff_pattern, diff_text, re.DOTALL))
+    if diff_pattern == _STANDARD_DIFF_PATTERN:
+        # A permissive regex can absorb a second separator into replacement
+        # text and then insert it as code. Validate the complete response's
+        # delimiter lines before applying any matched block.
+        cursor = 0
+        for match in matches:
+            if _STANDARD_DIFF_MARKER.search(diff_text[cursor : match.start()]):
+                raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+            block_markers = [
+                marker.group(1) for marker in _STANDARD_DIFF_MARKER.finditer(match.group(0))
+            ]
+            if block_markers != ["<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"]:
+                raise ValueError("Malformed SEARCH/REPLACE delimiter sequence")
+            cursor = match.end()
+        if _STANDARD_DIFF_MARKER.search(diff_text[cursor:]):
+            raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+    return [(match.group(1).rstrip(), match.group(2).rstrip()) for match in matches]
 
 
 def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[str]:

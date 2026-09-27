@@ -231,7 +231,10 @@ def _run_iteration_worker(
                 split_diffs_by_target,
             )
 
-            diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
+            try:
+                diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
+            except ValueError as exc:
+                return SerializableResult(error=str(exc), iteration=iteration)
             if not diff_blocks:
                 return SerializableResult(
                     error="No valid diffs found in response",
