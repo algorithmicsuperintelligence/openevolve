@@ -220,8 +220,14 @@ class OpenAILLM(LLMInterface):
         # Use asyncio to run the blocking API call in a thread pool
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
-            None, lambda: self.client.chat.completions.create(**params)
+            None, lambda: self.client.chat.completions.create(**params, stream=False)
         )
+        if isinstance(response, str):
+            # Some endpoints stream Server-Sent Events even when asked not to
+            raise ValueError(
+                "LLM endpoint returned a raw string instead of a chat completion "
+                f"(streaming responses are not supported): {response[:200]!r}"
+            )
         # Logging of system prompt, user message and response content
         logger = logging.getLogger(__name__)
         logger.debug(f"API parameters: {params}")

@@ -176,7 +176,7 @@ class TestReasoningEffortConfig(unittest.TestCase):
             result = asyncio.run(llm._call_api(test_params))
             
             # Verify the API was called with reasoning_effort
-            llm.client.chat.completions.create.assert_called_once_with(**test_params)
+            llm.client.chat.completions.create.assert_called_once_with(**test_params, stream=False)
 
     def test_yaml_file_loading_with_reasoning_effort(self):
         """Test loading reasoning_effort from actual YAML file"""
