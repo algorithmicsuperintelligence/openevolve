@@ -11,7 +11,7 @@ from typing import Optional, Any
 from flask import Flask, render_template, jsonify
 
 from manual import create_manual_blueprint
-
+from orcarouter_ui import register_orcarouter
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="templates")
@@ -192,6 +192,9 @@ def run_static_export(args):
 
 # Manual mode blueprint mounted at /manual
 app.register_blueprint(create_manual_blueprint(lambda: os.environ.get("EVOLVE_OUTPUT", "examples/")))
+
+# OrcaRouter provider settings (API key + OAuth 2.0 PKCE) mounted at /orcarouter
+orca_login_manager = register_orcarouter(app)
 
 
 if __name__ == "__main__":

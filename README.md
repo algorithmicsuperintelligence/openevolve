@@ -455,6 +455,52 @@ See the [Copilot CLI quickstart example](examples/copilot_cli_quickstart/) for a
 
 </details>
 
+<details>
+<summary><b>🐋 OrcaRouter (API Key or Account Sign-In)</b></summary>
+
+Use [OrcaRouter](https://www.orcarouter.ai) as a first-class provider. OrcaRouter is an OpenAI-compatible AI gateway that routes many providers behind one endpoint, so one credential reaches every model in the catalog.
+
+Two independent credential entries are available:
+
+```bash
+# Option 1 — an existing sk-orca-… API key
+export ORCAROUTER_API_KEY="sk-orca-…"
+python openevolve-run.py connect orcarouter
+
+# Option 2 — sign in with your OrcaRouter account (OAuth 2.0 + PKCE)
+python openevolve-run.py connect orcarouter_oauth
+python openevolve-run.py connect orcarouter_oauth --oob   # paste a code instead of a redirect
+```
+
+Both produce the same durable API key, stored in the project's `secrets.yaml` (namespace `orcarouter`, mode 0600). Manage or revoke keys at <https://www.orcarouter.ai/console/authorized-apps>.
+
+```yaml
+# config.yaml
+llm:
+  provider: "orcarouter"          # or "orcarouter_oauth" for the sign-in entry
+  api_base: "https://api.orcarouter.ai/v1"
+  # api_key: ${ORCAROUTER_API_KEY}
+  models:
+    - name: "deepseek/deepseek-v4-pro"   # ids come from the live catalog
+      weight: 1.0
+      reasoning_effort: "medium"
+```
+
+Model ids are never typed by hand. The catalog is `GET https://api.orcarouter.ai/v1/models`, filtered per entry point:
+
+```bash
+python openevolve-run.py models                          # chat
+python openevolve-run.py models --capability embedding
+python openevolve-run.py models --capability chat --modality image
+python openevolve-run.py status
+```
+
+The visualizer exposes an OrcaRouter settings page where both credential choices are shown side by side and the model dropdown is built from the live catalog. The key stays in the local server process; the browser only sees a redacted form.
+
+See the [OrcaRouter quickstart example](examples/orcarouter_quickstart/) for a complete walkthrough.
+
+</details>
+
 ## Examples Gallery
 
 <div align="center">
