@@ -63,6 +63,7 @@ class PromptSampler:
         program_artifacts: Optional[Dict[str, Union[str, bytes]]] = None,
         feature_dimensions: Optional[List[str]] = None,
         current_changes_description: Optional[str] = None,
+        island_id: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, str]:
         """
@@ -80,6 +81,7 @@ class PromptSampler:
             diff_based_evolution: Whether to use diff-based evolution (True) or full rewrites (False)
             template_key: Optional override for template key
             program_artifacts: Optional artifacts from program evaluation
+            island_id: Island receiving the child program
             **kwargs: Additional keys to replace in the user prompt
 
         Returns:
@@ -104,6 +106,10 @@ class PromptSampler:
             system_message = self.template_manager.get_template(self.system_template_override)
         else:
             system_message = self.config.system_message
+            if island_id is not None and 0 <= island_id < len(self.config.island_system_messages):
+                island_message = self.config.island_system_messages[island_id]
+                if island_message is not None:
+                    system_message = island_message
             # If system_message is a template name rather than content, get the template
             if system_message in self.template_manager.templates:
                 system_message = self.template_manager.get_template(system_message)

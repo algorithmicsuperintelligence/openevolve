@@ -264,6 +264,7 @@ class PromptConfig:
 
     template_dir: Optional[str] = None
     system_message: str = "system_message"
+    island_system_messages: List[Optional[str]] = field(default_factory=list)
     evaluator_system_message: str = "evaluator_system_message"
 
     # Large-codebase mode: represent programs in prompts via compact changes descriptions
@@ -500,6 +501,11 @@ class Config:
 
         if config.database.random_seed is None and config.random_seed is not None:
             config.database.random_seed = config.random_seed
+
+        if len(config.prompt.island_system_messages) > config.database.num_islands:
+            raise ValueError(
+                "prompt.island_system_messages has more entries than database.num_islands"
+            )
 
         if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
             raise ValueError(

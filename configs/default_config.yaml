@@ -57,6 +57,8 @@ llm:
 prompt:
   template_dir: null                  # Custom directory for prompt templates
   system_message: "You are an expert coder helping to improve programs through evolution."
+  # Optional literal text or template names by island index; null/missing uses system_message
+  island_system_messages: []
   evaluator_system_message: "You are an expert code reviewer."
 
   # Number of examples to include in the prompt

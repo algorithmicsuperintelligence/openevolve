@@ -44,6 +44,13 @@ database:
 
 # Prompt configuration
 prompt:
+  system_message: "Improve the program through evolution."
+  # Literal text or template names; null/missing uses system_message
+  # Reuse this configuration when resuming from a checkpoint.
+  island_system_messages:
+    - "Focus on simpler algorithms."
+    - null
+    - "Focus on runtime performance."
   num_top_programs: 3
   num_diverse_programs: 2
   use_template_stochasticity: true

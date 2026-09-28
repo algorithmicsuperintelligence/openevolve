@@ -198,6 +198,7 @@ def _run_iteration_worker(
             program_artifacts=parent_artifacts,
             feature_dimensions=db_snapshot.get("feature_dimensions", []),
             current_changes_description=parent_changes_desc,
+            island_id=db_snapshot.get("sampling_island"),
         )
 
         iteration_start = time.time()
