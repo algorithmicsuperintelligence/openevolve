@@ -234,7 +234,9 @@ def _run_iteration_worker(
             try:
                 diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
             except ValueError as exc:
-                return SerializableResult(error=str(exc), iteration=iteration)
+                return SerializableResult(
+                    error=str(exc), iteration=iteration, token_usage=token_usage
+                )
             if not diff_blocks:
                 return SerializableResult(
                     error="No valid diffs found in response",

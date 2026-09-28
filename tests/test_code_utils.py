@@ -95,6 +95,55 @@ class TestCodeUtils(unittest.TestCase):
         )
 
 
+class TestDiffDelimiterValidation(unittest.TestCase):
+    """Tests for rejecting malformed SEARCH/REPLACE delimiter sequences"""
+
+    VALID_BLOCK = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
+
+    def test_valid_blocks_with_prose(self):
+        text = "Plan:\n" + self.VALID_BLOCK + "and\n" + self.VALID_BLOCK.replace("x", "y")
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2"), ("y = 1", "y = 2")])
+
+    def test_extra_separator_in_replace_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\nx = 3\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_extra_separator_does_not_reach_code(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            apply_diff("x = 1", text)
+
+    def test_nested_search_raises(self):
+        text = "<<<<<<< SEARCH\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_stray_marker_outside_block_raises(self):
+        for stray in ("=======\n", ">>>>>>> REPLACE\n", "<<<<<<< SEARCH\n"):
+            with self.subTest(stray=stray):
+                with self.assertRaises(ValueError):
+                    extract_diffs(self.VALID_BLOCK + stray)
+                with self.assertRaises(ValueError):
+                    extract_diffs(stray + self.VALID_BLOCK)
+
+    def test_no_blocks_returns_empty(self):
+        self.assertEqual(extract_diffs("no diff here"), [])
+
+    def test_custom_pattern_keeps_its_own_grammar(self):
+        pattern = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE\n?"
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text, pattern), [("x = 1", "x = 2\n=======")])
+
+    def test_config_default_uses_standard_pattern(self):
+        from openevolve.config import Config
+        from openevolve.utils.code_utils import _STANDARD_DIFF_PATTERN
+
+        # Validation is keyed on equality with the standard pattern, so the
+        # config default must stay identical to it.
+        self.assertEqual(Config().diff_pattern, _STANDARD_DIFF_PATTERN)
+
+
 class TestFormatDiffSummary(unittest.TestCase):
     """Tests for format_diff_summary showing actual diff content"""
 
