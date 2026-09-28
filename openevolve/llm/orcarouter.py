@@ -28,7 +28,7 @@ import openai
 from openevolve.llm.base import LLMInterface
 from openevolve.llm.openai import OpenAILLM
 from openevolve.llm.orcarouter_auth import (
-    API_KEY_ENV,
+    KEY_ENV,
     KEY_DASHBOARD_URL,
     OrcaAuthError,
     OrcaCredential,
@@ -48,9 +48,12 @@ from openevolve.llm.orcarouter_catalog import (
 
 logger = logging.getLogger(__name__)
 
-PROVIDER_API_KEY = "orcarouter"
-PROVIDER_OAUTH = "orcarouter_oauth"
-ORCAROUTER_PROVIDERS = (PROVIDER_API_KEY, PROVIDER_OAUTH)
+#: The two first-class provider ids. ``PROVIDER_ID_KEY`` names the entry that
+#: uses a pasted API key; ``PROVIDER_ID_OAUTH`` names the PKCE sign-in entry.
+#: Neither constant holds a credential.
+PROVIDER_ID_KEY = "orcarouter"
+PROVIDER_ID_OAUTH = "orcarouter_oauth"
+ORCAROUTER_PROVIDERS = (PROVIDER_ID_KEY, PROVIDER_ID_OAUTH)
 
 #: ``LLMConfig.api_base`` defaults to OpenAI's endpoint and is propagated to
 #: every model config. Seeing that exact stock value on an OrcaRouter provider
@@ -87,7 +90,7 @@ def is_worker_process() -> bool:
 class OrcaRouterLLM(OpenAILLM):
     """OpenAI-compatible client bound to the OrcaRouter gateway."""
 
-    provider_id = PROVIDER_API_KEY
+    provider_id = PROVIDER_ID_KEY
 
     def __init__(
         self,
@@ -97,7 +100,7 @@ class OrcaRouterLLM(OpenAILLM):
         store: Optional[OrcaCredentialStore] = None,
         oob: bool = False,
     ):
-        self.provider_id = provider_id or getattr(model_cfg, "provider", None) or PROVIDER_API_KEY
+        self.provider_id = provider_id or getattr(model_cfg, "provider", None) or PROVIDER_ID_KEY
         self.store = store or OrcaCredentialStore()
         if oob is False:
             oob = bool(getattr(model_cfg, "orcarouter_oob", False))
@@ -113,10 +116,10 @@ class OrcaRouterLLM(OpenAILLM):
         configured = getattr(model_cfg, "api_key", None)
         api_key = configured if looks_like_orcarouter_key(configured) else None
 
-        if self.provider_id != PROVIDER_OAUTH:
+        if self.provider_id != PROVIDER_ID_OAUTH:
             # API-key adapter: config value or ORCAROUTER_API_KEY. Never opens a
             # browser, so it is safe in every process.
-            return acquire_credential(PROVIDER_API_KEY, api_key=api_key, store=self.store)
+            return acquire_credential(PROVIDER_ID_KEY, api_key=api_key, store=self.store)
 
         stored = self.store.load()
         if stored is not None and not stored.needs_reauth:
@@ -125,14 +128,14 @@ class OrcaRouterLLM(OpenAILLM):
             return stored
         if not self._is_interactive():
             raise OrcaAuthError(self._reauth_hint())
-        return acquire_credential(PROVIDER_OAUTH, store=self.store, oob=oob)
+        return acquire_credential(PROVIDER_ID_OAUTH, store=self.store, oob=oob)
 
     @staticmethod
     def _reauth_hint() -> str:
         return (
             "No usable OrcaRouter account credential is available and this process "
             "cannot open a browser. Run `openevolve-run.py connect orcarouter` (or set "
-            f"{API_KEY_ENV}) once, then start the run again."
+            f"{KEY_ENV}) once, then start the run again."
         )
 
     def _with_credentials(self, model_cfg):
@@ -264,16 +267,16 @@ def redact(text: str) -> str:
 
 def init_orcarouter_client(model_cfg):
     """Factory compatible with OpenEvolve's ``init_client`` config hook."""
-    return OrcaRouterLLM(model_cfg, provider_id=PROVIDER_API_KEY)
+    return OrcaRouterLLM(model_cfg, provider_id=PROVIDER_ID_KEY)
 
 
 def init_orcarouter_oauth_client(model_cfg):
     """Factory for the PKCE (account sign-in) entry."""
-    return OrcaRouterLLM(model_cfg, provider_id=PROVIDER_OAUTH)
+    return OrcaRouterLLM(model_cfg, provider_id=PROVIDER_ID_OAUTH)
 
 
 def orcarouter_credential_status(
-    provider_id: str = PROVIDER_API_KEY, store: Optional[OrcaCredentialStore] = None
+    provider_id: str = PROVIDER_ID_KEY, store: Optional[OrcaCredentialStore] = None
 ) -> Dict[str, Any]:
     """Redacted credential status without constructing an LLM client."""
     store = store or OrcaCredentialStore()
@@ -327,8 +330,8 @@ def logout(store: Optional[OrcaCredentialStore] = None) -> bool:
 
 
 __all__ = [
-    "PROVIDER_API_KEY",
-    "PROVIDER_OAUTH",
+    "PROVIDER_ID_KEY",
+    "PROVIDER_ID_OAUTH",
     "ORCAROUTER_PROVIDERS",
     "OrcaRouterLLM",
     "OrcaReauthRequired",

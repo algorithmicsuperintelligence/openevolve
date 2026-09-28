@@ -23,8 +23,8 @@ from openevolve.llm.ensemble import _PROVIDER_REGISTRY, LLMEnsemble, _create_mod
 from openevolve.llm.openai import OpenAILLM
 from openevolve.llm.orcarouter import (
     OPENAI_STOCK_BASE,
-    PROVIDER_API_KEY,
-    PROVIDER_OAUTH,
+    PROVIDER_ID_KEY,
+    PROVIDER_ID_OAUTH,
     OrcaReauthRequired,
     OrcaRouterLLM,
     effective_api_base,
@@ -33,7 +33,7 @@ from openevolve.llm.orcarouter import (
 )
 from openevolve.llm.orcarouter_auth import (
     API_BASE_ENV,
-    API_KEY_ENV,
+    KEY_ENV,
     AUTH_BASE_ENV,
     DEFAULT_API_BASE,
     OrcaAuthError,
@@ -61,7 +61,7 @@ class ProviderTestCase(unittest.TestCase):
         kwargs.setdefault("api_key", FAKE_KEY)
         return LLMModelConfig(**kwargs)
 
-    def _client(self, provider_id=PROVIDER_API_KEY, credential=None, **kwargs):
+    def _client(self, provider_id=PROVIDER_ID_KEY, credential=None, **kwargs):
         with patch("openevolve.llm.orcarouter.OrcaRouterLLM._probe", create=True):
             return OrcaRouterLLM(
                 self._cfg(**kwargs),
@@ -82,20 +82,20 @@ class TestProviderRegistration(unittest.TestCase):
 
     def test_ensemble_routes_api_key_provider(self):
         cfg = LLMModelConfig(name="openai/gpt-5.5", api_key=FAKE_KEY)
-        cfg.provider = PROVIDER_API_KEY
+        cfg.provider = PROVIDER_ID_KEY
         with patch("openevolve.llm.orcarouter.OrcaRouterLLM._resolve_credential") as resolve:
             resolve.return_value = OrcaCredential(api_key=FAKE_KEY, source="api_key")
             model = _create_model(cfg)
         self.assertIsInstance(model, OrcaRouterLLM)
-        self.assertEqual(model.provider_id, PROVIDER_API_KEY)
+        self.assertEqual(model.provider_id, PROVIDER_ID_KEY)
 
     def test_ensemble_routes_oauth_provider(self):
         cfg = LLMModelConfig(name="openai/gpt-5.5")
-        cfg.provider = PROVIDER_OAUTH
+        cfg.provider = PROVIDER_ID_OAUTH
         with patch("openevolve.llm.orcarouter.OrcaRouterLLM._resolve_credential") as resolve:
             resolve.return_value = OrcaCredential(api_key=FAKE_KEY, source="oauth_pkce")
             model = _create_model(cfg)
-        self.assertEqual(model.provider_id, PROVIDER_OAUTH)
+        self.assertEqual(model.provider_id, PROVIDER_ID_OAUTH)
 
     def test_default_provider_path_unchanged(self):
         from openevolve.llm.openai import OpenAILLM
@@ -130,14 +130,14 @@ class TestCredentialSeamEquivalence(ProviderTestCase):
     """Both adapters must yield the same downstream behaviour."""
 
     def test_api_key_adapter_produces_a_usable_client(self):
-        client = self._client(PROVIDER_API_KEY)
+        client = self._client(PROVIDER_ID_KEY)
         self.assertEqual(client.api_base, DEFAULT_API_BASE)
         self.assertEqual(client.provider_id, "orcarouter")
         self.assertFalse(client.needs_reauth)
 
     def test_pkce_adapter_produces_the_same_client_shape(self):
         client = self._client(
-            PROVIDER_OAUTH,
+            PROVIDER_ID_OAUTH,
             credential=OrcaCredential(
                 api_key=FAKE_KEY_2, source="oauth_pkce", account_id="42", scope="api"
             ),
@@ -155,9 +155,9 @@ class TestCredentialSeamEquivalence(ProviderTestCase):
         async def capture_async(self, params):
             return capture(self, params)
 
-        api_key_client = self._client(PROVIDER_API_KEY)
+        api_key_client = self._client(PROVIDER_ID_KEY)
         oauth_client = self._client(
-            PROVIDER_OAUTH, credential=OrcaCredential(api_key=FAKE_KEY_2, source="oauth_pkce")
+            PROVIDER_ID_OAUTH, credential=OrcaCredential(api_key=FAKE_KEY_2, source="oauth_pkce")
         )
         # Discovery must not branch on the credential source either.
         for client in (api_key_client, oauth_client):
@@ -169,7 +169,7 @@ class TestCredentialSeamEquivalence(ProviderTestCase):
         results = []
         for source in ("api_key", "oauth_pkce"):
             client = self._client(
-                PROVIDER_API_KEY, credential=OrcaCredential(api_key=FAKE_KEY, source=source)
+                PROVIDER_ID_KEY, credential=OrcaCredential(api_key=FAKE_KEY, source=source)
             )
             with patch.object(
                 client.catalog,
@@ -182,7 +182,7 @@ class TestCredentialSeamEquivalence(ProviderTestCase):
     def test_status_is_redacted_for_both_sources(self):
         for source in ("api_key", "oauth_pkce"):
             client = self._client(
-                PROVIDER_API_KEY,
+                PROVIDER_ID_KEY,
                 credential=OrcaCredential(api_key=FAKE_KEY, source=source, generation=2),
             )
             status = client.status()
@@ -196,7 +196,7 @@ class TestBearerTransport(ProviderTestCase):
         with patch("openevolve.llm.orcarouter.openai.OpenAI") as mock_openai:
             OrcaRouterLLM(
                 self._cfg(),
-                provider_id=PROVIDER_API_KEY,
+                provider_id=PROVIDER_ID_KEY,
                 credential=OrcaCredential(api_key=FAKE_KEY, source="api_key"),
                 store=self.store,
             )
@@ -220,7 +220,7 @@ class TestTerminalReauth(ProviderTestCase):
         with patch("openevolve.llm.orcarouter.openai.OpenAI"):
             return OrcaRouterLLM(
                 self._cfg(),
-                provider_id=PROVIDER_API_KEY,
+                provider_id=PROVIDER_ID_KEY,
                 credential=OrcaCredential(api_key=FAKE_KEY, source="api_key", generation=1),
                 store=self.store,
             )
@@ -246,7 +246,7 @@ class TestTerminalReauth(ProviderTestCase):
         self.store.save(OrcaCredential(api_key=FAKE_KEY_2, source="oauth_pkce", generation=2))
         with patch("openevolve.llm.orcarouter.openai.OpenAI"):
             client = OrcaRouterLLM(
-                self._cfg(), provider_id=PROVIDER_API_KEY, credential=old, store=self.store
+                self._cfg(), provider_id=PROVIDER_ID_KEY, credential=old, store=self.store
             )
         client._reject_credential(RuntimeError("late 401"))
         current = self.store.load()
@@ -314,7 +314,9 @@ class TestWorkerSafety(ProviderTestCase):
     def test_worker_without_a_stored_credential_fails_with_instructions(self):
         with patch("openevolve.llm.orcarouter.is_worker_process", return_value=True):
             with self.assertRaises(OrcaAuthError) as ctx:
-                OrcaRouterLLM(self._cfg(api_key=None), provider_id=PROVIDER_OAUTH, store=self.store)
+                OrcaRouterLLM(
+                    self._cfg(api_key=None), provider_id=PROVIDER_ID_OAUTH, store=self.store
+                )
         self.assertIn("connect orcarouter", str(ctx.exception))
 
     def test_worker_reuses_a_stored_credential(self):
@@ -324,7 +326,7 @@ class TestWorkerSafety(ProviderTestCase):
             patch("openevolve.llm.orcarouter.openai.OpenAI"),
         ):
             client = OrcaRouterLLM(
-                self._cfg(api_key=None), provider_id=PROVIDER_OAUTH, store=self.store
+                self._cfg(api_key=None), provider_id=PROVIDER_ID_OAUTH, store=self.store
             )
         self.assertEqual(client.credential.api_key, FAKE_KEY)
         self.assertEqual(client.credential.generation, 4)
@@ -334,7 +336,7 @@ class TestWorkerSafety(ProviderTestCase):
             patch("openevolve.llm.orcarouter.is_worker_process", return_value=True),
             patch("openevolve.llm.orcarouter.openai.OpenAI"),
         ):
-            client = OrcaRouterLLM(self._cfg(), provider_id=PROVIDER_API_KEY, store=self.store)
+            client = OrcaRouterLLM(self._cfg(), provider_id=PROVIDER_ID_KEY, store=self.store)
         self.assertEqual(client.credential.api_key, FAKE_KEY)
 
 

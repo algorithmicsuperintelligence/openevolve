@@ -31,7 +31,6 @@ GEMINI_EMBEDDING_MODELS = [
 #: its gateway. Selecting it by provider name is the first-class way in; the
 #: model is then validated against the live capability-filtered catalog.
 ORCAROUTER_PROVIDER = "orcarouter"
-ORCAROUTER_EMBEDDING_ENV_API_KEY = "ORCAROUTER_API_KEY"
 
 OPENAI_EMBEDDING_COSTS = {
     "text-embedding-3-small": 0.02 / M,
@@ -68,7 +67,10 @@ class EmbeddingClient:
         either the pasted API key or a PKCE sign-in, and the model is checked
         against the live capability-filtered catalog before use.
         """
-        from openevolve.llm.orcarouter_auth import resolve_api_base as _resolve_orca_api_base
+        from openevolve.llm.orcarouter_auth import (
+            KEY_ENV,
+            resolve_api_base as _resolve_orca_api_base,
+        )
         from openevolve.llm.orcarouter_catalog import (
             CAPABILITY_EMBEDDING,
             OrcaCatalogClient,
@@ -81,12 +83,12 @@ class EmbeddingClient:
             raise ValueError(
                 "No usable OrcaRouter credential for embeddings. Sign in with "
                 "`openevolve-run.py connect orcarouter`, or set "
-                f"{ORCAROUTER_EMBEDDING_ENV_API_KEY}."
+                f"{KEY_ENV}."
             )
         from openevolve.llm.orcarouter_auth import OrcaCredentialStore
 
         stored = OrcaCredentialStore().load()
-        api_key = stored.api_key if stored else os.getenv(ORCAROUTER_EMBEDDING_ENV_API_KEY)
+        api_key = stored.api_key if stored else os.getenv(KEY_ENV)
 
         catalog = OrcaCatalogClient(api_key=api_key, api_base=base).discover(
             capability=CAPABILITY_EMBEDDING

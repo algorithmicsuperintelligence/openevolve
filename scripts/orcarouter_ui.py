@@ -230,13 +230,13 @@ def create_orcarouter_blueprint(
     @bp.route("", methods=["GET"], strict_slashes=False)
     @bp.route("/", methods=["GET"], strict_slashes=False)
     def provider_page():
-        from openevolve.llm.orcarouter import PROVIDER_API_KEY, PROVIDER_OAUTH
+        from openevolve.llm.orcarouter import PROVIDER_ID_KEY, PROVIDER_ID_OAUTH
         from openevolve.llm.orcarouter_auth import KEY_DASHBOARD_URL
 
         return render_template(
             "orcarouter_page.html",
-            provider_api_key=PROVIDER_API_KEY,
-            provider_oauth=PROVIDER_OAUTH,
+            provider_api_key=PROVIDER_ID_KEY,
+            provider_oauth=PROVIDER_ID_OAUTH,
             key_dashboard_url=KEY_DASHBOARD_URL,
         )
 

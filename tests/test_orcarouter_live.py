@@ -22,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from openevolve.config import LLMModelConfig  # noqa: E402
 from openevolve.llm.orcarouter import (  # noqa: E402
-    PROVIDER_API_KEY,
-    PROVIDER_OAUTH,
+    PROVIDER_ID_KEY,
+    PROVIDER_ID_OAUTH,
     OrcaRouterLLM,
     orcarouter_credential_status,
 )
@@ -78,7 +78,7 @@ class LiveProviderRequestTests(unittest.TestCase):
         self.store = OrcaCredentialStore(self.secrets_path)
         self.credential = OrcaCredential(api_key=API_KEY, source="api_key")
 
-    def _client(self, provider_id=PROVIDER_API_KEY, model=SMOKE_MODEL):
+    def _client(self, provider_id=PROVIDER_ID_KEY, model=SMOKE_MODEL):
         cfg = LLMModelConfig(
             name=model,
             provider=provider_id,
@@ -140,7 +140,7 @@ class LiveProviderRequestTests(unittest.TestCase):
 
     @LIVE
     def test_both_provider_ids_resolve_to_the_same_gateway(self):
-        for provider_id in (PROVIDER_API_KEY, PROVIDER_OAUTH):
+        for provider_id in (PROVIDER_ID_KEY, PROVIDER_ID_OAUTH):
             with self.subTest(provider=provider_id):
                 client = self._client(provider_id=provider_id)
                 self.assertEqual(client.api_base, DEFAULT_API_BASE)

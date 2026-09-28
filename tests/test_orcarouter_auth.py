@@ -21,7 +21,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 from openevolve.llm.orcarouter_auth import (
-    API_KEY_ENV,
+    KEY_ENV,
     AUTH_BASE_ENV,
     API_BASE_ENV,
     DEFAULT_API_BASE,
@@ -204,14 +204,14 @@ class TestApiKeyAdapter(TempStoreMixin, unittest.TestCase):
         self.assertEqual(credential.source, "api_key")
 
     def test_env_fallback(self):
-        provider = ApiKeyCredentialProvider(None, store=self.store, env={API_KEY_ENV: FAKE_KEY})
+        provider = ApiKeyCredentialProvider(None, store=self.store, env={KEY_ENV: FAKE_KEY})
         self.assertEqual(provider.acquire().api_key, FAKE_KEY)
 
     def test_missing_key_is_actionable(self):
         provider = ApiKeyCredentialProvider(None, store=self.store, env={})
         with self.assertRaises(OrcaAuthError) as ctx:
             provider.acquire()
-        self.assertIn(API_KEY_ENV, str(ctx.exception))
+        self.assertIn(KEY_ENV, str(ctx.exception))
         self.assertIn("console/authorized-apps", str(ctx.exception))
 
     def test_malformed_key_rejected_without_echoing_it(self):
@@ -642,7 +642,7 @@ class TestPkceLoopbackFlow(TempStoreMixin, unittest.TestCase):
 
 class TestAcquireCredentialSeam(TempStoreMixin, unittest.TestCase):
     def test_api_key_provider_uses_key_adapter(self):
-        with patch.dict(os.environ, {API_KEY_ENV: FAKE_KEY}):
+        with patch.dict(os.environ, {KEY_ENV: FAKE_KEY}):
             credential = acquire_credential("orcarouter", store=self.store)
         self.assertEqual(credential.source, "api_key")
 

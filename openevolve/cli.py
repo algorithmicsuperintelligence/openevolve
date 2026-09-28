@@ -145,19 +145,26 @@ def run_orcarouter_command(argv: List[str]) -> int:
     command_args = parser.parse_args(argv)
 
     from openevolve.llm.orcarouter import (
-        PROVIDER_API_KEY,
-        PROVIDER_OAUTH,
+        PROVIDER_ID_KEY,
+        PROVIDER_ID_OAUTH,
         OrcaRouterLLM,
         logout,
         orcarouter_credential_status,
     )
-    from openevolve.llm.orcarouter_auth import KEY_DASHBOARD_URL, OrcaAuthError, OrcaCredentialStore
+    from openevolve.llm.orcarouter_auth import (
+        KEY_DASHBOARD_URL,
+        KEY_ENV,
+        OrcaAuthError,
+        OrcaCredentialStore,
+    )
     from openevolve.llm.orcarouter_catalog import OrcaCatalogClient
 
     import json
 
     store = OrcaCredentialStore()
-    provider_id = PROVIDER_OAUTH if command_args.provider == PROVIDER_OAUTH else PROVIDER_API_KEY
+    provider_id = (
+        PROVIDER_ID_OAUTH if command_args.provider == PROVIDER_ID_OAUTH else PROVIDER_ID_KEY
+    )
 
     if command_args.command == "logout":
         removed = logout(store)
@@ -219,7 +226,7 @@ def run_orcarouter_command(argv: List[str]) -> int:
 
     # connect
     try:
-        if provider_id == PROVIDER_OAUTH:
+        if provider_id == PROVIDER_ID_OAUTH:
             stored = store.load()
             if stored is not None and not stored.needs_reauth:
                 print(
@@ -236,7 +243,7 @@ def run_orcarouter_command(argv: List[str]) -> int:
 
         from openevolve.llm.orcarouter_auth import ApiKeyCredentialProvider
 
-        key = os.environ.get("ORCAROUTER_API_KEY")
+        key = os.environ.get(KEY_ENV)
         if not key and sys.stdin.isatty():
             key = input(f"Paste your OrcaRouter API key (sk-orca-…): ").strip()
         credential = ApiKeyCredentialProvider(key, store=store).acquire()
@@ -254,6 +261,7 @@ def _resolve_orcarouter_models(requested: Optional[str], api_base: Optional[str]
     Returns ``(configs, error)``. Exactly one of the two is set.
     """
     from openevolve.llm.orcarouter_auth import (
+        KEY_ENV,
         OrcaAuthError,
         OrcaCredentialStore,
         resolve_api_base,
@@ -264,7 +272,7 @@ def _resolve_orcarouter_models(requested: Optional[str], api_base: Optional[str]
         filter_for_entry_point,
     )
     from openevolve.llm.orcarouter import (
-        PROVIDER_OAUTH,
+        PROVIDER_ID_OAUTH,
         effective_api_base,
         resolve_credential_for_discovery,
     )
@@ -277,10 +285,10 @@ def _resolve_orcarouter_models(requested: Optional[str], api_base: Optional[str]
     if usable is not None:
         api_key = usable.api_key
     elif stored is None or stored.needs_reauth:
-        api_key = os.environ.get("ORCAROUTER_API_KEY")
+        api_key = os.environ.get(KEY_ENV)
     base = effective_api_base(api_base) or resolve_api_base()
 
-    if provider_id == PROVIDER_OAUTH and (stored is None or stored.needs_reauth):
+    if provider_id == PROVIDER_ID_OAUTH and (stored is None or stored.needs_reauth):
         return None, (
             "No OrcaRouter account credential is stored. Run "
             "`openevolve-run.py connect orcarouter orcarouter_oauth` first, or set "

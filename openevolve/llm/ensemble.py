@@ -33,19 +33,19 @@ except ImportError:
 
 try:
     from openevolve.llm.orcarouter import (
-        PROVIDER_API_KEY as ORCAROUTER_PROVIDER_API_KEY,
-        PROVIDER_OAUTH as ORCAROUTER_PROVIDER_OAUTH,
+        PROVIDER_ID_KEY as ORCAROUTER_PROVIDER_ID_KEY,
+        PROVIDER_ID_OAUTH as ORCAROUTER_PROVIDER_ID_OAUTH,
         OrcaRouterLLM,
     )
 
     # OrcaRouter is a named provider with two credential entries. Both share the
     # same OpenAI-compatible adapter and model namespace; only the way the
     # credential is obtained differs.
-    _PROVIDER_REGISTRY[ORCAROUTER_PROVIDER_API_KEY] = lambda cfg: OrcaRouterLLM(
-        cfg, provider_id=ORCAROUTER_PROVIDER_API_KEY
+    _PROVIDER_REGISTRY[ORCAROUTER_PROVIDER_ID_KEY] = lambda cfg: OrcaRouterLLM(
+        cfg, provider_id=ORCAROUTER_PROVIDER_ID_KEY
     )
-    _PROVIDER_REGISTRY[ORCAROUTER_PROVIDER_OAUTH] = lambda cfg: OrcaRouterLLM(
-        cfg, provider_id=ORCAROUTER_PROVIDER_OAUTH
+    _PROVIDER_REGISTRY[ORCAROUTER_PROVIDER_ID_OAUTH] = lambda cfg: OrcaRouterLLM(
+        cfg, provider_id=ORCAROUTER_PROVIDER_ID_OAUTH
     )
 except ImportError:
     pass

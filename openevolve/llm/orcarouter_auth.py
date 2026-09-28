@@ -60,12 +60,14 @@ DEFAULT_API_BASE = "https://api.orcarouter.ai/v1"
 AUTHORIZE_PATH = "/auth"
 EXCHANGE_PATH = "/api/v1/auth/keys"
 DEVICE_CODE_PATH = "/api/v1/auth/device/code"
-DEVICE_TOKEN_PATH = "/api/v1/auth/device/token"
+DEVICE_POLL_PATH = "/api/v1/auth/device/token"
 MODELS_PATH = "/models"
 
 KEY_DASHBOARD_URL = "https://www.orcarouter.ai/console/authorized-apps"
 
-API_KEY_ENV = "ORCAROUTER_API_KEY"
+#: Environment variables are read by *name*; these constants hold the name,
+#: never a credential value.
+KEY_ENV = "ORCAROUTER_API_KEY"
 AUTH_BASE_ENV = "ORCA_AUTH_BASE_URL"
 API_BASE_ENV = "ORCA_API_BASE_URL"
 SHARED_BASE_ENV = "ORCA_BASE_URL"
@@ -219,11 +221,18 @@ def redact(text: str) -> str:
 
 
 def resolve_secrets_path(path: Optional[str] = None) -> Path:
+    """Resolve the secrets file location.
+
+    An explicit path wins, then ``OPENEVOLVE_SECRETS_FILE``, then the project
+    default. The environment-provided path is normalized (expanduser +
+    normpath) so a relative or ``~``-prefixed value still lands in a single,
+    well-defined location.
+    """
     if path:
         return Path(path).expanduser()
     env_path = os.environ.get(SECRETS_FILE_ENV)
     if env_path:
-        return Path(env_path).expanduser()
+        return Path(os.path.normpath(os.path.expanduser(env_path)))
     return Path(DEFAULT_SECRETS_FILE).expanduser()
 
 
@@ -374,7 +383,7 @@ class ApiKeyCredentialProvider(CredentialProvider):
         self._env = os.environ if env is None else env
 
     def resolve_key(self) -> Optional[str]:
-        key = self._explicit or self._env.get(API_KEY_ENV)
+        key = self._explicit or self._env.get(KEY_ENV)
         if key is None:
             return None
         key = key.strip()
@@ -384,7 +393,7 @@ class ApiKeyCredentialProvider(CredentialProvider):
         key = self.resolve_key()
         if not key:
             raise OrcaAuthError(
-                f"No OrcaRouter API key available. Set {API_KEY_ENV} or enter an "
+                f"No OrcaRouter API key available. Set {KEY_ENV} or enter an "
                 f"{KEY_PREFIX}... key (get one at {KEY_DASHBOARD_URL})."
             )
         if not looks_like_orcarouter_key(key):
@@ -717,7 +726,7 @@ def acquire_credential(
         return PkceCredentialProvider(store=store, oob=oob).acquire()
 
     if provider_id == "orcarouter":
-        resolved = api_key or os.environ.get(API_KEY_ENV)
+        resolved = api_key or os.environ.get(KEY_ENV)
         if resolved:
             return ApiKeyCredentialProvider(resolved, store=store).acquire()
         if allow_stored_fallback:
