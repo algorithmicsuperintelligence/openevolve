@@ -9,11 +9,32 @@ from openevolve.utils.code_utils import (
     apply_diff,
     extract_diffs,
     format_diff_summary,
+    parse_full_rewrite,
 )
 
 
 class TestCodeUtils(unittest.TestCase):
     """Tests for code utilities"""
+
+    def test_parse_full_rewrite_line_endings(self):
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                code = f"def solve():{newline}    return 42"
+                response = f"Updated program:{newline}```python{newline}{code}{newline}```"
+                result = parse_full_rewrite(response)
+                self.assertEqual(result, code)
+                namespace = {}
+                exec(result, namespace)
+                self.assertEqual(namespace["solve"](), 42)
+
+    def test_parse_full_rewrite_literal_language(self):
+        response = "```c\nint wrong;\n```\n```c++\nint correct;\n```"
+        self.assertEqual(parse_full_rewrite(response, "c++"), "int correct;")
+
+    def test_parse_full_rewrite_fallbacks(self):
+        for response in ("```\nx = 1\n```", "x = 1"):
+            with self.subTest(response=response):
+                self.assertEqual(parse_full_rewrite(response), "x = 1")
 
     def test_extract_diffs(self):
         """Test extracting diffs from a response"""
