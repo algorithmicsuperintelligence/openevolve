@@ -224,7 +224,6 @@ def _run_iteration_worker(
         # Parse response based on evolution mode
         if _worker_config.diff_based_evolution:
             from openevolve.utils.code_utils import (
-                apply_diff,
                 apply_diff_blocks,
                 extract_diffs,
                 format_diff_summary,
@@ -280,7 +279,27 @@ def _run_iteration_worker(
                 )
             else:
                 # All diffs applied only to code
-                child_code = apply_diff(parent.code, llm_response, _worker_config.diff_pattern)
+                child_code, applied = apply_diff_blocks(parent.code, diff_blocks)
+                if applied == 0:
+                    return SerializableResult(
+                        error=(
+                            f"None of the {len(diff_blocks)} SEARCH block(s) matched the "
+                            "parent program"
+                        ),
+                        iteration=iteration,
+                        token_usage=token_usage,
+                    )
+                if applied < len(diff_blocks):
+                    logger.warning(
+                        f"Iteration {iteration}: only {applied} of {len(diff_blocks)} "
+                        "SEARCH block(s) matched the parent program"
+                    )
+                if child_code == parent.code:
+                    return SerializableResult(
+                        error="Diff did not change the parent program",
+                        iteration=iteration,
+                        token_usage=token_usage,
+                    )
                 changes_summary = format_diff_summary(
                     diff_blocks,
                     max_line_len=_worker_config.prompt.diff_summary_max_line_len,
@@ -297,8 +316,37 @@ def _run_iteration_worker(
                     token_usage=token_usage,
                 )
 
+            if new_code == parent.code:
+                return SerializableResult(
+                    error="Rewrite is identical to the parent program",
+                    iteration=iteration,
+                    token_usage=token_usage,
+                )
+
             child_code = new_code
             changes_summary = "Full rewrite"
+
+        # Revert edits made outside the EVOLVE-BLOCK regions if configured
+        if _worker_config.enforce_evolve_blocks:
+            from openevolve.utils.code_utils import enforce_evolve_blocks
+
+            try:
+                enforced_code = enforce_evolve_blocks(parent.code, child_code)
+            except ValueError as exc:
+                return SerializableResult(
+                    error=str(exc), iteration=iteration, token_usage=token_usage
+                )
+            if enforced_code != child_code:
+                logger.info(
+                    f"Iteration {iteration}: reverted edits outside the EVOLVE-BLOCK regions"
+                )
+                child_code = enforced_code
+                if child_code == parent.code:
+                    return SerializableResult(
+                        error="All edits were outside the EVOLVE-BLOCK regions",
+                        iteration=iteration,
+                        token_usage=token_usage,
+                    )
 
         # Check code length
         if len(child_code) > _worker_config.max_code_length:

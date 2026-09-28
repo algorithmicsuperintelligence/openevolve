@@ -1,6 +1,7 @@
 """
-Tests that the iteration worker rejects malformed SEARCH/REPLACE responses
-before building or evaluating a child program.
+Tests that the iteration worker rejects malformed, unapplied or no-op LLM
+responses before evaluating a child program, and enforces EVOLVE-BLOCK regions
+when configured.
 """
 
 import os
@@ -19,16 +20,19 @@ EXTRA_SEPARATOR = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLA
 USAGE = {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
 
 
-class TestWorkerDiffFormatValidation(unittest.TestCase):
+class _WorkerTestBase(unittest.TestCase):
     """Run _run_iteration_worker with mocked LLM, prompt sampler and evaluator"""
+
+    parent_code = PARENT_CODE
 
     def setUp(self):
         self.config = Config()
         self.config.diff_based_evolution = True
+        self.config.language = "python"  # set by the controller in real runs
 
         parent = Program(
             id="parent",
-            code=PARENT_CODE,
+            code=self.parent_code,
             metrics={"combined_score": 0.5},
             metadata={"island": 0},
         )
@@ -70,6 +74,14 @@ class TestWorkerDiffFormatValidation(unittest.TestCase):
         self.assertEqual(result.token_usage, USAGE)
         self.evaluator.evaluate_program.assert_not_called()
 
+    def evaluated_code(self):
+        self.evaluator.evaluate_program.assert_called_once()
+        return self.evaluator.evaluate_program.call_args.args[0]
+
+
+class TestWorkerDiffFormatValidation(_WorkerTestBase):
+    """Malformed SEARCH/REPLACE delimiters are rejected before evaluation"""
+
     def test_extra_separator_is_rejected_without_evaluation(self):
         result = self._run(EXTRA_SEPARATOR)
         self.assert_rejected(result, "Malformed SEARCH/REPLACE delimiter sequence")
@@ -110,6 +122,116 @@ class TestWorkerDiffFormatValidation(unittest.TestCase):
         self.assertIsNone(result.error)
         self.assertEqual(result.child_program_dict["code"], "x = 2\n=======\ny = 1")
         self.evaluator.evaluate_program.assert_called_once()
+
+
+class TestWorkerUnappliedDiffs(_WorkerTestBase):
+    """Diffs that do not change the parent are reported, not evaluated (#346)"""
+
+    def test_no_matching_search_block_is_rejected(self):
+        response = "<<<<<<< SEARCH\nz = 1\n=======\nz = 2\n>>>>>>> REPLACE\n"
+        result = self._run(response)
+        self.assert_rejected(result, "None of the 1 SEARCH block(s) matched")
+
+    def test_partial_match_applies_matching_blocks(self):
+        response = VALID_BLOCK + "<<<<<<< SEARCH\nz = 1\n=======\nz = 2\n>>>>>>> REPLACE\n"
+        with self.assertLogs(process_parallel_module.logger, level="WARNING") as logs:
+            result = self._run(response)
+        self.assertIsNone(result.error)
+        self.assertEqual(self.evaluated_code(), "x = 2\ny = 1")
+        self.assertIn("only 1 of 2 SEARCH block(s) matched", "\n".join(logs.output))
+
+    def test_diff_that_changes_nothing_is_rejected(self):
+        response = "<<<<<<< SEARCH\nx = 1\n=======\nx = 1\n>>>>>>> REPLACE\n"
+        result = self._run(response)
+        self.assert_rejected(result, "Diff did not change the parent program")
+
+    def test_trailing_whitespace_mismatch_still_applies(self):
+        response = "<<<<<<< SEARCH\nx = 1   \n=======\nx = 2\n>>>>>>> REPLACE\n"
+        result = self._run(response)
+        self.assertIsNone(result.error)
+        self.assertEqual(self.evaluated_code(), "x = 2\ny = 1")
+
+    def test_identical_full_rewrite_is_rejected(self):
+        self.config.diff_based_evolution = False
+        result = self._run(f"```python\n{PARENT_CODE}\n```")
+        self.assert_rejected(result, "Rewrite is identical to the parent program")
+
+    def test_changed_full_rewrite_is_evaluated(self):
+        self.config.diff_based_evolution = False
+        result = self._run("```python\nx = 5\ny = 1\n```")
+        self.assertIsNone(result.error)
+        self.assertEqual(self.evaluated_code(), "x = 5\ny = 1")
+
+
+BLOCK_PARENT = (
+    "import os\n"
+    "# EVOLVE-BLOCK-START\n"
+    "def solve():\n"
+    "    return 1\n"
+    "# EVOLVE-BLOCK-END\n"
+    "def reward():\n"
+    "    return 0"
+)
+
+
+def _diff(search, replace):
+    return f"<<<<<<< SEARCH\n{search}\n=======\n{replace}\n>>>>>>> REPLACE\n"
+
+
+class TestWorkerEnforceEvolveBlocks(_WorkerTestBase):
+    """enforce_evolve_blocks reverts edits outside EVOLVE-BLOCK regions (#106, #422)"""
+
+    parent_code = BLOCK_PARENT
+
+    def setUp(self):
+        super().setUp()
+        self.config.enforce_evolve_blocks = True
+
+    def test_disabled_by_default(self):
+        self.assertFalse(Config().enforce_evolve_blocks)
+
+    def test_outside_edits_kept_when_disabled(self):
+        self.config.enforce_evolve_blocks = False
+        result = self._run(_diff("    return 0", "    return 999"))
+        self.assertIsNone(result.error)
+        self.assertIn("return 999", self.evaluated_code())
+
+    def test_inside_edit_is_evaluated_unchanged(self):
+        result = self._run(_diff("    return 1", "    return 2"))
+        self.assertIsNone(result.error)
+        self.assertEqual(self.evaluated_code(), BLOCK_PARENT.replace("return 1", "return 2"))
+
+    def test_outside_edit_is_reverted_before_evaluation(self):
+        response = _diff("    return 1", "    return 2") + _diff("    return 0", "    return 999")
+        with self.assertLogs(process_parallel_module.logger, level="INFO") as logs:
+            result = self._run(response)
+        self.assertIsNone(result.error)
+        expected = BLOCK_PARENT.replace("return 1", "return 2")
+        self.assertEqual(self.evaluated_code(), expected)
+        self.assertEqual(result.child_program_dict["code"], expected)
+        self.assertIn("reverted edits outside the EVOLVE-BLOCK regions", "\n".join(logs.output))
+
+    def test_only_outside_edits_are_rejected(self):
+        result = self._run(_diff("    return 0", "    return 999"))
+        self.assert_rejected(result, "All edits were outside the EVOLVE-BLOCK regions")
+
+    def test_removed_marker_is_rejected(self):
+        result = self._run(_diff("# EVOLVE-BLOCK-END", "# the end"))
+        self.assert_rejected(result, "EVOLVE-BLOCK markers were changed or removed")
+
+    def test_full_rewrite_outside_edits_are_reverted(self):
+        self.config.diff_based_evolution = False
+        rewrite = "import os, sys\n" + BLOCK_PARENT.split("\n", 1)[1].replace(
+            "return 1", "return 2"
+        ).replace("return 0", "return 999")
+        result = self._run(f"```python\n{rewrite}\n```")
+        self.assertIsNone(result.error)
+        self.assertEqual(self.evaluated_code(), BLOCK_PARENT.replace("return 1", "return 2"))
+
+    def test_config_loads_from_dict(self):
+        config = Config.from_dict({"enforce_evolve_blocks": True})
+        self.assertTrue(config.enforce_evolve_blocks)
+        self.assertTrue(config.to_dict()["enforce_evolve_blocks"])
 
 
 if __name__ == "__main__":

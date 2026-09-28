@@ -7,8 +7,11 @@ import unittest
 from openevolve.utils.code_utils import (
     _format_block_lines,
     apply_diff,
+    apply_diff_blocks,
+    enforce_evolve_blocks,
     extract_diffs,
     format_diff_summary,
+    parse_evolve_blocks,
 )
 
 
@@ -255,6 +258,153 @@ class TestDiffDelimiterValidation(unittest.TestCase):
     def test_response_ending_without_newline_is_valid(self):
         text = self.VALID_BLOCK.rstrip("\n")
         self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+
+class TestSearchWhitespaceTolerance(unittest.TestCase):
+    """SEARCH text that differs only in trailing whitespace still matches (#346)"""
+
+    def test_search_without_trailing_spaces_matches(self):
+        original = "def f():   \n    return 1  \n"
+        diff = "<<<<<<< SEARCH\ndef f():\n    return 1\n=======\ndef f():\n    return 2\n>>>>>>> REPLACE"
+        self.assertEqual(apply_diff(original, diff), "def f():\n    return 2\n")
+
+    def test_search_with_extra_trailing_spaces_matches(self):
+        original = "x = 1\ny = 1"
+        code, applied = apply_diff_blocks(original, [("x = 1   ", "x = 2")])
+        self.assertEqual((code, applied), ("x = 2\ny = 1", 1))
+
+    def test_exact_match_is_preferred(self):
+        # The exact occurrence wins over an earlier whitespace-only match.
+        original = "x = 1  \nx = 1"
+        code, applied = apply_diff_blocks(original, [("x = 1", "x = 2")])
+        self.assertEqual((code, applied), ("x = 1  \nx = 2", 1))
+
+    def test_leading_whitespace_is_not_ignored(self):
+        original = "    x = 1"
+        code, applied = apply_diff_blocks(original, [("x = 1", "x = 2")])
+        self.assertEqual((code, applied), ("    x = 1", 0))
+
+    def test_unmatched_block_counts_zero(self):
+        code, applied = apply_diff_blocks("x = 1", [("y = 1", "y = 2"), ("x = 1", "x = 3")])
+        self.assertEqual((code, applied), ("x = 3", 1))
+
+
+class TestEvolveBlockParsing(unittest.TestCase):
+    """Evolve block markers work with any comment syntax (#422)"""
+
+    def test_python_markers(self):
+        code = "a\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END\nc"
+        self.assertEqual(parse_evolve_blocks(code), [(1, 3, "b")])
+
+    def test_other_comment_syntaxes(self):
+        for start, end in [
+            ("// EVOLVE-BLOCK-START", "// EVOLVE-BLOCK-END"),
+            ("//EVOLVE-BLOCK-START", "//EVOLVE-BLOCK-END"),
+            ("// #EVOLVE-BLOCK-START", "// #EVOLVE-BLOCK-END"),
+            ("/* EVOLVE-BLOCK-START */", "/* EVOLVE-BLOCK-END */"),
+            ("-- EVOLVE-BLOCK-START", "-- EVOLVE-BLOCK-END"),
+            ("% EVOLVE-BLOCK-START", "% EVOLVE-BLOCK-END"),
+            ("    # EVOLVE-BLOCK-START", "    # EVOLVE-BLOCK-END"),
+        ]:
+            with self.subTest(start=start):
+                code = f"int a;\n{start}\nint b;\n{end}\nint c;"
+                self.assertEqual(parse_evolve_blocks(code), [(1, 3, "int b;")])
+
+    def test_trailing_python_marker_still_supported(self):
+        code = "a  # EVOLVE-BLOCK-START\nb\nc  # EVOLVE-BLOCK-END"
+        self.assertEqual(parse_evolve_blocks(code), [(0, 2, "b")])
+
+    def test_marker_word_inside_code_is_not_a_marker(self):
+        code = 'msg = "EVOLVE-BLOCK-START"\nx = 1'
+        self.assertEqual(parse_evolve_blocks(code), [])
+
+    def test_multiple_blocks(self):
+        code = "#EVOLVE-BLOCK-START\na\n#EVOLVE-BLOCK-END\nb\n#EVOLVE-BLOCK-START\nc\n#EVOLVE-BLOCK-END"
+        self.assertEqual(parse_evolve_blocks(code), [(0, 2, "a"), (4, 6, "c")])
+
+
+class TestEnforceEvolveBlocks(unittest.TestCase):
+    """Edits outside evolve blocks are reverted when enforcement is on (#106, #422)"""
+
+    PARENT = (
+        "import os\n"
+        "# EVOLVE-BLOCK-START\n"
+        "def solve():\n"
+        "    return 1\n"
+        "# EVOLVE-BLOCK-END\n"
+        "def reward():\n"
+        "    return 0\n"
+    )
+
+    def test_inside_edits_are_kept(self):
+        child = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), child)
+
+    def test_outside_edits_are_reverted(self):
+        child = (
+            self.PARENT.replace("return 1", "return 2")
+            .replace("return 0", "return 999")
+            .replace("import os", "import os, sys")
+        )
+        expected = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), expected)
+
+    def test_new_code_outside_blocks_is_dropped(self):
+        child = "HACK = True\n" + self.PARENT.replace("return 1", "return 2") + "extra()\n"
+        expected = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), expected)
+
+    def test_block_can_grow_and_shrink(self):
+        child = self.PARENT.replace("    return 1\n", "    x = 1\n    y = 2\n    return x + y\n")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), child)
+        child = self.PARENT.replace("def solve():\n    return 1\n", "")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), child)
+
+    def test_multiple_blocks_are_mapped_in_order(self):
+        parent = "h\n// EVOLVE-BLOCK-START\na\n// EVOLVE-BLOCK-END\nm\n// EVOLVE-BLOCK-START\nb\n// EVOLVE-BLOCK-END\nt"
+        child = "H\n// EVOLVE-BLOCK-START\nA\n// EVOLVE-BLOCK-END\nM\n// EVOLVE-BLOCK-START\nB\n// EVOLVE-BLOCK-END\nT"
+        expected = "h\n// EVOLVE-BLOCK-START\nA\n// EVOLVE-BLOCK-END\nm\n// EVOLVE-BLOCK-START\nB\n// EVOLVE-BLOCK-END\nt"
+        self.assertEqual(enforce_evolve_blocks(parent, child), expected)
+
+    def test_marker_style_changes_keep_parent_markers(self):
+        child = self.PARENT.replace("# EVOLVE-BLOCK-START", "#EVOLVE-BLOCK-START  ").replace(
+            "return 1", "return 2"
+        )
+        expected = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), expected)
+
+    def test_removed_markers_raise(self):
+        child = self.PARENT.replace("# EVOLVE-BLOCK-END\n", "")
+        with self.assertRaisesRegex(ValueError, "EVOLVE-BLOCK markers"):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_all_markers_removed_raise(self):
+        child = "def solve():\n    return 2\n"
+        with self.assertRaises(ValueError):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_extra_block_raises(self):
+        child = self.PARENT + "# EVOLVE-BLOCK-START\nx = 1\n# EVOLVE-BLOCK-END\n"
+        with self.assertRaisesRegex(ValueError, "expected 1 evolve block"):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_nested_markers_raise(self):
+        child = self.PARENT.replace("    return 1", "    # EVOLVE-BLOCK-START\n    return 1")
+        with self.assertRaises(ValueError):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_parent_without_blocks_is_not_enforced(self):
+        parent = "x = 1\n"
+        self.assertEqual(enforce_evolve_blocks(parent, "y = 2\n"), "y = 2\n")
+
+    def test_parent_with_malformed_blocks_is_not_enforced(self):
+        parent = "# EVOLVE-BLOCK-START\nx = 1\n"
+        self.assertEqual(enforce_evolve_blocks(parent, "y = 2\n"), "y = 2\n")
+
+    def test_idempotent(self):
+        child = self.PARENT.replace("return 1", "return 2").replace("return 0", "return 9")
+        once = enforce_evolve_blocks(self.PARENT, child)
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, once), once)
 
 
 class TestFormatDiffSummary(unittest.TestCase):
