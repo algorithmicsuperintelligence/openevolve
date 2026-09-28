@@ -20,7 +20,7 @@ def _make_llm():
     model_cfg.retries = 0
     model_cfg.retry_delay = 0
     model_cfg.api_base = "https://example.com/v1"
-    model_cfg.api_key = "test-key"
+    model_cfg.api_key = None  # openai.OpenAI is patched
     model_cfg.random_seed = None
     model_cfg.reasoning_effort = None
     with patch("openai.OpenAI"):

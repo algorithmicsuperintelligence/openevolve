@@ -129,7 +129,7 @@ class TestReasoningEffortConfig(unittest.TestCase):
         model_cfg.retries = 3
         model_cfg.retry_delay = 5
         model_cfg.api_base = "https://api.openai.com/v1"
-        model_cfg.api_key = "test-key"
+        model_cfg.api_key = None  # openai.OpenAI is patched
         model_cfg.random_seed = None
         model_cfg.reasoning_effort = "high"
         
@@ -152,7 +152,7 @@ class TestReasoningEffortConfig(unittest.TestCase):
         model_cfg.retries = 3
         model_cfg.retry_delay = 5
         model_cfg.api_base = "https://api.openai.com/v1"
-        model_cfg.api_key = "test-key"
+        model_cfg.api_key = None  # openai.OpenAI is patched
         model_cfg.random_seed = None
         model_cfg.reasoning_effort = "medium"
         
