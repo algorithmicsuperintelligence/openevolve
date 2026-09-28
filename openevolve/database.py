@@ -230,7 +230,9 @@ class ProgramDatabase:
 
         self.novelty_llm = config.novelty_llm
         self.embedding_client = (
-            EmbeddingClient(config.embedding_model) if config.embedding_model else None
+            EmbeddingClient(config.embedding_model, config.embedding_api_base)
+            if config.embedding_model
+            else None
         )
         self.similarity_threshold = config.similarity_threshold
 

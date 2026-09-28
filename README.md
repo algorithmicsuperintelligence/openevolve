@@ -566,6 +566,8 @@ database:
   # Optional novelty filtering with Gemini embeddings
   embedding_model: "gemini-embedding-001"
   similarity_threshold: 0.99
+  # Or any OpenAI-compatible embedding endpoint (OpenRouter, local servers):
+  # embedding_api_base: "https://openrouter.ai/api/v1"  # or OPENAI_EMBEDDING_BASE_URL
 
 evaluator:
   enable_artifacts: true      # Error feedback to LLM
