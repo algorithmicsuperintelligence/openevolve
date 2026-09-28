@@ -143,6 +143,119 @@ class TestDiffDelimiterValidation(unittest.TestCase):
         # config default must stay identical to it.
         self.assertEqual(Config().diff_pattern, _STANDARD_DIFF_PATTERN)
 
+    def test_config_default_pattern_is_validated(self):
+        from openevolve.config import Config
+
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text, Config().diff_pattern)
+
+    # --- malformed shapes -------------------------------------------------
+
+    def test_extra_separator_in_second_block_raises(self):
+        bad = "<<<<<<< SEARCH\ny = 1\n=======\ny = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(self.VALID_BLOCK + bad)
+
+    def test_extra_separator_in_search_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_missing_separator_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n>>>>>>> REPLACE\n"
+        with self.assertRaisesRegex(ValueError, "Unmatched"):
+            extract_diffs(text)
+
+    def test_missing_replace_marker_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n"
+        with self.assertRaisesRegex(ValueError, "Unmatched"):
+            extract_diffs(text)
+
+    def test_missing_search_marker_raises(self):
+        text = "x = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        with self.assertRaisesRegex(ValueError, "Unmatched"):
+            extract_diffs(text)
+
+    def test_malformed_block_error_message(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaisesRegex(ValueError, "Malformed SEARCH/REPLACE delimiter sequence"):
+            extract_diffs(text)
+
+    def test_indented_extra_separator_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n    =======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_separator_with_trailing_whitespace_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======  \t\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_crlf_marker_is_recognised(self):
+        # Standard pattern needs LF after markers, so a CRLF response yields no
+        # match; its marker lines are then reported rather than silently ignored.
+        text = "<<<<<<< SEARCH\r\nx = 1\r\n=======\r\nx = 2\r\n>>>>>>> REPLACE\r\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_apply_diff_leaves_no_partial_changes(self):
+        # A valid first block must not be applied when a later block is malformed.
+        bad = "<<<<<<< SEARCH\ny = 1\n=======\ny = 2\n=======\n>>>>>>> REPLACE\n"
+        original = "x = 1\ny = 1"
+        with self.assertRaises(ValueError):
+            apply_diff(original, self.VALID_BLOCK + bad)
+
+    # --- look-alikes that are not delimiter lines ---------------------------
+
+    def test_longer_equals_run_is_not_a_marker(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n========\nx = 2\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "========\nx = 2")])
+
+    def test_shorter_equals_run_is_not_a_marker(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n======\nx = 2\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "======\nx = 2")])
+
+    def test_separator_inside_code_line_is_allowed(self):
+        replace = "print('=======')\n# ======= section\nsep = '=' * 7"
+        text = f"<<<<<<< SEARCH\nx = 1\n=======\n{replace}\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", replace)])
+
+    def test_marker_words_in_prose_are_allowed(self):
+        text = (
+            "I use the ======= separator and >>>>>>> REPLACE marker below.\n"
+            + self.VALID_BLOCK
+            + "Done; see <<<<<<< SEARCH above.\n"
+        )
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+    def test_marker_prefix_with_extra_text_is_not_a_marker(self):
+        text = self.VALID_BLOCK + "<<<<<<< SEARCHING\n>>>>>>> REPLACEMENT\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+    # --- valid forms that must keep working -------------------------------
+
+    def test_empty_replace_is_valid(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "")])
+        self.assertEqual(apply_diff("x = 1\ny = 2", text), "\ny = 2")
+
+    def test_empty_search_is_valid(self):
+        text = "<<<<<<< SEARCH\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("", "x = 2")])
+
+    def test_blocks_inside_code_fences_are_valid(self):
+        text = "```python\n" + self.VALID_BLOCK + "```\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+    def test_valid_multi_block_apply(self):
+        second = self.VALID_BLOCK.replace("x", "y")
+        self.assertEqual(apply_diff("x = 1\ny = 1", self.VALID_BLOCK + second), "x = 2\ny = 2")
+
+    def test_response_ending_without_newline_is_valid(self):
+        text = self.VALID_BLOCK.rstrip("\n")
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
 
 class TestFormatDiffSummary(unittest.TestCase):
     """Tests for format_diff_summary showing actual diff content"""
