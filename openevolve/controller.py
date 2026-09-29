@@ -3,6 +3,7 @@ Main controller for OpenEvolve
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import shutil
@@ -25,6 +26,26 @@ from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
 
 logger = logging.getLogger(__name__)
+
+# Per-task run id so concurrent OpenEvolve instances do not share handlers.
+_current_run_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "openevolve_run_id", default=None
+)
+
+
+class _RunIdFilter(logging.Filter):
+    """Only emit records produced while this run is the active context."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__()
+        self.run_id = run_id
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        current = _current_run_id.get()
+        if current is None:
+            return True
+        return current == self.run_id
+
 
 
 class OpenEvolve:
@@ -60,7 +81,9 @@ class OpenEvolve:
         )
         os.makedirs(self.output_dir, exist_ok=True)
 
-        # Set up logging
+        # Set up logging (isolated from the process root logger)
+        self._log_handlers: List[logging.Handler] = []
+        self._log_token: Optional[contextvars.Token] = None
         self._setup_logging()
 
         # Manual mode queue lives in <openevolve_output>/manual_tasks_queue
@@ -172,28 +195,55 @@ class OpenEvolve:
         self.parallel_controller = None
 
     def _setup_logging(self) -> None:
-        """Set up logging"""
+        """Set up per-instance logging on the openevolve logger, not the root logger."""
         log_dir = self.config.log_dir or os.path.join(self.output_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
 
-        # Set up root logger
-        root_logger = logging.getLogger()
-        root_logger.setLevel(getattr(logging, self.config.log_level))
+        self._run_id = uuid.uuid4().hex[:8]
+        self._log_token = _current_run_id.set(self._run_id)
 
-        # Add file handler
-        log_file = os.path.join(log_dir, f"openevolve_{time.strftime('%Y%m%d_%H%M%S')}.log")
+        package_logger = logging.getLogger("openevolve")
+        package_logger.setLevel(getattr(logging, self.config.log_level))
+        package_logger.propagate = False
+
+        run_filter = _RunIdFilter(self._run_id)
+
+        log_file = os.path.join(
+            log_dir, f"openevolve_{time.strftime('%Y%m%d_%H%M%S')}_{self._run_id}.log"
+        )
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
-        root_logger.addHandler(file_handler)
+        file_handler.addFilter(run_filter)
+        package_logger.addHandler(file_handler)
 
-        # Add console handler
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        root_logger.addHandler(console_handler)
+        console_handler.setFormatter(
+            logging.Formatter(f"%(asctime)s - [{self._run_id}] - %(levelname)s - %(message)s")
+        )
+        console_handler.addFilter(run_filter)
+        package_logger.addHandler(console_handler)
 
+        self._log_handlers = [file_handler, console_handler]
+        self._log_file = log_file
         logger.info(f"Logging to {log_file}")
+
+    def _teardown_logging(self) -> None:
+        """Detach this instance's handlers so parallel runs stay isolated."""
+        package_logger = logging.getLogger("openevolve")
+        for handler in getattr(self, "_log_handlers", []):
+            package_logger.removeHandler(handler)
+            handler.close()
+        self._log_handlers = []
+        token = getattr(self, "_log_token", None)
+        if token is not None:
+            try:
+                _current_run_id.reset(token)
+            except ValueError:
+                if _current_run_id.get() == getattr(self, "_run_id", None):
+                    _current_run_id.set(None)
+            self._log_token = None
 
     def _setup_manual_mode_queue(self) -> None:
         """
@@ -369,6 +419,8 @@ class OpenEvolve:
             if self.evolution_tracer:
                 self.evolution_tracer.close()
                 logger.info("Evolution tracer closed")
+
+            self._teardown_logging()
 
         # Get the best program
         best_program = None
