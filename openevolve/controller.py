@@ -3,6 +3,7 @@ Main controller for OpenEvolve
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import shutil
@@ -25,6 +26,24 @@ from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
 
 logger = logging.getLogger(__name__)
+
+# Active OpenEvolve instance for log routing. Using the package logger (not the
+# root logger) plus a per-run filter keeps concurrent runs from writing into
+# each other's handlers — see #295.
+_active_run_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "openevolve_active_run_id", default=None
+)
+
+
+class _OpenEvolveRunFilter(logging.Filter):
+    """Emit only records produced while this run is the active logging context."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__()
+        self.run_id = run_id
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _active_run_id.get() == self.run_id
 
 
 class OpenEvolve:
@@ -172,28 +191,60 @@ class OpenEvolve:
         self.parallel_controller = None
 
     def _setup_logging(self) -> None:
-        """Set up logging"""
+        """Set up per-run logging on the package logger (not the root logger)."""
         log_dir = self.config.log_dir or os.path.join(self.output_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
 
-        # Set up root logger
-        root_logger = logging.getLogger()
-        root_logger.setLevel(getattr(logging, self.config.log_level))
+        self._log_run_id = uuid.uuid4().hex
+        self._log_handlers: List[logging.Handler] = []
 
-        # Add file handler
+        package_logger = logging.getLogger("openevolve")
+        package_logger.setLevel(getattr(logging, self.config.log_level))
+        # Keep OpenEvolve output off the root logger so concurrent instances and
+        # host applications do not share or duplicate handlers (#295).
+        package_logger.propagate = False
+
+        run_filter = _OpenEvolveRunFilter(self._log_run_id)
+
         log_file = os.path.join(log_dir, f"openevolve_{time.strftime('%Y%m%d_%H%M%S')}.log")
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
-        root_logger.addHandler(file_handler)
+        file_handler.addFilter(run_filter)
+        package_logger.addHandler(file_handler)
+        self._log_handlers.append(file_handler)
 
-        # Add console handler
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        root_logger.addHandler(console_handler)
+        console_handler.addFilter(run_filter)
+        package_logger.addHandler(console_handler)
+        self._log_handlers.append(console_handler)
 
+        self._log_file = log_file
+
+        # Keep this run active through the rest of __init__; run() re-asserts it.
+        _active_run_id.set(self._log_run_id)
         logger.info(f"Logging to {log_file}")
+
+    def _cleanup_logging(self) -> None:
+        """Detach and close handlers registered for this instance."""
+        package_logger = logging.getLogger("openevolve")
+        for handler in getattr(self, "_log_handlers", []):
+            package_logger.removeHandler(handler)
+            handler.close()
+        self._log_handlers = []
+
+    def _activate_run_logging(self):
+        """Activate this instance's logging context; returns a reset token.
+
+        If ``_setup_logging`` was skipped (e.g. patched in tests), create a
+        ephemeral run id so ``run()`` still works without attaching handlers.
+        """
+        if not getattr(self, "_log_run_id", None):
+            self._log_run_id = uuid.uuid4().hex
+            self._log_handlers = []
+        return _active_run_id.set(self._log_run_id)
 
     def _setup_manual_mode_queue(self) -> None:
         """
@@ -246,6 +297,20 @@ class OpenEvolve:
         Returns:
             Best program found
         """
+        log_token = self._activate_run_logging()
+        try:
+            return await self._run_with_logging(iterations, target_score, checkpoint_path)
+        finally:
+            _active_run_id.reset(log_token)
+            self._cleanup_logging()
+
+    async def _run_with_logging(
+        self,
+        iterations: Optional[int] = None,
+        target_score: Optional[float] = None,
+        checkpoint_path: Optional[str] = None,
+    ) -> Optional[Program]:
+        """Run evolution while this instance's logging context is active."""
         max_iterations = iterations or self.config.max_iterations
         # Determine starting iteration
         start_iteration = 0
