@@ -1,0 +1,73 @@
+# Configuration for function minimization using OrcaRouter as the LLM backend.
+#
+# OrcaRouter is an OpenAI-compatible AI gateway that routes many providers
+# behind one endpoint. Two credential entries are available:
+#
+#   provider: "orcarouter"        paste an existing sk-orca-... API key
+#   provider: "orcarouter_oauth"  sign in with your OrcaRouter account (OAuth 2.0 + PKCE)
+#
+# Set up the credential once, then run the evolution below:
+#   python openevolve-run.py connect orcarouter          # paste an API key
+#   python openevolve-run.py connect orcarouter_oauth    # browser sign-in
+#   python openevolve-run.py models                      # list compatible models
+#
+# Run:
+#   python openevolve-run.py \
+#     examples/orcarouter_quickstart/initial_program.py \
+#     examples/orcarouter_quickstart/evaluator.py \
+#     --config examples/orcarouter_quickstart/config.yaml \
+#     --iterations 50
+
+max_iterations: 50
+checkpoint_interval: 10
+
+llm:
+  provider: "orcarouter"
+
+  # Inference base URL. Omit it to use the OrcaRouter default,
+  # https://api.orcarouter.ai/v1, or the ORCA_API_BASE_URL override, e.g.:
+  # api_base: "https://api.orcarouter.ai/v1"
+
+  # Credential. Omit it to use ORCAROUTER_API_KEY or the stored credential.
+  # api_key: ${ORCAROUTER_API_KEY}
+
+  # Model ids come from the live catalog; run `openevolve-run.py models` to see
+  # the ones this account can call. Vendor/model namespaces are preserved.
+  models:
+    - name: "deepseek/deepseek-v4-pro"
+      weight: 1.0
+      reasoning_effort: "medium"
+  evaluator_models:
+    - name: "deepseek/deepseek-v4-pro"
+      weight: 1.0
+
+  temperature: 0.7
+  max_tokens: 4096
+  timeout: 120
+  retries: 3
+  retry_delay: 5
+
+prompt:
+  system_message: >
+    You are an expert programmer specializing in optimization algorithms.
+    Your task is to improve a function minimization algorithm to find the
+    global minimum of a complex function with many local minima.
+    The function is f(x, y) = sin(x) * cos(y) + sin(x*y) + (x^2 + y^2)/20.
+    Focus on improving the search_algorithm function to reliably find the
+    global minimum, escaping local minima that might trap simple algorithms.
+
+database:
+  population_size: 50
+  archive_size: 20
+  num_islands: 3
+  elite_selection_ratio: 0.2
+  exploitation_ratio: 0.7
+  similarity_threshold: 0.99
+
+evaluator:
+  timeout: 60
+  cascade_thresholds: [1.3]
+  parallel_evaluations: 3
+
+diff_based_evolution: true
+max_code_length: 20000
