@@ -7,8 +7,11 @@ import unittest
 from openevolve.utils.code_utils import (
     _format_block_lines,
     apply_diff,
+    apply_diff_blocks,
+    enforce_evolve_blocks,
     extract_diffs,
     format_diff_summary,
+    parse_evolve_blocks,
 )
 
 
@@ -93,6 +96,315 @@ class TestCodeUtils(unittest.TestCase):
             result,
             expected_code,
         )
+
+
+class TestDiffDelimiterValidation(unittest.TestCase):
+    """Tests for rejecting malformed SEARCH/REPLACE delimiter sequences"""
+
+    VALID_BLOCK = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
+
+    def test_valid_blocks_with_prose(self):
+        text = "Plan:\n" + self.VALID_BLOCK + "and\n" + self.VALID_BLOCK.replace("x", "y")
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2"), ("y = 1", "y = 2")])
+
+    def test_extra_separator_in_replace_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\nx = 3\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_extra_separator_does_not_reach_code(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            apply_diff("x = 1", text)
+
+    def test_nested_search_raises(self):
+        text = "<<<<<<< SEARCH\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_stray_marker_outside_block_raises(self):
+        for stray in ("=======\n", ">>>>>>> REPLACE\n", "<<<<<<< SEARCH\n"):
+            with self.subTest(stray=stray):
+                with self.assertRaises(ValueError):
+                    extract_diffs(self.VALID_BLOCK + stray)
+                with self.assertRaises(ValueError):
+                    extract_diffs(stray + self.VALID_BLOCK)
+
+    def test_no_blocks_returns_empty(self):
+        self.assertEqual(extract_diffs("no diff here"), [])
+
+    def test_custom_pattern_keeps_its_own_grammar(self):
+        pattern = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE\n?"
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text, pattern), [("x = 1", "x = 2\n=======")])
+
+    def test_config_default_uses_standard_pattern(self):
+        from openevolve.config import Config
+        from openevolve.utils.code_utils import _STANDARD_DIFF_PATTERN
+
+        # Validation is keyed on equality with the standard pattern, so the
+        # config default must stay identical to it.
+        self.assertEqual(Config().diff_pattern, _STANDARD_DIFF_PATTERN)
+
+    def test_config_default_pattern_is_validated(self):
+        from openevolve.config import Config
+
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text, Config().diff_pattern)
+
+    # --- malformed shapes -------------------------------------------------
+
+    def test_extra_separator_in_second_block_raises(self):
+        bad = "<<<<<<< SEARCH\ny = 1\n=======\ny = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(self.VALID_BLOCK + bad)
+
+    def test_extra_separator_in_search_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_missing_separator_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n>>>>>>> REPLACE\n"
+        with self.assertRaisesRegex(ValueError, "Unmatched"):
+            extract_diffs(text)
+
+    def test_missing_replace_marker_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n"
+        with self.assertRaisesRegex(ValueError, "Unmatched"):
+            extract_diffs(text)
+
+    def test_missing_search_marker_raises(self):
+        text = "x = 1\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        with self.assertRaisesRegex(ValueError, "Unmatched"):
+            extract_diffs(text)
+
+    def test_malformed_block_error_message(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======\n>>>>>>> REPLACE\n"
+        with self.assertRaisesRegex(ValueError, "Malformed SEARCH/REPLACE delimiter sequence"):
+            extract_diffs(text)
+
+    def test_indented_extra_separator_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n    =======\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_separator_with_trailing_whitespace_raises(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n=======  \t\n>>>>>>> REPLACE\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_crlf_marker_is_recognised(self):
+        # Standard pattern needs LF after markers, so a CRLF response yields no
+        # match; its marker lines are then reported rather than silently ignored.
+        text = "<<<<<<< SEARCH\r\nx = 1\r\n=======\r\nx = 2\r\n>>>>>>> REPLACE\r\n"
+        with self.assertRaises(ValueError):
+            extract_diffs(text)
+
+    def test_apply_diff_leaves_no_partial_changes(self):
+        # A valid first block must not be applied when a later block is malformed.
+        bad = "<<<<<<< SEARCH\ny = 1\n=======\ny = 2\n=======\n>>>>>>> REPLACE\n"
+        original = "x = 1\ny = 1"
+        with self.assertRaises(ValueError):
+            apply_diff(original, self.VALID_BLOCK + bad)
+
+    # --- look-alikes that are not delimiter lines ---------------------------
+
+    def test_longer_equals_run_is_not_a_marker(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n========\nx = 2\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "========\nx = 2")])
+
+    def test_shorter_equals_run_is_not_a_marker(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n======\nx = 2\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "======\nx = 2")])
+
+    def test_separator_inside_code_line_is_allowed(self):
+        replace = "print('=======')\n# ======= section\nsep = '=' * 7"
+        text = f"<<<<<<< SEARCH\nx = 1\n=======\n{replace}\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", replace)])
+
+    def test_marker_words_in_prose_are_allowed(self):
+        text = (
+            "I use the ======= separator and >>>>>>> REPLACE marker below.\n"
+            + self.VALID_BLOCK
+            + "Done; see <<<<<<< SEARCH above.\n"
+        )
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+    def test_marker_prefix_with_extra_text_is_not_a_marker(self):
+        text = self.VALID_BLOCK + "<<<<<<< SEARCHING\n>>>>>>> REPLACEMENT\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+    # --- valid forms that must keep working -------------------------------
+
+    def test_empty_replace_is_valid(self):
+        text = "<<<<<<< SEARCH\nx = 1\n=======\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "")])
+        self.assertEqual(apply_diff("x = 1\ny = 2", text), "\ny = 2")
+
+    def test_empty_search_is_valid(self):
+        text = "<<<<<<< SEARCH\n=======\nx = 2\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [("", "x = 2")])
+
+    def test_blocks_inside_code_fences_are_valid(self):
+        text = "```python\n" + self.VALID_BLOCK + "```\n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+    def test_valid_multi_block_apply(self):
+        second = self.VALID_BLOCK.replace("x", "y")
+        self.assertEqual(apply_diff("x = 1\ny = 1", self.VALID_BLOCK + second), "x = 2\ny = 2")
+
+    def test_response_ending_without_newline_is_valid(self):
+        text = self.VALID_BLOCK.rstrip("\n")
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+
+
+class TestSearchWhitespaceTolerance(unittest.TestCase):
+    """SEARCH text that differs only in trailing whitespace still matches (#346)"""
+
+    def test_search_without_trailing_spaces_matches(self):
+        original = "def f():   \n    return 1  \n"
+        diff = "<<<<<<< SEARCH\ndef f():\n    return 1\n=======\ndef f():\n    return 2\n>>>>>>> REPLACE"
+        self.assertEqual(apply_diff(original, diff), "def f():\n    return 2\n")
+
+    def test_search_with_extra_trailing_spaces_matches(self):
+        original = "x = 1\ny = 1"
+        code, applied = apply_diff_blocks(original, [("x = 1   ", "x = 2")])
+        self.assertEqual((code, applied), ("x = 2\ny = 1", 1))
+
+    def test_exact_match_is_preferred(self):
+        # The exact occurrence wins over an earlier whitespace-only match.
+        original = "x = 1  \nx = 1"
+        code, applied = apply_diff_blocks(original, [("x = 1", "x = 2")])
+        self.assertEqual((code, applied), ("x = 1  \nx = 2", 1))
+
+    def test_leading_whitespace_is_not_ignored(self):
+        original = "    x = 1"
+        code, applied = apply_diff_blocks(original, [("x = 1", "x = 2")])
+        self.assertEqual((code, applied), ("    x = 1", 0))
+
+    def test_unmatched_block_counts_zero(self):
+        code, applied = apply_diff_blocks("x = 1", [("y = 1", "y = 2"), ("x = 1", "x = 3")])
+        self.assertEqual((code, applied), ("x = 3", 1))
+
+
+class TestEvolveBlockParsing(unittest.TestCase):
+    """Evolve block markers work with any comment syntax (#422)"""
+
+    def test_python_markers(self):
+        code = "a\n# EVOLVE-BLOCK-START\nb\n# EVOLVE-BLOCK-END\nc"
+        self.assertEqual(parse_evolve_blocks(code), [(1, 3, "b")])
+
+    def test_other_comment_syntaxes(self):
+        for start, end in [
+            ("// EVOLVE-BLOCK-START", "// EVOLVE-BLOCK-END"),
+            ("//EVOLVE-BLOCK-START", "//EVOLVE-BLOCK-END"),
+            ("// #EVOLVE-BLOCK-START", "// #EVOLVE-BLOCK-END"),
+            ("/* EVOLVE-BLOCK-START */", "/* EVOLVE-BLOCK-END */"),
+            ("-- EVOLVE-BLOCK-START", "-- EVOLVE-BLOCK-END"),
+            ("% EVOLVE-BLOCK-START", "% EVOLVE-BLOCK-END"),
+            ("    # EVOLVE-BLOCK-START", "    # EVOLVE-BLOCK-END"),
+        ]:
+            with self.subTest(start=start):
+                code = f"int a;\n{start}\nint b;\n{end}\nint c;"
+                self.assertEqual(parse_evolve_blocks(code), [(1, 3, "int b;")])
+
+    def test_trailing_python_marker_still_supported(self):
+        code = "a  # EVOLVE-BLOCK-START\nb\nc  # EVOLVE-BLOCK-END"
+        self.assertEqual(parse_evolve_blocks(code), [(0, 2, "b")])
+
+    def test_marker_word_inside_code_is_not_a_marker(self):
+        code = 'msg = "EVOLVE-BLOCK-START"\nx = 1'
+        self.assertEqual(parse_evolve_blocks(code), [])
+
+    def test_multiple_blocks(self):
+        code = "#EVOLVE-BLOCK-START\na\n#EVOLVE-BLOCK-END\nb\n#EVOLVE-BLOCK-START\nc\n#EVOLVE-BLOCK-END"
+        self.assertEqual(parse_evolve_blocks(code), [(0, 2, "a"), (4, 6, "c")])
+
+
+class TestEnforceEvolveBlocks(unittest.TestCase):
+    """Edits outside evolve blocks are reverted when enforcement is on (#106, #422)"""
+
+    PARENT = (
+        "import os\n"
+        "# EVOLVE-BLOCK-START\n"
+        "def solve():\n"
+        "    return 1\n"
+        "# EVOLVE-BLOCK-END\n"
+        "def reward():\n"
+        "    return 0\n"
+    )
+
+    def test_inside_edits_are_kept(self):
+        child = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), child)
+
+    def test_outside_edits_are_reverted(self):
+        child = (
+            self.PARENT.replace("return 1", "return 2")
+            .replace("return 0", "return 999")
+            .replace("import os", "import os, sys")
+        )
+        expected = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), expected)
+
+    def test_new_code_outside_blocks_is_dropped(self):
+        child = "HACK = True\n" + self.PARENT.replace("return 1", "return 2") + "extra()\n"
+        expected = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), expected)
+
+    def test_block_can_grow_and_shrink(self):
+        child = self.PARENT.replace("    return 1\n", "    x = 1\n    y = 2\n    return x + y\n")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), child)
+        child = self.PARENT.replace("def solve():\n    return 1\n", "")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), child)
+
+    def test_multiple_blocks_are_mapped_in_order(self):
+        parent = "h\n// EVOLVE-BLOCK-START\na\n// EVOLVE-BLOCK-END\nm\n// EVOLVE-BLOCK-START\nb\n// EVOLVE-BLOCK-END\nt"
+        child = "H\n// EVOLVE-BLOCK-START\nA\n// EVOLVE-BLOCK-END\nM\n// EVOLVE-BLOCK-START\nB\n// EVOLVE-BLOCK-END\nT"
+        expected = "h\n// EVOLVE-BLOCK-START\nA\n// EVOLVE-BLOCK-END\nm\n// EVOLVE-BLOCK-START\nB\n// EVOLVE-BLOCK-END\nt"
+        self.assertEqual(enforce_evolve_blocks(parent, child), expected)
+
+    def test_marker_style_changes_keep_parent_markers(self):
+        child = self.PARENT.replace("# EVOLVE-BLOCK-START", "#EVOLVE-BLOCK-START  ").replace(
+            "return 1", "return 2"
+        )
+        expected = self.PARENT.replace("return 1", "return 2")
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, child), expected)
+
+    def test_removed_markers_raise(self):
+        child = self.PARENT.replace("# EVOLVE-BLOCK-END\n", "")
+        with self.assertRaisesRegex(ValueError, "EVOLVE-BLOCK markers"):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_all_markers_removed_raise(self):
+        child = "def solve():\n    return 2\n"
+        with self.assertRaises(ValueError):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_extra_block_raises(self):
+        child = self.PARENT + "# EVOLVE-BLOCK-START\nx = 1\n# EVOLVE-BLOCK-END\n"
+        with self.assertRaisesRegex(ValueError, "expected 1 evolve block"):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_nested_markers_raise(self):
+        child = self.PARENT.replace("    return 1", "    # EVOLVE-BLOCK-START\n    return 1")
+        with self.assertRaises(ValueError):
+            enforce_evolve_blocks(self.PARENT, child)
+
+    def test_parent_without_blocks_is_not_enforced(self):
+        parent = "x = 1\n"
+        self.assertEqual(enforce_evolve_blocks(parent, "y = 2\n"), "y = 2\n")
+
+    def test_parent_with_malformed_blocks_is_not_enforced(self):
+        parent = "# EVOLVE-BLOCK-START\nx = 1\n"
+        self.assertEqual(enforce_evolve_blocks(parent, "y = 2\n"), "y = 2\n")
+
+    def test_idempotent(self):
+        child = self.PARENT.replace("return 1", "return 2").replace("return 0", "return 9")
+        once = enforce_evolve_blocks(self.PARENT, child)
+        self.assertEqual(enforce_evolve_blocks(self.PARENT, once), once)
 
 
 class TestFormatDiffSummary(unittest.TestCase):

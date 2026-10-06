@@ -17,8 +17,10 @@ from openevolve.database import Program, ProgramDatabase
 from openevolve.evaluator import Evaluator
 from openevolve.evolution_trace import EvolutionTracer
 from openevolve.llm.ensemble import LLMEnsemble
+from openevolve.population import PopulationStrategy
 from openevolve.process_parallel import ProcessParallelController
 from openevolve.prompt.sampler import PromptSampler
+from openevolve.selection import IslandSelector
 from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
 
@@ -45,9 +47,12 @@ class OpenEvolve:
         evaluation_file: str,
         config: Config,
         output_dir: Optional[str] = None,
+        island_selector: Optional[IslandSelector] = None,
+        population_strategy: Optional[PopulationStrategy] = None,
     ):
         # Load configuration (loaded in main_async)
         self.config = config
+        self.island_selector = island_selector
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
@@ -125,7 +130,9 @@ class OpenEvolve:
             self.config.database.random_seed = self.config.random_seed
 
         self.config.database.novelty_llm = self.llm_ensemble
-        self.database = ProgramDatabase(self.config.database)
+        self.database = ProgramDatabase(
+            self.config.database, population_strategy=population_strategy
+        )
 
         self.evaluator = Evaluator(
             self.config.evaluator,
@@ -314,6 +321,7 @@ class OpenEvolve:
                 self.database,
                 self.evolution_tracer,
                 file_suffix=self.config.file_suffix,
+                island_selector=self.island_selector,
             )
 
             # Set up signal handlers for graceful shutdown

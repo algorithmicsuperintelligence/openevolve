@@ -11,14 +11,20 @@ import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass
+from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
+from openevolve.selection import IslandSelectionContext, IslandSelector, IslandState
 from openevolve.utils.metrics_utils import safe_numeric_average
 
 logger = logging.getLogger(__name__)
+
+
+class _CandidateRejected(Exception):
+    """Stop processing an iteration after admission rejects its child."""
 
 
 @dataclass
@@ -34,6 +40,7 @@ class SerializableResult:
     iteration: int = 0
     error: Optional[str] = None
     target_island: Optional[int] = None  # Island where child should be placed
+    token_usage: Optional[Dict[str, Any]] = None
 
 
 def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = None) -> None:
@@ -191,6 +198,7 @@ def _run_iteration_worker(
             program_artifacts=parent_artifacts,
             feature_dimensions=db_snapshot.get("feature_dimensions", []),
             current_changes_description=parent_changes_desc,
+            island_id=db_snapshot.get("sampling_island"),
         )
 
         iteration_start = time.time()
@@ -203,28 +211,37 @@ def _run_iteration_worker(
                     messages=[{"role": "user", "content": prompt["user"]}],
                 )
             )
+            token_usage = getattr(_worker_llm_ensemble, "last_usage", None)
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
             return SerializableResult(error=f"LLM generation failed: {str(e)}", iteration=iteration)
 
         # Check for None response
         if llm_response is None:
-            return SerializableResult(error="LLM returned None response", iteration=iteration)
+            return SerializableResult(
+                error="LLM returned None response", iteration=iteration, token_usage=token_usage
+            )
 
         # Parse response based on evolution mode
         if _worker_config.diff_based_evolution:
             from openevolve.utils.code_utils import (
-                apply_diff,
                 apply_diff_blocks,
                 extract_diffs,
                 format_diff_summary,
                 split_diffs_by_target,
             )
 
-            diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
+            try:
+                diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
+            except ValueError as exc:
+                return SerializableResult(
+                    error=str(exc), iteration=iteration, token_usage=token_usage
+                )
             if not diff_blocks:
                 return SerializableResult(
-                    error="No valid diffs found in response", iteration=iteration
+                    error="No valid diffs found in response",
+                    iteration=iteration,
+                    token_usage=token_usage,
                 )
 
             if _worker_config.prompt.programs_as_changes_description:
@@ -235,7 +252,9 @@ def _run_iteration_worker(
                         changes_description_text=parent_changes_desc,
                     )
                 except Exception as e:
-                    return SerializableResult(error=str(e), iteration=iteration)
+                    return SerializableResult(
+                        error=str(e), iteration=iteration, token_usage=token_usage
+                    )
 
                 child_code, _ = apply_diff_blocks(parent.code, code_blocks)
                 child_changes_desc, desc_applied = apply_diff_blocks(
@@ -251,6 +270,7 @@ def _run_iteration_worker(
                     return SerializableResult(
                         error="changes_description was not updated or empty, program is discarded",
                         iteration=iteration,
+                        token_usage=token_usage,
                     )
 
                 changes_summary = format_diff_summary(
@@ -260,7 +280,27 @@ def _run_iteration_worker(
                 )
             else:
                 # All diffs applied only to code
-                child_code = apply_diff(parent.code, llm_response, _worker_config.diff_pattern)
+                child_code, applied = apply_diff_blocks(parent.code, diff_blocks)
+                if applied == 0:
+                    return SerializableResult(
+                        error=(
+                            f"None of the {len(diff_blocks)} SEARCH block(s) matched the "
+                            "parent program"
+                        ),
+                        iteration=iteration,
+                        token_usage=token_usage,
+                    )
+                if applied < len(diff_blocks):
+                    logger.warning(
+                        f"Iteration {iteration}: only {applied} of {len(diff_blocks)} "
+                        "SEARCH block(s) matched the parent program"
+                    )
+                if child_code == parent.code:
+                    return SerializableResult(
+                        error="Diff did not change the parent program",
+                        iteration=iteration,
+                        token_usage=token_usage,
+                    )
                 changes_summary = format_diff_summary(
                     diff_blocks,
                     max_line_len=_worker_config.prompt.diff_summary_max_line_len,
@@ -272,17 +312,49 @@ def _run_iteration_worker(
             new_code = parse_full_rewrite(llm_response, _worker_config.language)
             if not new_code:
                 return SerializableResult(
-                    error=f"No valid code found in response", iteration=iteration
+                    error=f"No valid code found in response",
+                    iteration=iteration,
+                    token_usage=token_usage,
+                )
+
+            if new_code == parent.code:
+                return SerializableResult(
+                    error="Rewrite is identical to the parent program",
+                    iteration=iteration,
+                    token_usage=token_usage,
                 )
 
             child_code = new_code
             changes_summary = "Full rewrite"
+
+        # Revert edits made outside the EVOLVE-BLOCK regions if configured
+        if _worker_config.enforce_evolve_blocks:
+            from openevolve.utils.code_utils import enforce_evolve_blocks
+
+            try:
+                enforced_code = enforce_evolve_blocks(parent.code, child_code)
+            except ValueError as exc:
+                return SerializableResult(
+                    error=str(exc), iteration=iteration, token_usage=token_usage
+                )
+            if enforced_code != child_code:
+                logger.info(
+                    f"Iteration {iteration}: reverted edits outside the EVOLVE-BLOCK regions"
+                )
+                child_code = enforced_code
+                if child_code == parent.code:
+                    return SerializableResult(
+                        error="All edits were outside the EVOLVE-BLOCK regions",
+                        iteration=iteration,
+                        token_usage=token_usage,
+                    )
 
         # Check code length
         if len(child_code) > _worker_config.max_code_length:
             return SerializableResult(
                 error=f"Generated code exceeds maximum length ({len(child_code)} > {_worker_config.max_code_length})",
                 iteration=iteration,
+                token_usage=token_usage,
             )
 
         # Evaluate the child program
@@ -308,6 +380,7 @@ def _run_iteration_worker(
                 "changes": changes_summary,
                 "parent_metrics": parent.metrics,
                 "island": parent_island,
+                "token_usage": token_usage,
             },
         )
 
@@ -325,6 +398,7 @@ def _run_iteration_worker(
             artifacts=artifacts,
             iteration=iteration,
             target_island=target_island,
+            token_usage=token_usage,
         )
 
     except Exception as e:
@@ -397,12 +471,14 @@ class ProcessParallelController:
         database: ProgramDatabase,
         evolution_tracer=None,
         file_suffix: str = ".py",
+        island_selector: Optional[IslandSelector] = None,
     ):
         self.config = config
         self.evaluation_file = evaluation_file
         self.database = database
         self.evolution_tracer = evolution_tracer
         self.file_suffix = file_suffix
+        self.island_selector = island_selector
 
         self.executor: Optional[ProcessPoolExecutor] = None
         self.shutdown_event = mp.Event()
@@ -525,6 +601,42 @@ class ProcessParallelController:
 
         return snapshot
 
+    def _select_island(self, iteration: int, island_pending: Dict[int, List[int]]) -> int:
+        """Ask a custom policy for an island using a read-only state snapshot."""
+        stats = self.database.get_island_stats()
+        context = IslandSelectionContext(
+            iteration=iteration,
+            pending_counts=tuple(len(island_pending[i]) for i in range(self.num_islands)),
+            islands=tuple(
+                IslandState(
+                    population_size=stat["population_size"],
+                    best_score=stat["best_score"],
+                    average_score=stat["average_score"],
+                    diversity=stat["diversity"],
+                    generation=stat["generation"],
+                )
+                for stat in stats
+            ),
+        )
+        island_id = self.island_selector(context)
+        if (
+            isinstance(island_id, bool)
+            or not isinstance(island_id, Integral)
+            or not 0 <= island_id < self.num_islands
+        ):
+            raise ValueError(
+                f"island_selector must return an integer island ID in [0, {self.num_islands - 1}], "
+                f"got {island_id!r}"
+            )
+        return int(island_id)
+
+    def _checkpoint_if_due(self, iteration: int, callback=None) -> None:
+        if iteration > 0 and iteration % self.config.checkpoint_interval == 0:
+            logger.info("Checkpoint interval reached at iteration %d", iteration)
+            self.database.log_island_status()
+            if callback:
+                callback(iteration)
+
     async def run_evolution(
         self,
         start_iteration: int,
@@ -552,18 +664,33 @@ class ProcessParallelController:
         batch_per_island = max(1, batch_size // self.num_islands) if batch_size > 0 else 0
         current_iteration = start_iteration
 
-        # Round-robin distribution across islands
-        for island_id in range(self.num_islands):
-            for _ in range(batch_per_island):
-                if current_iteration < total_iterations:
-                    future = self._submit_iteration(current_iteration, island_id)
-                    if future:
-                        pending_futures[current_iteration] = future
-                        island_pending[island_id].append(current_iteration)
-                    current_iteration += 1
+        if self.island_selector is None:
+            # Preserve the original round-robin distribution by default.
+            for island_id in range(self.num_islands):
+                for _ in range(batch_per_island):
+                    if current_iteration < total_iterations:
+                        future = self._submit_iteration(current_iteration, island_id)
+                        if future:
+                            pending_futures[current_iteration] = future
+                            island_pending[island_id].append(current_iteration)
+                        current_iteration += 1
+        else:
+            # Keep the original initial batch size, but let the policy place each task.
+            initial_slots = min(max_iterations, batch_per_island * self.num_islands)
+            for _ in range(initial_slots):
+                island_id = self._select_island(current_iteration, island_pending)
+                future = self._submit_iteration(current_iteration, island_id)
+                if future:
+                    pending_futures[current_iteration] = future
+                    island_pending[island_id].append(current_iteration)
+                current_iteration += 1
 
         next_iteration = current_iteration
         completed_iterations = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_tokens = 0
+        total_llm_calls = 0
 
         # Early stopping tracking
         early_stopping_enabled = self.config.early_stopping_patience is not None
@@ -609,8 +736,21 @@ class ProcessParallelController:
                 timeout_seconds = self.config.evaluator.timeout + 30
                 result = future.result(timeout=timeout_seconds)
 
+                token_str = ""
+                if result.token_usage:
+                    pt = result.token_usage.get("prompt_tokens", 0)
+                    ct = result.token_usage.get("completion_tokens", 0)
+                    tt = result.token_usage.get("total_tokens", 0)
+                    total_prompt_tokens += pt
+                    total_completion_tokens += ct
+                    total_tokens += tt
+                    total_llm_calls += 1
+                    token_str = f" | tokens: {tt} (prompt: {pt}, completion: {ct})"
+
                 if result.error:
-                    logger.warning(f"Iteration {completed_iteration} error: {result.error}")
+                    logger.warning(
+                        f"Iteration {completed_iteration} error: {result.error}{token_str}"
+                    )
                 elif result.child_program_dict:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
@@ -618,11 +758,13 @@ class ProcessParallelController:
                     # Add to database with explicit target_island to ensure proper island placement
                     # This fixes issue #391: children should go to the target island, not inherit
                     # from the parent (which may be from a different island due to fallback sampling)
-                    self.database.add(
+                    admitted_id = self.database.add(
                         child_program,
                         iteration=completed_iteration,
                         target_island=result.target_island,
                     )
+                    if admitted_id is None:
+                        raise _CandidateRejected(child_program.id)
 
                     # Store artifacts
                     if result.artifacts:
@@ -651,6 +793,7 @@ class ProcessParallelController:
                                 metadata={
                                     "iteration_time": result.iteration_time,
                                     "changes": child_program.metadata.get("changes", ""),
+                                    "token_usage": result.token_usage,
                                 },
                             )
 
@@ -665,6 +808,7 @@ class ProcessParallelController:
                             program_id=child_program.id,
                             prompt=result.prompt,
                             responses=[result.llm_response] if result.llm_response else [],
+                            token_usage=result.token_usage,
                         )
 
                     # Island management
@@ -684,7 +828,7 @@ class ProcessParallelController:
                         f"Iteration {completed_iteration}: "
                         f"Program {child_program.id} "
                         f"(parent: {result.parent_id}) "
-                        f"completed in {result.iteration_time:.2f}s"
+                        f"completed in {result.iteration_time:.2f}s{token_str}"
                     )
 
                     if child_program.metrics:
@@ -720,18 +864,7 @@ class ProcessParallelController:
                             f"{child_program.id}"
                         )
 
-                    # Checkpoint callback
-                    # Don't checkpoint at iteration 0 (that's just the initial program)
-                    if (
-                        completed_iteration > 0
-                        and completed_iteration % self.config.checkpoint_interval == 0
-                    ):
-                        logger.info(
-                            f"Checkpoint interval reached at iteration {completed_iteration}"
-                        )
-                        self.database.log_island_status()
-                        if checkpoint_callback:
-                            checkpoint_callback(completed_iteration)
+                    self._checkpoint_if_due(completed_iteration, checkpoint_callback)
 
                     # Check target score
                     if target_score is not None and child_program.metrics:
@@ -800,7 +933,19 @@ class ProcessParallelController:
                                     self.early_stopping_triggered = True
                                     break
 
-            except FutureTimeoutError:
+            except _CandidateRejected as rejected:
+                logger.info("Admission strategy rejected program %s", rejected)
+                try:
+                    self._checkpoint_if_due(completed_iteration, checkpoint_callback)
+                except Exception as e:
+                    if getattr(e, "_openevolve_strategy_error", False):
+                        raise
+                    logger.error(
+                        f"Error processing result from iteration {completed_iteration}: {e}"
+                    )
+            except FutureTimeoutError as e:
+                if getattr(e, "_openevolve_strategy_error", False):
+                    raise
                 logger.error(
                     f"⏰ Iteration {completed_iteration} timed out after {timeout_seconds}s "
                     f"(evaluator timeout: {self.config.evaluator.timeout}s + 30s buffer). "
@@ -809,6 +954,8 @@ class ProcessParallelController:
                 # Cancel the future to clean up the process
                 future.cancel()
             except Exception as e:
+                if getattr(e, "_openevolve_strategy_error", False):
+                    raise
                 logger.error(f"Error processing result from iteration {completed_iteration}: {e}")
 
             completed_iterations += 1
@@ -819,19 +966,29 @@ class ProcessParallelController:
                     iteration_list.remove(completed_iteration)
                     break
 
-            # Submit next iterations maintaining island balance
-            for island_id in range(self.num_islands):
-                if (
-                    len(island_pending[island_id]) < batch_per_island
-                    and next_iteration < total_iterations
-                    and not self.shutdown_event.is_set()
-                ):
+            # Submit one replacement task per completion. Custom policies control
+            # placement; the default path retains the original balancing logic.
+            if self.island_selector is not None:
+                if next_iteration < total_iterations and not self.shutdown_event.is_set():
+                    island_id = self._select_island(next_iteration, island_pending)
                     future = self._submit_iteration(next_iteration, island_id)
                     if future:
                         pending_futures[next_iteration] = future
                         island_pending[island_id].append(next_iteration)
                         next_iteration += 1
-                        break  # Only submit one iteration per completion to maintain balance
+            else:
+                for island_id in range(self.num_islands):
+                    if (
+                        len(island_pending[island_id]) < batch_per_island
+                        and next_iteration < total_iterations
+                        and not self.shutdown_event.is_set()
+                    ):
+                        future = self._submit_iteration(next_iteration, island_id)
+                        if future:
+                            pending_futures[next_iteration] = future
+                            island_pending[island_id].append(next_iteration)
+                            next_iteration += 1
+                            break  # Only submit one iteration per completion to maintain balance
 
         # Handle shutdown
         if self.shutdown_event.is_set():
@@ -846,6 +1003,13 @@ class ProcessParallelController:
             logger.info("✅ Evolution completed - Shutdown requested")
         else:
             logger.info("✅ Evolution completed - Maximum iterations reached")
+
+        if total_llm_calls > 0:
+            logger.info(
+                f"📊 Total LLM Token Usage ({total_llm_calls} calls): "
+                f"total_tokens={total_tokens} "
+                f"(prompt_tokens={total_prompt_tokens}, completion_tokens={total_completion_tokens})"
+            )
 
         return self.database.get_best_program()
 

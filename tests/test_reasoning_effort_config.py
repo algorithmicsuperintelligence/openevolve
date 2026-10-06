@@ -129,7 +129,7 @@ class TestReasoningEffortConfig(unittest.TestCase):
         model_cfg.retries = 3
         model_cfg.retry_delay = 5
         model_cfg.api_base = "https://api.openai.com/v1"
-        model_cfg.api_key = "test-key"
+        model_cfg.api_key = None  # openai.OpenAI is patched
         model_cfg.random_seed = None
         model_cfg.reasoning_effort = "high"
         
@@ -152,7 +152,7 @@ class TestReasoningEffortConfig(unittest.TestCase):
         model_cfg.retries = 3
         model_cfg.retry_delay = 5
         model_cfg.api_base = "https://api.openai.com/v1"
-        model_cfg.api_key = "test-key"
+        model_cfg.api_key = None  # openai.OpenAI is patched
         model_cfg.random_seed = None
         model_cfg.reasoning_effort = "medium"
         
@@ -176,7 +176,7 @@ class TestReasoningEffortConfig(unittest.TestCase):
             result = asyncio.run(llm._call_api(test_params))
             
             # Verify the API was called with reasoning_effort
-            llm.client.chat.completions.create.assert_called_once_with(**test_params)
+            llm.client.chat.completions.create.assert_called_once_with(**test_params, stream=False)
 
     def test_yaml_file_loading_with_reasoning_effort(self):
         """Test loading reasoning_effort from actual YAML file"""
