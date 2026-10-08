@@ -356,7 +356,7 @@ export OPENAI_API_KEY="sk-..."
 # config.yaml
 llm:
   api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  model: "gemini-2.5-pro"
+  primary_model: "gemini-2.5-pro"
 ```
 
 ```bash
@@ -372,7 +372,7 @@ export OPENAI_API_KEY="your-gemini-api-key"
 # config.yaml
 llm:
   api_base: "http://localhost:11434/v1"  # Ollama
-  model: "codellama:7b"
+  primary_model: "codellama:7b"
 ```
 
 </details>
@@ -396,7 +396,7 @@ export OPENAI_API_KEY="your-actual-key"
 ```yaml
 llm:
   api_base: "http://localhost:8000/v1"
-  model: "moa&readurls-o3"  # Test-time compute + web access
+  primary_model: "moa&readurls-o3"  # Test-time compute + web access
 ```
 
 </details>
