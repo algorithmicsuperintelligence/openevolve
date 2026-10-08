@@ -10,6 +10,11 @@ log_level: "INFO"
 early_stopping_patience: 30          # Stop after 30 iterations without improvement
 convergence_threshold: 0.01          # Minimum improvement of 0.01 required to reset patience
 early_stopping_metric: "combined_score"  # Track the combined_score metric
+#
+# Note: iterations whose evaluation fails or times out (metrics carrying an
+# "error" or "timeout" key, e.g. {"error": 1.0, "combined_score": 0.0}) do not
+# count toward the patience counter. Early stopping only triggers on successful
+# evaluations that plateau - repeated failures alone never stop the run.
 
 # LLM configuration
 llm:
