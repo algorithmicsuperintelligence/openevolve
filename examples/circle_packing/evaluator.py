@@ -13,6 +13,12 @@ import traceback
 import sys
 import pickle
 
+# Target value from the AlphaEvolve paper, used to compute target_ratio and
+# combined_score. It only provides evolutionary pressure (fitness scaling) and
+# does not leak a solution; any positive value works (see issue #117).
+# Override it via the environment, e.g. CIRCLE_PACKING_TARGET_VALUE=3.0
+TARGET_VALUE = float(os.environ.get("CIRCLE_PACKING_TARGET_VALUE", "2.635"))
+
 
 class TimeoutError(Exception):
     pass
@@ -193,9 +199,6 @@ def evaluate(program_path):
     Returns:
         Dictionary of metrics
     """
-    # Target value from the paper
-    TARGET_VALUE = 2.635  # AlphaEvolve result for n=26
-
     try:
         # For constructor-based approaches, a single evaluation is sufficient
         # since the result is deterministic
@@ -304,8 +307,8 @@ def evaluate_stage1(program_path):
             # Calculate sum
             actual_sum = np.sum(radii) if valid else 0.0
 
-            # Target from paper
-            target = 2.635
+            # Target from paper (shared module-level value)
+            target = TARGET_VALUE
 
             # Simple combined score for stage 1
             combined_score = (actual_sum / target) if valid else 0.0

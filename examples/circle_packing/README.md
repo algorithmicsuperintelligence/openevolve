@@ -193,6 +193,25 @@ Target ratio: 0.9997314619131079 (99.97% of AlphaEvolve's result)
 
 This demonstrates that OpenEvolve can successfully reproduce the results from the AlphaEvolve paper on this mathematical optimization problem.
 
+## Reproducibility & the target value
+
+The evaluator uses a `TARGET_VALUE` (default `2.635`, the AlphaEvolve result for n=26) only to compute the `target_ratio` and `combined_score` metrics. It creates evolutionary pressure by scaling fitness — it does not leak a solution to the model, and any positive value works (see issue #117):
+
+> You can put any other value for the target like 3.0 and it will still work. The target is used to compute the metrics and create evolutionary pressure. It by itself doesn't give a solution.
+
+To reproduce the search without the AlphaEvolve prior, override it via the environment:
+
+```bash
+export CIRCLE_PACKING_TARGET_VALUE=3.0  # or 1.0, 10.0, ... any positive value
+```
+
+Some empirical reference points for what OpenEvolve reaches on this problem without relying on the target as a hint:
+
+- With the default configuration, OpenEvolve reached a sum of radii of 2.634 in about 800 generations (see issue #117).
+- Issue #156 reports 2.635977394746595 — surpassing the AlphaEvolve result — found at iteration 206 of a 450-iteration multi-phase run.
+
+Note that the system messages in `config_phase_1.yaml` (line 24), `config_phase_2.yaml` (line 24), `config_phase_1_anthropic.yaml` (line 21) and `config_phase_2_anthropic.yaml` (line 22) mention the 2.635 value to the model as an encouraging upper bound. For a fully prior-free run, edit or remove those sentences in your own configs as well.
+
 ## Key Observations
 
 The evolution process demonstrated several interesting patterns:
