@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import runpy
+import secrets
 import tempfile
 import threading
 import unittest
@@ -118,7 +119,8 @@ class TestCoevolution(unittest.TestCase):
     def test_resume_skips_completed_phases(self):
         with patch("openevolve.coevolution.OpenEvolve.run", self.evolve):
             first = self.run_competition(rounds=1)
-            checkpoint = Path(first.checkpoint_path)
+            checkpoint = self.output / "coevolution.json"
+            self.assertEqual(first.checkpoint_path, str(checkpoint))
             history = json.loads(checkpoint.read_text())["history"]
             resumed = self.run_competition(resume=True)
         final = json.loads(checkpoint.read_text())
@@ -174,11 +176,12 @@ class TestCoevolution(unittest.TestCase):
             self.run_competition(resume=True)
 
     def test_credential_rotation_allowed_and_credentials_not_saved(self):
+        rotated_key = secrets.token_hex(16)
         with patch("openevolve.coevolution.OpenEvolve.run", self.evolve):
             result = self.run_competition(rounds=1)
-            self.specs["blue"].config.llm.models[0].api_key = "rotated-secret"
+            self.specs["blue"].config.llm.models[0].api_key = rotated_key
             self.run_competition(rounds=1, resume=True)
-        self.assertNotIn("rotated-secret", Path(result.checkpoint_path).read_text())
+        self.assertNotIn(rotated_key, Path(result.checkpoint_path).read_text())
 
     def test_failed_refresh_does_not_commit_or_run_generation(self):
         with patch("openevolve.coevolution.OpenEvolve.run", self.evolve):
@@ -286,10 +289,13 @@ class TestCoevolution(unittest.TestCase):
             options = dict(
                 output_dir=str(self.output), evaluation_id="integration-v1", iterations_per_phase=3
             )
+            checkpoint = self.output / "coevolution.json"
             first = run_coevolution(populations, evaluate, rounds=1, **options)
-            first_state = json.loads(Path(first.checkpoint_path).read_text())
+            self.assertEqual(first.checkpoint_path, str(checkpoint))
+            first_state = json.loads(checkpoint.read_text())
             final = run_coevolution(populations, evaluate, rounds=2, resume=True, **options)
-            state = json.loads(Path(final.checkpoint_path).read_text())
+            self.assertEqual(final.checkpoint_path, str(checkpoint))
+            state = json.loads(checkpoint.read_text())
             self.assertEqual(sum(server.counts.values()), 12)
             self.assertEqual(state["history"][:2], first_state["history"])
             self.assertEqual(final.completed_phases, 4)
