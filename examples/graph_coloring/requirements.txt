@@ -1,0 +1,3 @@
+# Dependencies for graph coloring example
+networkx>=3.0
+matplotlib>=3.5
