@@ -178,20 +178,28 @@ The key innovation in the final solution:
 - Representing both circle positions and radii as optimization variables
 - Carefully crafted constraints to enforce non-overlap and boundary conditions
 
-This approach achieved a sum of radii of 2.634, matching the AlphaEvolve paper's result of 2.635 to within 0.04%!
+This approach achieved a sum of radii of 2.634, matching the AlphaEvolve paper's result of 2.635 to within 0.04%. Subsequent evolution has since produced a program that exceeds the paper's result (see Results below).
 
 ![Final Packing Solution](circle_packing_460.png)
 
 ## Results
 
-Our final solution achieves:
+Our best solution to date, reported in issue #156 and found at iteration 206 (generation 13) of a run configured as phase_1 x100 -> phase_2 x100 -> phase_2 x250, achieves:
 
 ```
-Sum of radii: 2.634292402141039
-Target ratio: 0.9997314619131079 (99.97% of AlphaEvolve's result)
+Sum of radii: 2.635977394746595
+Target ratio: 1.0003709277975694 (100.04% of AlphaEvolve's 2.635, i.e. ~0.037% above it)
 ```
 
-This demonstrates that OpenEvolve can successfully reproduce the results from the AlphaEvolve paper on this mathematical optimization problem.
+This demonstrates that OpenEvolve can not only reproduce but exceed the results from the AlphaEvolve paper on this mathematical optimization problem.
+
+**Reproducibility note**: the recorded best program (`best_program.py`) is deterministic — it uses no random initialization, so its result can be independently re-verified with the repository evaluator (an earlier recorded best used an unseeded `np.random` fallback and was not reproducible):
+
+```bash
+python -c "import importlib.util; spec = importlib.util.spec_from_file_location('evaluator', 'examples/circle_packing/evaluator.py'); ev = importlib.util.module_from_spec(spec); spec.loader.exec_module(ev); print(ev.evaluate('examples/circle_packing/best_program.py'))"
+```
+
+This reports `validity=1.0` and `sum_radii=2.6359773947...` (the last digits may vary by ~1e-11 across scipy/BLAS versions). The result is also covered by the `tests/test_circle_packing_best_program.py` regression test.
 
 ## Reproducibility & the target value
 
