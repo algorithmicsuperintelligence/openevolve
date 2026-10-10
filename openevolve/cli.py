@@ -4,10 +4,11 @@ Command-line interface for OpenEvolve
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from openevolve import OpenEvolve
 from openevolve.config import Config, load_config
@@ -53,11 +54,46 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--api-base", help="Base URL for the LLM API", default=None)
 
+    parser.add_argument(
+        "--evaluator-args",
+        help=(
+            "JSON object of keyword arguments forwarded to the 'evaluate' function of the "
+            "evaluation file, e.g. '{\"weight\": 2.0}' (the function must accept them)"
+        ),
+        default=None,
+    )
+
     parser.add_argument("--primary-model", help="Primary LLM model name", default=None)
 
     parser.add_argument("--secondary-model", help="Secondary LLM model name", default=None)
 
     return parser.parse_args()
+
+
+def parse_evaluator_args(raw: str) -> Dict[str, Any]:
+    """
+    Parse the --evaluator-args JSON string into a kwargs dict
+
+    Args:
+        raw: JSON object literal of keyword arguments
+
+    Returns:
+        Dict of keyword arguments for the evaluation function
+
+    Raises:
+        ValueError: If the string is not valid JSON or not a JSON object
+    """
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--evaluator-args is not valid JSON: {e}") from e
+
+    if not isinstance(parsed, dict):
+        type_name = type(parsed).__name__
+        raise ValueError(
+            f"--evaluator-args must be a JSON object of keyword arguments, got {type_name}"
+        )
+    return parsed
 
 
 async def main_async() -> int:
@@ -80,6 +116,16 @@ async def main_async() -> int:
 
     # Load base config from file or defaults
     config = load_config(args.config)
+
+    # Apply evaluator args CLI override (kwargs forwarded to evaluate(), issue #474)
+    if args.evaluator_args is not None:
+        try:
+            config.evaluator.evaluator_args = parse_evaluator_args(args.evaluator_args)
+        except ValueError as e:
+            print(f"Error: {str(e)}")
+            return 1
+        # Print keys only - values may contain secrets and end up in logs
+        print(f"Using evaluator args keys: {sorted(config.evaluator.evaluator_args.keys())}")
 
     # Create config object with command-line overrides
     if args.api_base or args.primary_model or args.secondary_model:

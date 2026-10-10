@@ -575,6 +575,8 @@ evaluator:
   enable_artifacts: true      # Error feedback to LLM
   cascade_evaluation: true    # Multi-stage testing
   use_llm_feedback: true      # AI code quality assessment
+  evaluator_args:             # Keyword arguments forwarded to evaluate()
+    weight: 2.0
 
 prompt:
   # Sophisticated inspiration system
@@ -610,6 +612,39 @@ database:
 ```
 
 **Important**: Return raw values from evaluator, OpenEvolve handles binning automatically.
+
+</details>
+
+<details>
+<summary><b>📞 Passing Arguments to Your Evaluator</b></summary>
+
+If your `evaluate()` function takes extra keyword arguments beyond the program
+path, pass them with the `--evaluator-args` CLI flag (a JSON object):
+
+```bash
+openevolve-run initial_program.py evaluator.py \
+  --evaluator-args '{"weight": 2.0, "label": "experiment-1"}'
+```
+
+or configure them in YAML:
+
+```yaml
+evaluator:
+  evaluator_args:
+    weight: 2.0
+    label: "experiment-1"
+```
+
+OpenEvolve inspects the signature of your `evaluate()` function: arguments are
+forwarded only when the function accepts them (named parameters or `**kwargs`),
+and a startup error lists the offending keys and the actual signature if it
+does not — so typos fail fast instead of silently doing nothing. Evaluators
+with a single `program_path` argument are unaffected.
+
+This replaces the earlier workaround of smuggling per-run settings to the
+evaluator through environment variables. (Note: custom top-level keys in
+`config.yaml` are dropped silently by the config parser — use
+`evaluator.evaluator_args` or the CLI flag instead.)
 
 </details>
 
