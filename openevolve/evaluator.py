@@ -3,7 +3,9 @@ Evaluation system for OpenEvolve
 """
 
 import asyncio
+import functools
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -16,15 +18,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-import traceback
 
 from openevolve.config import EvaluatorConfig
 from openevolve.database import ProgramDatabase
 from openevolve.evaluation_result import EvaluationResult
-from openevolve.database import ProgramDatabase
 from openevolve.llm.ensemble import LLMEnsemble
-from openevolve.utils.async_utils import TaskPool, run_in_executor
 from openevolve.prompt.sampler import PromptSampler
+from openevolve.utils.async_utils import TaskPool, run_in_executor
 from openevolve.utils.format_utils import format_metrics_safe
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,11 @@ class Evaluator:
         self.llm_ensemble = llm_ensemble
         self.prompt_sampler = prompt_sampler
         self.database = database
+
+        # Keyword arguments forwarded to the user's evaluate() function; populated
+        # by _load_evaluation_function() based on config.evaluator.evaluator_args
+        # and the signature of the loaded function
+        self._evaluator_kwargs: Dict[str, Any] = {}
 
         # Create a task pool for parallel evaluation
         self.task_pool = TaskPool(max_concurrency=config.parallel_evaluations)
@@ -98,6 +103,7 @@ class Evaluator:
                 )
 
             self.evaluate_function = module.evaluate
+            self._evaluator_kwargs = self._resolve_evaluator_kwargs(module.evaluate)
             logger.info(f"Successfully loaded evaluation function from {self.evaluation_file}")
 
             # Validate cascade configuration
@@ -105,6 +111,94 @@ class Evaluator:
         except Exception as e:
             logger.error(f"Error loading evaluation function: {str(e)}")
             raise
+
+    def _resolve_evaluator_kwargs(self, evaluate_function: Callable) -> Dict[str, Any]:
+        """
+        Resolve the keyword arguments to forward to the user's evaluate() function.
+
+        Uses inspect.signature to verify that evaluate() actually accepts the
+        configured evaluator_args (GitHub issue #474):
+
+        - Evaluators accepting **kwargs get all configured kwargs.
+        - Evaluators whose named parameters cover the configured keys get them
+          forwarded on every call.
+        - Evaluators that cannot accept a configured key fail here, at startup,
+          with an actionable error instead of failing on every evaluation.
+
+        Evaluators with no configured evaluator_args (the common single
+        `program_path` argument case) are unaffected and keep their existing
+        behavior.
+
+        Args:
+            evaluate_function: The user-provided evaluate() function
+
+        Returns:
+            Dict of keyword arguments to forward (empty when nothing configured)
+
+        Raises:
+            ValueError: If evaluate() cannot accept a configured evaluator_arg
+        """
+        evaluator_args = self.config.evaluator_args or {}
+        if not evaluator_args:
+            return {}
+
+        function_name = getattr(evaluate_function, "__name__", "evaluate")
+        try:
+            signature = inspect.signature(evaluate_function)
+        except (TypeError, ValueError):
+            # Some callables (e.g. certain builtins) expose no signature; forward
+            # as-is and let the call surface any mismatch
+            logger.warning(
+                f"Could not inspect the signature of '{function_name}'; forwarding "
+                f"evaluator_args keys: {sorted(evaluator_args.keys())}"
+            )
+            return dict(evaluator_args)
+
+        # Guard against kwargs that cannot be forwarded together with the program
+        # path passed positionally (e.g. evaluator_args={"program_path": ...} for
+        # evaluate(program_path)). Runs before the **kwargs shortcut below: binding
+        # mirrors the actual call functools.partial(evaluate, **args)(program_path),
+        # so it also rejects a configured key shadowing a positional parameter of a
+        # **kwargs evaluator (TypeError: multiple values for argument).
+        try:
+            signature.bind(object(), **evaluator_args)
+        except TypeError as e:
+            raise ValueError(
+                f"Configured evaluator_args {sorted(evaluator_args.keys())} cannot be "
+                f"forwarded to evaluation function '{function_name}' in "
+                f"{self.evaluation_file}: {e}. Its signature is '{function_name}{signature}'."
+            ) from e
+
+        if any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+        ):
+            # **kwargs swallows everything
+            logger.info(
+                f"Forwarding evaluator_args keys to '{function_name}': "
+                f"{sorted(evaluator_args.keys())}"
+            )
+            return dict(evaluator_args)
+
+        named_params = {
+            name
+            for name, param in signature.parameters.items()
+            if param.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        }
+        unsupported = sorted(set(evaluator_args.keys()) - named_params)
+        if unsupported:
+            raise ValueError(
+                f"Evaluation function '{function_name}' in {self.evaluation_file} does not "
+                f"accept the configured evaluator_args keys: {unsupported}. Its signature is "
+                f"'{function_name}{signature}'. Add the parameters to evaluate(), accept "
+                f"**kwargs, or remove the keys from evaluator.evaluator_args / --evaluator-args."
+            )
+
+        logger.info(
+            f"Forwarding evaluator_args keys to '{function_name}': "
+            f"{sorted(evaluator_args.keys())}"
+        )
+        return dict(evaluator_args)
 
     def _validate_cascade_configuration(self, module) -> None:
         """
@@ -356,7 +450,11 @@ class Evaluator:
         # Create a coroutine that runs the evaluation function in an executor
         async def run_evaluation():
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(self._executor, self.evaluate_function, program_path)
+            return await loop.run_in_executor(
+                self._executor,
+                functools.partial(self.evaluate_function, **self._evaluator_kwargs),
+                program_path,
+            )
 
         # Run the evaluation with timeout - let exceptions bubble up for retry handling
         result = await asyncio.wait_for(run_evaluation(), timeout=self.config.timeout)

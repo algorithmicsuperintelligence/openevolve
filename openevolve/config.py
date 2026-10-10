@@ -409,6 +409,11 @@ class EvaluatorConfig:
     enable_artifacts: bool = True
     max_artifact_storage: int = 100 * 1024 * 1024  # 100MB per program
 
+    # Extra keyword arguments forwarded to the user's evaluate() function
+    # (only applied when its signature accepts them; see openevolve.evaluator).
+    # Settable via YAML ('evaluator.evaluator_args') or the --evaluator-args CLI flag.
+    evaluator_args: Optional[Dict[str, Any]] = None
+
 
 @dataclass
 class EvolutionTraceConfig:
