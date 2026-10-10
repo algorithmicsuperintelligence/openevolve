@@ -30,7 +30,7 @@ from openevolve.population import (
     ProgramState,
 )
 from openevolve.utils.code_utils import calculate_edit_distance
-from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,9 @@ class ProgramDatabase:
         # Track the last iteration number (for resuming)
         self.last_iteration: int = 0
 
+        # Initialize before loading so restored MAP-Elites scales are retained.
+        self.feature_stats: Dict[str, Dict[str, Union[float, float, List[float]]]] = {}
+
         # Load database from disk if path is provided
         if config.db_path and os.path.exists(config.db_path):
             self.load(config.db_path)
@@ -211,7 +214,6 @@ class ProgramDatabase:
         self.diversity_reference_size: int = getattr(config, "diversity_reference_size", 20)
 
         # Feature scaling infrastructure
-        self.feature_stats: Dict[str, Dict[str, Union[float, float, List[float]]]] = {}
         self.feature_scaling_method: str = "minmax"  # Options: minmax, zscore, percentile
 
         # Per-dimension bins support
@@ -1136,6 +1138,7 @@ class ProgramDatabase:
         Use LLM to judge if a program is novel compared to a similar existing program
         """
         import asyncio
+
         from openevolve.novelty_judge import NOVELTY_SYSTEM_MSG, NOVELTY_USER_MSG
 
         user_msg = NOVELTY_USER_MSG.format(
