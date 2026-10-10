@@ -65,9 +65,13 @@ Then use with OpenEvolve:
 
 ```python
 from openevolve import OpenEvolve
+from openevolve.config import Config
+
+config = Config()
+config.from_yaml("my_config.yaml")
 evolve = OpenEvolve(
     initial_program_path="program.py",
     evaluation_file="evaluator.py", 
-    config_path="my_config.yaml"
+    config=config
 )
 ```

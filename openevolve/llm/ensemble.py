@@ -23,6 +23,13 @@ try:
 except ImportError:
     pass
 
+try:
+    from openevolve.llm.copilot_cli import CopilotCLILLM
+
+    _PROVIDER_REGISTRY["copilot_cli"] = lambda cfg: CopilotCLILLM(cfg)
+except ImportError:
+    pass
+
 
 def _create_model(model_cfg: LLMModelConfig) -> LLMInterface:
     if model_cfg.init_client:
@@ -71,17 +78,23 @@ class LLMEnsemble:
             )
             logger._ensemble_logged = True
 
+        self.last_usage: Optional[Dict[str, Any]] = None
+
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate text using a randomly selected model based on weights"""
         model = self._sample_model()
-        return await model.generate(prompt, **kwargs)
+        res = await model.generate(prompt, **kwargs)
+        self.last_usage = getattr(model, "last_usage", None)
+        return res
 
     async def generate_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
     ) -> str:
         """Generate text using a system message and conversational context"""
         model = self._sample_model()
-        return await model.generate_with_context(system_message, messages, **kwargs)
+        res = await model.generate_with_context(system_message, messages, **kwargs)
+        self.last_usage = getattr(model, "last_usage", None)
+        return res
 
     def _sample_model(self) -> LLMInterface:
         """Sample a model from the ensemble based on weights"""

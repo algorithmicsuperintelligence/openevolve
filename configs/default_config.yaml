@@ -12,6 +12,7 @@ random_seed: 42                       # Random seed for reproducibility (null = 
 # Evolution settings
 diff_based_evolution: true            # Use diff-based evolution (true) or full rewrites (false)
 max_code_length: 10000                # Maximum allowed code length in characters
+enforce_evolve_blocks: false          # Revert LLM edits outside EVOLVE-BLOCK-START/END markers
 
 # Early stopping settings
 early_stopping_patience: null         # Stop after N iterations without improvement (null = disabled)
@@ -56,6 +57,8 @@ llm:
 prompt:
   template_dir: null                  # Custom directory for prompt templates
   system_message: "You are an expert coder helping to improve programs through evolution."
+  # Optional literal text or template names by island index; null/missing uses system_message
+  island_system_messages: []
   evaluator_system_message: "You are an expert code reviewer."
 
   # Number of examples to include in the prompt

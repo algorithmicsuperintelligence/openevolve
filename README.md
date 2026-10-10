@@ -118,13 +118,59 @@ def bubble_sort(arr):
                 arr[j], arr[j+1] = arr[j+1], arr[j] 
     return arr
 
-result = evolve_function(
-    bubble_sort,
-    test_cases=[([3,1,2], [1,2,3]), ([5,2,8], [2,5,8])],
-    iterations=50
-)
-print(f"Evolved sorting algorithm: {result.best_code}")
+if __name__ == '__main__':
+    result = evolve_function(
+        bubble_sort,
+        test_cases=[([3,1,2], [1,2,3]), ([5,2,8], [2,5,8])],
+        iterations=50
+    )
+    print(f"Evolved sorting algorithm: {result.best_code}")
 ```
+
+> **Note:** On macOS and Windows, Python uses `spawn` for multiprocessing. You must wrap evolution calls in `if __name__ == '__main__':` to avoid subprocess bootstrap errors.
+To experiment with island scheduling, pass an optional selector to `run_evolution`:
+
+```python
+def select_island(context):
+    # Schedule the next iteration on the island with the fewest pending tasks.
+    return min(range(len(context.islands)), key=lambda i: context.pending_counts[i])
+
+result = run_evolution(
+    initial_program="program.py",
+    evaluator="evaluator.py",
+    island_selector=select_island,
+)
+```
+
+The selector receives a read-only `IslandSelectionContext` with the iteration number,
+pending task counts, and each island's population size, best and average score, diversity, and
+generation. It must return an island ID from `0` to `num_islands - 1`. It runs in the
+main process before each iteration is submitted. Without a selector, OpenEvolve uses
+its existing balanced island scheduling.
+
+Population management can also use decision hooks. For example, this policy lets a
+candidate replace an island's MAP-Elites cell occupant when their scores tie:
+
+```python
+from openevolve import run_evolution
+from openevolve.population import PopulationStrategy
+
+strategy = PopulationStrategy(
+    replace_cell=lambda state, candidate, incumbent, island: (
+        candidate.metrics["combined_score"] >= incumbent.metrics["combined_score"]
+    ),
+)
+result = run_evolution("program.py", "evaluator.py", population_strategy=strategy)
+```
+
+Other optional hooks are `admit(state, candidate, island) -> bool`,
+`archive(state, candidate) -> ArchiveDecision`,
+`evict(state, count, protected_ids) -> sequence of program IDs`,
+`migration_due(state) -> bool`, and `migrate(state) -> sequence of MigrationMove`.
+`state` is a detached `PopulationSnapshot` of programs, island memberships, cell owners,
+the archive, population limits, and migration generations. Unspecified hooks retain
+the existing rules. `ProgramDatabase` validates decisions and applies all changes;
+the strategy never receives the mutable database. The initial seed cannot be rejected.
 
 **Prefer Docker?** See the [Installation & Setup](#installation--setup) section for Docker options.
 
@@ -310,7 +356,7 @@ export OPENAI_API_KEY="sk-..."
 # config.yaml
 llm:
   api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  model: "gemini-2.5-pro"
+  primary_model: "gemini-2.5-pro"
 ```
 
 ```bash
@@ -326,7 +372,7 @@ export OPENAI_API_KEY="your-gemini-api-key"
 # config.yaml
 llm:
   api_base: "http://localhost:11434/v1"  # Ollama
-  model: "codellama:7b"
+  primary_model: "codellama:7b"
 ```
 
 </details>
@@ -350,7 +396,7 @@ export OPENAI_API_KEY="your-actual-key"
 ```yaml
 llm:
   api_base: "http://localhost:8000/v1"
-  model: "moa&readurls-o3"  # Test-time compute + web access
+  primary_model: "moa&readurls-o3"  # Test-time compute + web access
 ```
 
 </details>
@@ -381,6 +427,33 @@ llm:
 ```
 
 See the [Claude Code quickstart example](examples/claude_code_quickstart/) for a complete walkthrough.
+
+</details>
+
+<details>
+<summary><b>🤖 GitHub Copilot CLI (No API Key)</b></summary>
+
+Use the [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) as the LLM backend — no API keys needed, authentication uses your GitHub Copilot subscription.
+
+```bash
+# Install and authenticate
+npm install -g @github/copilot
+copilot login
+```
+
+```yaml
+# config.yaml
+llm:
+  provider: "copilot_cli"
+  models:
+    - name: "claude-sonnet-4.6"
+      weight: 0.8
+      reasoning_effort: "medium"
+    - name: "gpt-5.4"
+      weight: 0.2
+```
+
+See the [Copilot CLI quickstart example](examples/copilot_cli_quickstart/) for a complete walkthrough.
 
 </details>
 
@@ -495,6 +568,8 @@ database:
   # Optional novelty filtering with Gemini embeddings
   embedding_model: "gemini-embedding-001"
   similarity_threshold: 0.99
+  # Or any OpenAI-compatible embedding endpoint (OpenRouter, local servers):
+  # embedding_api_base: "https://openrouter.ai/api/v1"  # or OPENAI_EMBEDDING_BASE_URL
 
 evaluator:
   enable_artifacts: true      # Error feedback to LLM

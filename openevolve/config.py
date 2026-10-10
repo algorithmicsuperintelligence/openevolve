@@ -57,6 +57,7 @@ class LLMModelConfig:
     name: str = None
 
     # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
+    # Also supports "copilot_cli" (GitHub Copilot CLI)
     provider: Optional[str] = None
 
     # Custom LLM client
@@ -84,6 +85,12 @@ class LLMModelConfig:
 
     # Claude Code CLI budget per call (USD)
     max_budget_usd: Optional[float] = None
+
+    # GitHub Copilot CLI budget per call (AI credits)
+    max_ai_credits: Optional[float] = None
+
+    # GitHub Copilot CLI: run the agent with all tools pre-approved
+    allow_all_tools: Optional[bool] = None
 
     # Manual mode (human-in-the-loop)
     manual_mode: Optional[bool] = None
@@ -257,6 +264,7 @@ class PromptConfig:
 
     template_dir: Optional[str] = None
     system_message: str = "system_message"
+    island_system_messages: List[Optional[str]] = field(default_factory=list)
     evaluator_system_message: str = "evaluator_system_message"
 
     # Large-codebase mode: represent programs in prompts via compact changes descriptions
@@ -365,6 +373,9 @@ class DatabaseConfig:
 
     novelty_llm: Optional["LLMInterface"] = None
     embedding_model: Optional[str] = None
+    # OpenAI-compatible base URL for embeddings (e.g. OpenRouter or a local server);
+    # falls back to the OPENAI_EMBEDDING_BASE_URL environment variable
+    embedding_api_base: Optional[str] = None
     similarity_threshold: float = 0.99
 
 
@@ -435,6 +446,8 @@ class Config:
     # Evolution settings
     diff_based_evolution: bool = True
     max_code_length: int = 10000
+    # Revert any LLM edits outside the EVOLVE-BLOCK-START/END regions
+    enforce_evolve_blocks: bool = False
     diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
 
     # Early stopping settings
@@ -476,6 +489,16 @@ class Config:
                 del config_dict["llm"]["temperature"]
             if "top_p" in config_dict["llm"] and config_dict["llm"]["top_p"] is None:
                 del config_dict["llm"]["top_p"]
+            # 'model' is not a config field (models are 'llm.models' or
+            # 'llm.primary_model'), and dacite silently drops unknown keys. Left
+            # unchecked, such configs pass validation with an empty model ensemble
+            # and every LLM call later fails with "IndexError: list index out of
+            # range" (issue #427). Fail here with the correct spelling instead.
+            if isinstance(config_dict["llm"], dict) and "model" in config_dict["llm"]:
+                raise ValueError(
+                    "Invalid config key 'llm.model'. Use 'llm.primary_model' or the "
+                    "'llm.models' array instead (see README configuration section)."
+                )
 
         config: Config = dacite.from_dict(
             data_class=cls,
@@ -488,6 +511,11 @@ class Config:
 
         if config.database.random_seed is None and config.random_seed is not None:
             config.database.random_seed = config.random_seed
+
+        if len(config.prompt.island_system_messages) > config.database.num_islands:
+            raise ValueError(
+                "prompt.island_system_messages has more entries than database.num_islands"
+            )
 
         if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
             raise ValueError(
