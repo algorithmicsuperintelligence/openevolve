@@ -88,6 +88,12 @@ python openevolve-run.py examples/function_minimization/initial_program.py \
   examples/function_minimization/evaluator.py \
   --config examples/function_minimization/config.yaml \
   --iterations 50
+
+# Running several evolutions in parallel? Give each run a logger prefix so its
+# log output is distinguishable (logs as "run1.openevolve.*")
+python openevolve-run.py examples/function_minimization/initial_program.py \
+  examples/function_minimization/evaluator.py \
+  --logger-prefix run1
 ```
 
 **Note:** The example config uses Gemini by default, but you can use any OpenAI-compatible provider by modifying the `config.yaml`. See the [configs](configs/) for full configuration options.
@@ -548,6 +554,10 @@ OpenEvolve offers extensive configuration for advanced users:
 # Advanced Configuration Example
 max_iterations: 1000
 random_seed: 42  # Full reproducibility
+
+# Optional prefix for all logger names, e.g. "run1" logs as "run1.openevolve.*";
+# useful to tell apart log output from multiple concurrent runs
+logger_prefix: "run1"
 
 llm:
   # Ensemble configuration

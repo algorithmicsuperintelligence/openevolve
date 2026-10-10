@@ -437,6 +437,9 @@ class Config:
     checkpoint_interval: int = 100
     log_level: str = "INFO"
     log_dir: Optional[str] = None
+    # Optional prefix applied to all OpenEvolve logger names (e.g. "run1" logs
+    # as "run1.openevolve.*"), useful to tell apart concurrent runs (issue #290)
+    logger_prefix: Optional[str] = None
     random_seed: Optional[int] = 42
     language: str = None
     file_suffix: str = ".py"
