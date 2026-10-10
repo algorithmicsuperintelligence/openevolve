@@ -30,7 +30,7 @@ from openevolve.population import (
     ProgramState,
 )
 from openevolve.utils.code_utils import calculate_edit_distance
-from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
@@ -1136,6 +1136,7 @@ class ProgramDatabase:
         Use LLM to judge if a program is novel compared to a similar existing program
         """
         import asyncio
+
         from openevolve.novelty_judge import NOVELTY_SYSTEM_MSG, NOVELTY_USER_MSG
 
         user_msg = NOVELTY_USER_MSG.format(
@@ -1791,7 +1792,7 @@ class ProgramDatabase:
                 inspirations.append(program)
 
         # Add diverse programs from within the island
-        if len(island_programs) > n and len(inspirations) < n:
+        if len(inspirations) < n:
             remaining_slots = n - len(inspirations)
 
             # Try to sample from different feature cells within the island
