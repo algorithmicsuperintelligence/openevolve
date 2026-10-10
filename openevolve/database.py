@@ -30,7 +30,7 @@ from openevolve.population import (
     ProgramState,
 )
 from openevolve.utils.code_utils import calculate_edit_distance
-from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
@@ -1136,6 +1136,7 @@ class ProgramDatabase:
         Use LLM to judge if a program is novel compared to a similar existing program
         """
         import asyncio
+
         from openevolve.novelty_judge import NOVELTY_SYSTEM_MSG, NOVELTY_USER_MSG
 
         user_msg = NOVELTY_USER_MSG.format(
@@ -1811,8 +1812,14 @@ class ProgramDatabase:
             for _ in range(remaining_slots * 3):  # Try more times to find nearby programs
                 # Perturb coordinates
                 perturbed_coords = [
-                    max(0, min(self.feature_bins - 1, c + random.randint(-2, 2)))
-                    for c in feature_coords
+                    max(
+                        0,
+                        min(
+                            self.feature_bins_per_dim.get(dim, self.feature_bins) - 1,
+                            c + random.randint(-2, 2),
+                        ),
+                    )
+                    for dim, c in zip(self.config.feature_dimensions, feature_coords)
                 ]
 
                 cell_key = self._feature_coords_to_key(perturbed_coords)
