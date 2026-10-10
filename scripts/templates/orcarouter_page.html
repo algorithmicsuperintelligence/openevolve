@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>OpenEvolve – OrcaRouter</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/css/orcarouter.css"/>
+</head>
+<body data-theme="light">
+  <header class="topbar">
+    <div class="brand">
+      <img id="orcaLogo" src="https://www.orcarouter.ai/orca-logo-classic.png"
+           alt="OrcaRouter" width="32" height="32"/>
+      <h1>OrcaRouter</h1>
+      <span class="subtitle">OrcaRouter is an OpenAI-compatible AI gateway that routes many
+        providers behind one endpoint.</span>
+    </div>
+    <a class="ghost link" href="{{ key_dashboard_url }}" target="_blank" rel="noreferrer noopener">
+      Key dashboard
+    </a>
+  </header>
+
+  <main class="container">
+    <section class="panel" aria-labelledby="auth-heading">
+      <h2 id="auth-heading">Authentication method</h2>
+      <p class="hint">
+        Both options produce the same OrcaRouter credential. Pick whichever suits you —
+        you can switch at any time.
+      </p>
+
+      <div class="cards" id="authMethods">
+        <article class="card" id="api-key-card" data-auth-method="api_key">
+          <header>
+            <h3>{{ provider_api_key }}</h3>
+            <span class="badge">API key</span>
+          </header>
+          <p class="card-hint">Paste an existing <code>sk-orca-…</code> key.</p>
+          <label for="apiKeyInput">OrcaRouter API key</label>
+          <input id="apiKeyInput" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="sk-orca-…"/>
+          <div class="row">
+            <button id="saveKeyBtn" class="primary">Save API key</button>
+            <button id="clearKeyBtn" class="ghost">Clear</button>
+          </div>
+          <p class="card-status" id="apiKeyStatus" role="status"></p>
+        </article>
+
+        <article class="card" id="oauth-card" data-auth-method="oauth_pkce">
+          <header>
+            <h3>{{ provider_oauth }}</h3>
+            <span class="badge">OAuth 2.0 + PKCE</span>
+          </header>
+          <p class="card-hint">Sign in with your OrcaRouter account; no client secret involved.</p>
+          <label for="oobToggle">Delivery</label>
+          <div class="row">
+            <label class="toggle">
+              <input id="oobToggle" type="checkbox"/>
+              <span>Show me a code (out-of-band)</span>
+            </label>
+          </div>
+          <div class="row">
+            <button id="connectBtn" class="primary">Connect with OrcaRouter</button>
+            <button id="cancelLoginBtn" class="ghost">Cancel</button>
+          </div>
+          <p class="card-status" id="oauthStatus" role="status"></p>
+          <p class="auth-url" id="authorizeUrl" hidden></p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="status-heading">
+      <h2 id="status-heading">Credential</h2>
+      <dl class="status-grid" id="credentialStatus">
+        <div><dt>Authenticated</dt><dd id="stAuthenticated">—</dd></div>
+        <div><dt>Secret</dt><dd id="stSecret">—</dd></div>
+        <div><dt>Source</dt><dd id="stSource">—</dd></div>
+        <div><dt>Generation</dt><dd id="stGeneration">—</dd></div>
+        <div><dt>Granted scope</dt><dd id="stScope">—</dd></div>
+        <div><dt>Inference base</dt><dd id="stApiBase">—</dd></div>
+      </dl>
+      <div class="row">
+        <button id="logoutBtn" class="ghost">Sign out / forget credential</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="models-heading">
+      <h2 id="models-heading">Models</h2>
+      <p class="hint">
+        The list comes from <code>GET /v1/models</code> on the configured inference origin,
+        filtered for the selected entry point. Text, image, audio and video intakes each
+        require the catalog to declare that input modality.
+      </p>
+      <div class="row filters">
+        <label for="capabilitySelect">Capability</label>
+        <select id="capabilitySelect">
+          <option value="chat">chat</option>
+          <option value="embedding">embedding</option>
+          <option value="image">image generation</option>
+          <option value="video">video generation</option>
+          <option value="rerank">rerank</option>
+        </select>
+        <label for="modalitySelect">Input modality</label>
+        <select id="modalitySelect">
+          <option value="text">text</option>
+          <option value="image">image</option>
+          <option value="audio">audio</option>
+          <option value="video">video</option>
+        </select>
+        <button id="refreshModelsBtn" class="ghost">Refresh</button>
+      </div>
+
+      <div class="selector" id="modelSelector">
+        <button id="modelTrigger" class="trigger" aria-haspopup="listbox"
+                aria-expanded="false" aria-controls="modelPanel">
+          <span id="modelTriggerLabel">Select a model…</span>
+          <span class="caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="modelPanel" class="panel-list" role="listbox" aria-label="OrcaRouter models" hidden>
+        </div>
+      </div>
+
+      <p class="model-status" id="modelStatus" role="status"></p>
+      <ul class="selected-model" id="selectedModel" hidden></ul>
+    </section>
+  </main>
+
+  <script src="/static/js/orcarouter.js"></script>
+</body>
+</html>

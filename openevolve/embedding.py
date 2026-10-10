@@ -27,6 +27,11 @@ GEMINI_EMBEDDING_MODELS = [
     "gemini-embedding-001",
 ]
 
+#: OrcaRouter exposes the same OpenAI-compatible embeddings route as the rest of
+#: its gateway. Selecting it by provider name is the first-class way in; the
+#: model is then validated against the live capability-filtered catalog.
+ORCAROUTER_PROVIDER = "orcarouter"
+
 OPENAI_EMBEDDING_COSTS = {
     "text-embedding-3-small": 0.02 / M,
     "text-embedding-3-large": 0.13 / M,
@@ -34,7 +39,12 @@ OPENAI_EMBEDDING_COSTS = {
 
 
 class EmbeddingClient:
-    def __init__(self, model_name: str = "text-embedding-3-small", api_base: Optional[str] = None):
+    def __init__(
+        self,
+        model_name: str = "text-embedding-3-small",
+        api_base: Optional[str] = None,
+        provider: Optional[str] = None,
+    ):
         """
         Initialize the EmbeddingClient.
 
@@ -42,12 +52,62 @@ class EmbeddingClient:
             model (str): The OpenAI embedding model name to use.
             api_base (str, optional): OpenAI-compatible base URL for embeddings.
                 Defaults to the OPENAI_EMBEDDING_BASE_URL environment variable.
+            provider (str, optional): Named provider, e.g. "orcarouter". When set,
+                the provider's own base URL, credential and catalog validation
+                are used instead of the OpenAI/Azure/Gemini branches.
         """
-        self.client, self.model = self._get_client_model(model_name, api_base)
+        self.client, self.model = self._get_client_model(model_name, api_base, provider)
+
+    def _orcarouter_client(
+        self, model_name: str, api_base: Optional[str]
+    ) -> tuple[openai.OpenAI, str]:
+        """Embeddings through the OrcaRouter provider.
+
+        Reuses the shared credential seam, so an embeddings call works with
+        either the pasted API key or a PKCE sign-in, and the model is checked
+        against the live capability-filtered catalog before use.
+        """
+        from openevolve.llm.orcarouter_auth import (
+            KEY_ENV,
+            resolve_api_base as _resolve_orca_api_base,
+        )
+        from openevolve.llm.orcarouter_catalog import (
+            CAPABILITY_EMBEDDING,
+            OrcaCatalogClient,
+        )
+        from openevolve.llm.orcarouter import effective_api_base, orcarouter_credential_status
+
+        base = effective_api_base(api_base) or _resolve_orca_api_base()
+        status = orcarouter_credential_status()
+        if not status.get("authenticated"):
+            raise ValueError(
+                "No usable OrcaRouter credential for embeddings. Sign in with "
+                "`openevolve-run.py connect orcarouter`, or set "
+                f"{KEY_ENV}."
+            )
+        from openevolve.llm.orcarouter_auth import OrcaCredentialStore
+
+        stored = OrcaCredentialStore().load()
+        api_key = stored.api_key if stored else os.getenv(KEY_ENV)
+
+        catalog = OrcaCatalogClient(api_key=api_key, api_base=base).discover(
+            capability=CAPABILITY_EMBEDDING
+        )
+        if model_name not in catalog.ids(CAPABILITY_EMBEDDING):
+            available = ", ".join(catalog.ids(CAPABILITY_EMBEDDING)) or "none advertised"
+            raise ValueError(
+                f"'{model_name}' is not an embeddings model this OrcaRouter account "
+                f"offers (catalog={catalog.source}). Available: {available}"
+            )
+        client = openai.OpenAI(api_key=api_key, base_url=base)
+        return client, model_name
 
     def _get_client_model(
-        self, model_name: str, api_base: Optional[str] = None
+        self, model_name: str, api_base: Optional[str] = None, provider: Optional[str] = None
     ) -> tuple[openai.OpenAI, str]:
+        if provider == ORCAROUTER_PROVIDER:
+            return self._orcarouter_client(model_name, api_base)
+
         api_base = api_base or os.getenv("OPENAI_EMBEDDING_BASE_URL")
         if api_base:
             # Any OpenAI-compatible endpoint (OpenRouter, local servers, ...)

@@ -49,6 +49,9 @@ pr_sanity*/
 .coverage
 htmlcov/
 
+# Generated GUI acceptance evidence (produced by tests/test_orcarouter_evidence.py)
+orca-evidence/
+
 # Misc
 .DS_Store
 .venv

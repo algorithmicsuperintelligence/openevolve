@@ -19,6 +19,7 @@ _PROVIDER_REGISTRY = {
 
 try:
     from openevolve.llm.claude_code import ClaudeCodeLLM
+
     _PROVIDER_REGISTRY["claude_code"] = lambda cfg: ClaudeCodeLLM(cfg)
 except ImportError:
     pass
@@ -27,6 +28,25 @@ try:
     from openevolve.llm.copilot_cli import CopilotCLILLM
 
     _PROVIDER_REGISTRY["copilot_cli"] = lambda cfg: CopilotCLILLM(cfg)
+except ImportError:
+    pass
+
+try:
+    from openevolve.llm.orcarouter import (
+        PROVIDER_ID_KEY as ORCAROUTER_PROVIDER_ID_KEY,
+        PROVIDER_ID_OAUTH as ORCAROUTER_PROVIDER_ID_OAUTH,
+        OrcaRouterLLM,
+    )
+
+    # OrcaRouter is a named provider with two credential entries. Both share the
+    # same OpenAI-compatible adapter and model namespace; only the way the
+    # credential is obtained differs.
+    _PROVIDER_REGISTRY[ORCAROUTER_PROVIDER_ID_KEY] = lambda cfg: OrcaRouterLLM(
+        cfg, provider_id=ORCAROUTER_PROVIDER_ID_KEY
+    )
+    _PROVIDER_REGISTRY[ORCAROUTER_PROVIDER_ID_OAUTH] = lambda cfg: OrcaRouterLLM(
+        cfg, provider_id=ORCAROUTER_PROVIDER_ID_OAUTH
+    )
 except ImportError:
     pass
 

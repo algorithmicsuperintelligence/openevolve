@@ -58,7 +58,13 @@ class LLMModelConfig:
 
     # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
     # Also supports "copilot_cli" (GitHub Copilot CLI)
+    # Also supports "orcarouter" (OrcaRouter with an sk-orca-... API key) and
+    # "orcarouter_oauth" (OrcaRouter via OAuth 2.0 + PKCE account sign-in).
     provider: Optional[str] = None
+
+    # OrcaRouter: force the out-of-band (pasted code) sign-in instead of the
+    # loopback browser redirect. Useful on hosts that cannot receive a redirect.
+    orcarouter_oob: Optional[bool] = None
 
     # Custom LLM client
     init_client: Optional[Callable] = None
@@ -189,6 +195,7 @@ class LLMConfig(LLMModelConfig):
             "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
+            "orcarouter_oob": self.orcarouter_oob,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
@@ -246,6 +253,7 @@ class LLMConfig(LLMModelConfig):
             "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
+            "orcarouter_oob": self.orcarouter_oob,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
