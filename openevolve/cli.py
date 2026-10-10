@@ -47,6 +47,15 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--logger-prefix",
+        help=(
+            "Optional prefix applied to all OpenEvolve logger names (e.g. 'run1' logs as "
+            "'run1.openevolve.*'), useful to tell apart log output from concurrent runs"
+        ),
+        default=None,
+    )
+
+    parser.add_argument(
         "--checkpoint",
         help="Path to checkpoint directory to resume from (e.g., openevolve_output/checkpoints/checkpoint_50)",
         default=None,
@@ -126,6 +135,12 @@ async def main_async() -> int:
             return 1
         # Print keys only - values may contain secrets and end up in logs
         print(f"Using evaluator args keys: {sorted(config.evaluator.evaluator_args.keys())}")
+
+    # Apply logger prefix CLI override (issue #290); must happen before the
+    # OpenEvolve constructor runs _setup_logging
+    if args.logger_prefix:
+        config.logger_prefix = args.logger_prefix
+        print(f"Using logger prefix: {config.logger_prefix}")
 
     # Create config object with command-line overrides
     if args.api_base or args.primary_model or args.secondary_model:
