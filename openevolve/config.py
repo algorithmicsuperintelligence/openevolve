@@ -489,6 +489,16 @@ class Config:
                 del config_dict["llm"]["temperature"]
             if "top_p" in config_dict["llm"] and config_dict["llm"]["top_p"] is None:
                 del config_dict["llm"]["top_p"]
+            # 'model' is not a config field (models are 'llm.models' or
+            # 'llm.primary_model'), and dacite silently drops unknown keys. Left
+            # unchecked, such configs pass validation with an empty model ensemble
+            # and every LLM call later fails with "IndexError: list index out of
+            # range" (issue #427). Fail here with the correct spelling instead.
+            if isinstance(config_dict["llm"], dict) and "model" in config_dict["llm"]:
+                raise ValueError(
+                    "Invalid config key 'llm.model'. Use 'llm.primary_model' or the "
+                    "'llm.models' array instead (see README configuration section)."
+                )
 
         config: Config = dacite.from_dict(
             data_class=cls,
