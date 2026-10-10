@@ -141,6 +141,33 @@ def evaluate(program_path):
 
         self.assertIn("program_path", str(ctx.exception))
 
+    def test_program_path_collision_raises_for_var_keyword_evaluator(self):
+        """A configured key shadowing the positional param of a **kwargs evaluator is rejected"""
+        eval_file = self._write_eval_file("""
+def evaluate(program_path, **kwargs):
+    return {"score": kwargs.get("weight", 1.0)}
+""")
+        with self.assertRaises(ValueError) as ctx:
+            self._create_evaluator(eval_file, evaluator_args={"program_path": "other.py"})
+
+        message = str(ctx.exception)
+        self.assertIn("program_path", message)
+        self.assertIn("multiple values", message)
+
+    def test_var_keyword_evaluator_still_accepts_non_colliding_kwargs(self):
+        """**kwargs evaluators keep receiving configured keys that do not shadow parameters"""
+        eval_file = self._write_eval_file("""
+def evaluate(program_path, **kwargs):
+    return {"score": kwargs.get("weight", 1.0)}
+""")
+        evaluator = self._create_evaluator(eval_file, evaluator_args={"weight": 0.25})
+
+        async def run_test():
+            return await evaluator.evaluate_program("x = 1", "test_vk_no_collision")
+
+        result = asyncio.run(run_test())
+        self.assertEqual(result["score"], 0.25)
+
     def test_error_lists_actual_signature(self):
         """The actionable error includes the evaluator's actual signature"""
         eval_file = self._write_eval_file("""

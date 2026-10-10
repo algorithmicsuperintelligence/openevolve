@@ -154,6 +154,21 @@ class Evaluator:
             )
             return dict(evaluator_args)
 
+        # Guard against kwargs that cannot be forwarded together with the program
+        # path passed positionally (e.g. evaluator_args={"program_path": ...} for
+        # evaluate(program_path)). Runs before the **kwargs shortcut below: binding
+        # mirrors the actual call functools.partial(evaluate, **args)(program_path),
+        # so it also rejects a configured key shadowing a positional parameter of a
+        # **kwargs evaluator (TypeError: multiple values for argument).
+        try:
+            signature.bind(object(), **evaluator_args)
+        except TypeError as e:
+            raise ValueError(
+                f"Configured evaluator_args {sorted(evaluator_args.keys())} cannot be "
+                f"forwarded to evaluation function '{function_name}' in "
+                f"{self.evaluation_file}: {e}. Its signature is '{function_name}{signature}'."
+            ) from e
+
         if any(
             param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
         ):
@@ -178,17 +193,6 @@ class Evaluator:
                 f"'{function_name}{signature}'. Add the parameters to evaluate(), accept "
                 f"**kwargs, or remove the keys from evaluator.evaluator_args / --evaluator-args."
             )
-
-        # Guard against kwargs colliding with the program path passed positionally
-        # (e.g. evaluator_args={"program_path": ...} for evaluate(program_path))
-        try:
-            signature.bind(object(), **evaluator_args)
-        except TypeError as e:
-            raise ValueError(
-                f"Configured evaluator_args {sorted(evaluator_args.keys())} cannot be "
-                f"forwarded to evaluation function '{function_name}' in "
-                f"{self.evaluation_file}: {e}. Its signature is '{function_name}{signature}'."
-            ) from e
 
         logger.info(
             f"Forwarding evaluator_args keys to '{function_name}': "
