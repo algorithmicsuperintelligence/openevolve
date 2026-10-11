@@ -703,41 +703,45 @@ class Evaluator:
                 import re
 
                 artifacts = {}
-                avg_metrics = {}
+                weighted_metrics = {}
+                metric_weights = {}
                 for i, response in enumerate(responses):
-                    json_match = re.search(json_pattern, response, re.DOTALL)
-
-                    if json_match:
-                        json_str = json_match.group(1)
-                    else:
-                        # Try to extract JSON directly
-                        json_str = response
-                        # Remove non-JSON parts
-                        start_idx = json_str.find("{")
-                        end_idx = json_str.rfind("}") + 1
-                        if start_idx >= 0 and end_idx > start_idx:
-                            json_str = json_str[start_idx:end_idx]
-
-                    # Parse JSON
-                    result = json.loads(json_str)
-
-                    # All non-numeric values are artifacts, all numeric values are metrics
-                    metrics = {}
-                    for key, value in result.items():
-                        if not isinstance(value, (int, float)):
-                            artifacts[key] = value
-                        else:
-                            metrics[key] = float(value)
-
-                    # Weight of the model in the ensemble
                     weight = self.llm_ensemble.weights[i] if self.llm_ensemble.weights else 1.0
+                    if weight <= 0:
+                        continue
 
-                    # Average the metrics
-                    for name, value in metrics.items():
-                        if name in avg_metrics:
-                            avg_metrics[name] += value * weight
+                    try:
+                        json_match = re.search(json_pattern, response, re.DOTALL)
+                        if json_match:
+                            json_str = json_match.group(1)
                         else:
-                            avg_metrics[name] = value * weight
+                            json_str = response
+                            start_idx = json_str.find("{")
+                            end_idx = json_str.rfind("}") + 1
+                            if start_idx >= 0 and end_idx > start_idx:
+                                json_str = json_str[start_idx:end_idx]
+
+                        result = json.loads(json_str)
+                        if not isinstance(result, dict):
+                            raise ValueError("LLM evaluation must return a JSON object")
+                    except (ValueError, TypeError) as error:
+                        logger.warning("Skipping invalid LLM judge response %d: %s", i, error)
+                        continue
+
+                    for name, value in result.items():
+                        if not isinstance(value, (int, float)):
+                            artifacts[name] = value
+                            continue
+                        weighted_metrics[name] = (
+                            weighted_metrics.get(name, 0.0) + float(value) * weight
+                        )
+                        metric_weights[name] = metric_weights.get(name, 0.0) + weight
+
+                # A missing or invalid response is not a zero score. Normalize
+                # each metric using only the judges that actually supplied it.
+                avg_metrics = {
+                    name: value / metric_weights[name] for name, value in weighted_metrics.items()
+                }
 
                 return EvaluationResult(
                     metrics=avg_metrics,
