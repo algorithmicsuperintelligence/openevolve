@@ -168,5 +168,44 @@ class TestProviderRegistry(unittest.TestCase):
         self.assertIsInstance(model, ClaudeCodeLLM)
 
 
+class TestRealConfigBudget(unittest.TestCase):
+    def _assert_cli_budget(self, model_options, expected, **call_options):
+        from openevolve.config import Config
+        from openevolve.llm.ensemble import _create_model
+
+        config = Config.from_dict(
+            {
+                "llm": {
+                    "provider": "claude_code",
+                    "retries": 0,
+                    "models": [{"name": "sonnet", **model_options}],
+                }
+            }
+        )
+        model = _create_model(config.llm.models[0])
+        with patch("openevolve.llm.claude_code.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="response", stderr="")
+            self.assertEqual(asyncio.run(model.generate("prompt", **call_options)), "response")
+            mock_run.assert_called_once()
+            cmd = mock_run.call_args.args[0]
+            self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], str(expected))
+
+    def test_omitted_budget_uses_documented_default(self):
+        self._assert_cli_budget({}, 1.0)
+
+    def test_null_budget_uses_documented_default(self):
+        self._assert_cli_budget({"max_budget_usd": None}, 1.0)
+
+    def test_explicit_budget_is_preserved(self):
+        self._assert_cli_budget({"max_budget_usd": 0.5}, 0.5)
+
+    def test_zero_is_not_replaced_by_default(self):
+        # Keep explicit values unchanged; CLI validation remains the CLI's responsibility.
+        self._assert_cli_budget({"max_budget_usd": 0.0}, 0.0)
+
+    def test_per_call_budget_overrides_configured_budget(self):
+        self._assert_cli_budget({"max_budget_usd": 0.5}, 0.25, max_budget_usd=0.25)
+
+
 if __name__ == "__main__":
     unittest.main()
