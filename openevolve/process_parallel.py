@@ -10,7 +10,7 @@ import signal
 import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -63,6 +63,7 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
         Config,
         DatabaseConfig,
         EvaluatorConfig,
+        EvolutionTraceConfig,
         LLMConfig,
         LLMModelConfig,
         PromptConfig,
@@ -82,16 +83,18 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
     prompt_config = PromptConfig(**config_dict["prompt"])
     database_config = DatabaseConfig(**config_dict["database"])
     evaluator_config = EvaluatorConfig(**config_dict["evaluator"])
+    evolution_trace_config = EvolutionTraceConfig(**config_dict["evolution_trace"])
 
     _worker_config = Config(
         llm=llm_config,
         prompt=prompt_config,
         database=database_config,
         evaluator=evaluator_config,
+        evolution_trace=evolution_trace_config,
         **{
             k: v
             for k, v in config_dict.items()
-            if k not in ["llm", "prompt", "database", "evaluator"]
+            if k not in ["llm", "prompt", "database", "evaluator", "evolution_trace"]
         },
     )
     _worker_evaluation_file = evaluation_file
@@ -497,6 +500,13 @@ class ProcessParallelController:
         # The asdict() call itself triggers the deepcopy which tries to serialize novelty_llm. Remove it first.
         config.database.novelty_llm = None
 
+        # Forward every remaining top-level field automatically. Listing them by hand
+        # let new fields fall back to their defaults in workers (issue #516)
+        nested_sections = {"llm", "prompt", "database", "evaluator", "evolution_trace"}
+        top_level = {
+            f.name: getattr(config, f.name) for f in fields(Config) if f.name not in nested_sections
+        }
+
         return {
             "llm": {
                 "models": [asdict(m) for m in config.llm.models],
@@ -513,14 +523,8 @@ class ProcessParallelController:
             "prompt": asdict(config.prompt),
             "database": asdict(config.database),
             "evaluator": asdict(config.evaluator),
-            "max_iterations": config.max_iterations,
-            "checkpoint_interval": config.checkpoint_interval,
-            "log_level": config.log_level,
-            "log_dir": config.log_dir,
-            "random_seed": config.random_seed,
-            "diff_based_evolution": config.diff_based_evolution,
-            "max_code_length": config.max_code_length,
-            "language": config.language,
+            "evolution_trace": asdict(config.evolution_trace),
+            **top_level,
             "file_suffix": self.file_suffix,
         }
 
