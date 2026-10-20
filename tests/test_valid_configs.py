@@ -2,9 +2,9 @@
 Confirming the validity of configuration files in project directories
 """
 
+import itertools
 import os
 import unittest
-import itertools
 from unittest.mock import MagicMock, patch
 
 from openevolve.config import Config, load_config
@@ -24,7 +24,13 @@ class TestConfigValidity(unittest.TestCase):
                     config_files.append(os.path.join(root, file))
         return config_files
 
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-for-validation", "MINIMAX_API_KEY": "test-key-for-validation"})
+    @patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_API_KEY": "test-key-for-validation",
+            "MINIMAX_API_KEY": "test-key-for-validation",
+        },
+    )
     def test_import_config_files(self):
         """Attempt to import all config files"""
         config_files = self.collect_files()

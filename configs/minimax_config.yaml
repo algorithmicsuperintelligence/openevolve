@@ -1,6 +1,6 @@
 # OpenEvolve Configuration for MiniMax
-# MiniMax provides OpenAI-compatible API with powerful models like MiniMax-M3
-# Get your API key from: https://platform.minimaxi.com/
+# MiniMax-M3.1-Flash is the default; MiniMax-M3 is an optional ensemble member.
+# Get your API key from: https://platform.minimax.io/
 #
 # Set your API key:
 #   export MINIMAX_API_KEY="your-minimax-api-key"
@@ -14,24 +14,25 @@ random_seed: 42
 # LLM configuration for MiniMax
 llm:
   api_base: "https://api.minimax.io/v1"
+  # For mainland China, use https://api.minimaxi.com/v1 with a regional API key.
   api_key: "${MINIMAX_API_KEY}"
 
-  # MiniMax models for evolution
+  # Flash is selected by default. Increase M3's weight to include it in evolution.
   models:
+    - name: "MiniMax-M3.1-Flash"
+      weight: 1.0
     - name: "MiniMax-M3"
-      weight: 0.6
-    - name: "MiniMax-M2.7"
-      weight: 0.3
-    - name: "MiniMax-M2.7-highspeed"
-      weight: 0.1
+      weight: 0.0
 
   # MiniMax models for LLM feedback
   evaluator_models:
-    - name: "MiniMax-M2.7-highspeed"
+    - name: "MiniMax-M3.1-Flash"
       weight: 1.0
 
   # Generation parameters
-  # Note: MiniMax requires temperature to be in (0.0, 1.0] — zero is not accepted
+  # Flash always thinks. Optional reasoning_effort: low, medium, high, xhigh, max.
+  # Omit reasoning_effort to use the API default (max); M3 ignores this setting.
+  # Both models accept temperature in [0, 2].
   temperature: 0.7
   top_p: 0.95
   max_tokens: 4096

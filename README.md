@@ -332,7 +332,7 @@ docker run --rm -v $(pwd):/app ghcr.io/algorithmicsuperintelligence/openevolve:l
 - **o3-mini**: ~$0.03-0.12 per iteration (more cost-effective)
 - **Gemini-2.5-Pro**: ~$0.08-0.30 per iteration
 - **Gemini-2.5-Flash**: ~$0.01-0.05 per iteration (fastest and cheapest)
-- **MiniMax-M3**: ~$0.02-0.08 per iteration (512K context, OpenAI-compatible)
+- **MiniMax-M3.1-Flash / MiniMax-M3**: Cost depends on token usage; see [MiniMax pricing](https://platform.minimax.io/docs/pricing/overview).
 - **Local models**: Nearly free after setup
 - **OptiLLM**: Use cheaper models with test-time compute for better results
 
@@ -375,7 +375,7 @@ export OPENAI_API_KEY="your-gemini-api-key"
 <details>
 <summary><b>🧠 MiniMax</b></summary>
 
-[MiniMax](https://www.minimaxi.com/) offers powerful models with up to 512K context window via an OpenAI-compatible API:
+[MiniMax](https://platform.minimax.io/docs/api-reference/text-openai-api) provides MiniMax-M3.1-Flash and MiniMax-M3 with 1,000,000-token context windows via an OpenAI-compatible API. This configuration selects Flash by default:
 
 ```yaml
 # config.yaml
@@ -383,19 +383,17 @@ llm:
   api_base: "https://api.minimax.io/v1"
   api_key: "${MINIMAX_API_KEY}"
   models:
+    - name: "MiniMax-M3.1-Flash"
+      weight: 1.0
     - name: "MiniMax-M3"
-      weight: 0.6
-    - name: "MiniMax-M2.7"
-      weight: 0.3
-    - name: "MiniMax-M2.7-highspeed"
-      weight: 0.1
+      weight: 0.0  # Increase to include M3 in the ensemble
 ```
 
 ```bash
 export MINIMAX_API_KEY="your-minimax-api-key"
 ```
 
-> **Note:** MiniMax requires temperature to be in (0.0, 1.0] — zero is not accepted. The default 0.7 works well.
+> **Note:** For mainland China, set `api_base` to `https://api.minimaxi.com/v1` with a regional API key. Both models accept temperature in `[0, 2]`. Flash always thinks; optionally set `reasoning_effort` to `low`, `medium`, `high`, `xhigh`, or `max` (the API default). M3 ignores effort. Explicit model IDs in existing configurations are passed through unchanged.
 
 See [`configs/minimax_config.yaml`](configs/minimax_config.yaml) for a complete configuration example.
 
