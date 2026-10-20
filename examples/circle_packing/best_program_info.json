@@ -1,16 +1,17 @@
 {
-  "id": "f6cbff44-9b16-4e6c-af58-b10b6625621a",
-  "generation": 10,
-  "iteration": 0,
-  "timestamp": 1747709506.546607,
-  "parent_id": "b7f51a09-7ba5-4cdb-bc15-9c431ec8885f",
+  "id": "1032941c-e271-44fa-a1c2-3aaad14c5eef",
+  "generation": 13,
+  "iteration": 206,
+  "timestamp": 1750806969.488975,
+  "parent_id": null,
   "metrics": {
     "validity": 1.0,
-    "sum_radii": 2.634292402141039,
-    "target_ratio": 0.9997314619131079,
-    "combined_score": 0.9997314619131079,
-    "eval_time": 0.6134955883026123
+    "sum_radii": 2.635977394746595,
+    "target_ratio": 1.0003709277975694,
+    "combined_score": 1.0003709277975694,
+    "eval_time": 22.72259497642517
   },
   "language": "python",
-  "saved_at": 1748016967.553278
+  "saved_at": 1750812128.4268517,
+  "provenance": "Program and result reported in issue #156 by @yyh-sjtu (run: phase_1 x100 -> phase_2 x100 -> phase_2 x250). Re-verified against examples/circle_packing/evaluator.py: validity=1.0, sum_radii=2.635977394746595."
 }

@@ -13,6 +13,40 @@ from openevolve.config import LLMModelConfig
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_REGISTRY = {
+    "openai": lambda cfg: OpenAILLM(cfg),
+}
+
+try:
+    from openevolve.llm.claude_code import ClaudeCodeLLM
+
+    _PROVIDER_REGISTRY["claude_code"] = lambda cfg: ClaudeCodeLLM(cfg)
+except ImportError:
+    pass
+
+try:
+    from openevolve.llm.copilot_cli import CopilotCLILLM
+
+    _PROVIDER_REGISTRY["copilot_cli"] = lambda cfg: CopilotCLILLM(cfg)
+except ImportError:
+    pass
+
+try:
+    from openevolve.llm.codex_app_server import CodexAppServerLLM
+
+    _PROVIDER_REGISTRY["codex_app_server"] = lambda cfg: CodexAppServerLLM(cfg)
+except ImportError:
+    pass
+
+
+def _create_model(model_cfg: LLMModelConfig) -> LLMInterface:
+    if model_cfg.init_client:
+        return model_cfg.init_client(model_cfg)
+    provider = getattr(model_cfg, "provider", None)
+    if provider and provider in _PROVIDER_REGISTRY:
+        return _PROVIDER_REGISTRY[provider](model_cfg)
+    return OpenAILLM(model_cfg)
+
 
 class LLMEnsemble:
     """Ensemble of LLMs"""
@@ -21,10 +55,7 @@ class LLMEnsemble:
         self.models_cfg = models_cfg
 
         # Initialize models from the configuration
-        self.models = [
-            model_cfg.init_client(model_cfg) if model_cfg.init_client else OpenAILLM(model_cfg)
-            for model_cfg in models_cfg
-        ]
+        self.models = [_create_model(model_cfg) for model_cfg in models_cfg]
 
         # Extract and normalize model weights
         self.weights = [model.weight for model in models_cfg]
@@ -55,17 +86,23 @@ class LLMEnsemble:
             )
             logger._ensemble_logged = True
 
+        self.last_usage: Optional[Dict[str, Any]] = None
+
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate text using a randomly selected model based on weights"""
         model = self._sample_model()
-        return await model.generate(prompt, **kwargs)
+        res = await model.generate(prompt, **kwargs)
+        self.last_usage = getattr(model, "last_usage", None)
+        return res
 
     async def generate_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
     ) -> str:
         """Generate text using a system message and conversational context"""
         model = self._sample_model()
-        return await model.generate_with_context(system_message, messages, **kwargs)
+        res = await model.generate_with_context(system_message, messages, **kwargs)
+        self.last_usage = getattr(model, "last_usage", None)
+        return res
 
     def _sample_model(self) -> LLMInterface:
         """Sample a model from the ensemble based on weights"""

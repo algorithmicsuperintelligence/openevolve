@@ -3,6 +3,7 @@ High-level API for using OpenEvolve as a library
 """
 
 import asyncio
+import pickle
 import tempfile
 import os
 import uuid
@@ -14,6 +15,8 @@ from pathlib import Path
 from openevolve.controller import OpenEvolve
 from openevolve.config import Config, load_config, LLMModelConfig
 from openevolve.database import Program
+from openevolve.population import PopulationStrategy
+from openevolve.selection import IslandSelector
 
 
 @dataclass
@@ -37,6 +40,10 @@ def run_evolution(
     iterations: Optional[int] = None,
     output_dir: Optional[str] = None,
     cleanup: bool = True,
+    target_score: Optional[float] = None,
+    checkpoint_path: Optional[str] = None,
+    island_selector: Optional[IslandSelector] = None,
+    population_strategy: Optional[PopulationStrategy] = None,
 ) -> EvolutionResult:
     """
     Run evolution with flexible inputs - the main library API
@@ -56,6 +63,10 @@ def run_evolution(
         iterations: Number of iterations (overrides config)
         output_dir: Output directory (None for temp directory)
         cleanup: If True, clean up temp files after evolution
+        island_selector: Optional callable that chooses an island ID from an
+            IslandSelectionContext. When omitted, the existing balanced scheduling is used.
+        population_strategy: Optional PopulationStrategy with decision hooks for
+            admission, cell replacement, archive membership, eviction, and migration.
 
     Returns:
         EvolutionResult with best program and metrics
@@ -90,7 +101,18 @@ def run_evolution(
         )
     """
     return asyncio.run(
-        _run_evolution_async(initial_program, evaluator, config, iterations, output_dir, cleanup)
+        _run_evolution_async(
+            initial_program,
+            evaluator,
+            config,
+            iterations,
+            output_dir,
+            cleanup,
+            target_score,
+            checkpoint_path,
+            island_selector,
+            population_strategy=population_strategy,
+        )
     )
 
 
@@ -101,6 +123,10 @@ async def _run_evolution_async(
     iterations: Optional[int],
     output_dir: Optional[str],
     cleanup: bool,
+    target_score: Optional[float] = None,
+    checkpoint_path: Optional[str] = None,
+    island_selector: Optional[IslandSelector] = None,
+    population_strategy: Optional[PopulationStrategy] = None,
 ) -> EvolutionResult:
     """Async implementation of run_evolution"""
 
@@ -141,15 +167,24 @@ async def _run_evolution_async(
         # Process evaluator
         evaluator_path = _prepare_evaluator(evaluator, temp_dir, temp_files)
 
+        # Auto-disable cascade evaluation if the evaluator doesn't define stage functions
+        if config_obj.evaluator.cascade_evaluation:
+            with open(evaluator_path, "r") as f:
+                eval_content = f.read()
+            if "evaluate_stage1" not in eval_content:
+                config_obj.evaluator.cascade_evaluation = False
+
         # Create and run controller
         controller = OpenEvolve(
             initial_program_path=program_path,
             evaluation_file=evaluator_path,
             config=config_obj,
             output_dir=actual_output_dir,
+            island_selector=island_selector,
+            population_strategy=population_strategy,
         )
 
-        best_program = await controller.run(iterations=iterations)
+        best_program = await controller.run(iterations=iterations,target_score=target_score,checkpoint_path=checkpoint_path)
 
         # Prepare result
         best_score = 0.0
@@ -227,6 +262,51 @@ def _prepare_program(
     return program_file
 
 
+def _extract_lambda_source(source: str) -> Optional[str]:
+    """Extract a single ``lambda ...`` expression from a source snippet.
+
+    ``inspect.getsource`` on a lambda returns the whole line it appears on, e.g.
+    ``evaluator=lambda p: {"score": 0.8},  # comment``. This isolates just the
+    ``lambda p: {"score": 0.8}`` expression using a bracket/string-aware scan so a
+    trailing comma, comment, or the enclosing call's ``)`` do not leak in.
+
+    Returns the lambda expression string, or None if no lambda is found.
+    """
+    idx = source.find("lambda")
+    if idx == -1:
+        return None
+
+    out = []
+    depth = 0
+    quote = None
+    i = idx
+    while i < len(source):
+        c = source[i]
+        if quote is not None:
+            out.append(c)
+            if c == quote and source[i - 1] != "\\":
+                quote = None
+        elif c in "\"'":
+            quote = c
+            out.append(c)
+        elif c in "([{":
+            depth += 1
+            out.append(c)
+        elif c in ")]}":
+            if depth == 0:
+                break  # closing bracket of the enclosing call -> lambda ended
+            depth -= 1
+            out.append(c)
+        elif depth == 0 and (c == "," or c == "#" or c == "\n"):
+            break  # top-level comma / comment / newline ends the lambda
+        else:
+            out.append(c)
+        i += 1
+
+    expr = "".join(out).strip()
+    return expr or None
+
+
 def _prepare_evaluator(
     evaluator: Union[str, Path, Callable], temp_dir: Optional[str], temp_files: List[str]
 ) -> str:
@@ -239,20 +319,33 @@ def _prepare_evaluator(
 
     # If it's a callable, create a wrapper module
     if callable(evaluator):
-        # Create a unique global name for this evaluator
-        evaluator_id = f"_openevolve_evaluator_{uuid.uuid4().hex[:8]}"
+        try:
+            import cloudpickle as _pickle_mod
+        except ImportError:
+            _pickle_mod = pickle
 
-        # Store in globals so the wrapper can find it
-        globals()[evaluator_id] = evaluator
+        # Serialize the callable to a file so subprocess workers can load it
+        if temp_dir is None:
+            temp_dir = tempfile.gettempdir()
+
+        pickle_path = os.path.join(temp_dir, f"evaluator_{uuid.uuid4().hex[:8]}.pkl")
+        with open(pickle_path, "wb") as pf:
+            _pickle_mod.dump(evaluator, pf)
+        temp_files.append(pickle_path)
 
         evaluator_code = f"""
-# Wrapper for user-provided evaluator function
-import {__name__} as api_module
+# Wrapper for user-provided evaluator function (serialized to disk for cross-process access)
+import pickle
+
+_cached_evaluator = None
 
 def evaluate(program_path):
-    '''Wrapper for user-provided evaluator function'''
-    user_evaluator = getattr(api_module, '{evaluator_id}')
-    return user_evaluator(program_path)
+    '''Wrapper that loads the evaluator from a pickle file'''
+    global _cached_evaluator
+    if _cached_evaluator is None:
+        with open({pickle_path!r}, 'rb') as f:
+            _cached_evaluator = pickle.load(f)
+    return _cached_evaluator(program_path)
 """
     else:
         # Treat as code string
@@ -335,57 +428,67 @@ def evolve_function(
         lines.insert(func_end + 1, " " * (indent + 4) + "# EVOLVE-BLOCK-END")
         func_source = "\n".join(lines)
 
-    # Create evaluator that tests the function
-    def evaluator(program_path):
-        import importlib.util
-        import sys
+    # Create a self-contained evaluator as a code string so it works in subprocesses.
+    # Closure-based evaluators fail with process-based parallelism because subprocess
+    # workers cannot access the parent process's memory.
+    evaluator_code = f"""
+import importlib.util
+import copy
 
-        # Load the evolved program
-        spec = importlib.util.spec_from_file_location("evolved", program_path)
-        if spec is None or spec.loader is None:
-            return {"score": 0.0, "error": "Failed to load program"}
+FUNC_NAME = {func_name!r}
+TEST_CASES = {test_cases!r}
 
-        module = importlib.util.module_from_spec(spec)
+def evaluate(program_path):
+    '''Auto-generated evaluator for evolve_function'''
+    # Load the evolved program
+    spec = importlib.util.spec_from_file_location("evolved", program_path)
+    if spec is None or spec.loader is None:
+        return {{"combined_score": 0.0, "score": 0.0, "error": "Failed to load program"}}
 
+    module = importlib.util.module_from_spec(spec)
+
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Failed to execute program: {{str(e)}}"}}
+
+    if not hasattr(module, FUNC_NAME):
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Function '{{FUNC_NAME}}' not found"}}
+
+    evolved_func = getattr(module, FUNC_NAME)
+    correct = 0
+    total = len(TEST_CASES)
+    errors = []
+
+    for input_val, expected in TEST_CASES:
         try:
-            spec.loader.exec_module(module)
+            # Handle case where input is a list/mutable - make a copy
+            if isinstance(input_val, list):
+                test_input = input_val.copy()
+            else:
+                test_input = input_val
+
+            result = evolved_func(test_input)
+            if result == expected:
+                correct += 1
+            else:
+                errors.append(f"Input {{input_val}}: expected {{expected}}, got {{result}}")
         except Exception as e:
-            return {"score": 0.0, "error": f"Failed to execute program: {str(e)}"}
+            errors.append(f"Input {{input_val}}: {{str(e)}}")
 
-        if not hasattr(module, func_name):
-            return {"score": 0.0, "error": f"Function '{func_name}' not found"}
-
-        evolved_func = getattr(module, func_name)
-        correct = 0
-        total = len(test_cases)
-        errors = []
-
-        for input_val, expected in test_cases:
-            try:
-                # Handle case where input is a list/mutable - make a copy
-                if isinstance(input_val, list):
-                    test_input = input_val.copy()
-                else:
-                    test_input = input_val
-
-                result = evolved_func(test_input)
-                if result == expected:
-                    correct += 1
-                else:
-                    errors.append(f"Input {input_val}: expected {expected}, got {result}")
-            except Exception as e:
-                errors.append(f"Input {input_val}: {str(e)}")
-
-        return {
-            "score": correct / total,
-            "test_pass_rate": correct / total,
-            "tests_passed": correct,
-            "total_tests": total,
-            "errors": errors[:3],  # Limit error details
-        }
+    score = correct / total if total > 0 else 0.0
+    return {{
+        "combined_score": score,
+        "score": score,
+        "test_pass_rate": score,
+        "tests_passed": correct,
+        "total_tests": total,
+        "errors": errors[:3],
+    }}
+"""
 
     return run_evolution(
-        initial_program=func_source, evaluator=evaluator, iterations=iterations, **kwargs
+        initial_program=func_source, evaluator=evaluator_code, iterations=iterations, **kwargs
     )
 
 
@@ -447,36 +550,51 @@ def evolve_algorithm(
         lines.append(" " * (indent + 4) + "# EVOLVE-BLOCK-END")
         class_source = "\n".join(lines)
 
-    # Create evaluator
-    def evaluator(program_path):
-        import importlib.util
+    # Create a self-contained evaluator as a code string so it works in subprocesses.
+    import textwrap
 
-        # Load the evolved program
-        spec = importlib.util.spec_from_file_location("evolved", program_path)
-        if spec is None or spec.loader is None:
-            return {"score": 0.0, "error": "Failed to load program"}
+    class_name = algorithm_class.__name__
+    benchmark_source = textwrap.dedent(inspect.getsource(benchmark))
 
-        module = importlib.util.module_from_spec(spec)
+    evaluator_code = f"""
+import importlib.util
 
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            return {"score": 0.0, "error": f"Failed to execute program: {str(e)}"}
+CLASS_NAME = {class_name!r}
 
-        if not hasattr(module, algorithm_class.__name__):
-            return {"score": 0.0, "error": f"Class '{algorithm_class.__name__}' not found"}
+{benchmark_source}
 
-        AlgorithmClass = getattr(module, algorithm_class.__name__)
+def evaluate(program_path):
+    '''Auto-generated evaluator for evolve_algorithm'''
+    spec = importlib.util.spec_from_file_location("evolved", program_path)
+    if spec is None or spec.loader is None:
+        return {{"combined_score": 0.0, "score": 0.0, "error": "Failed to load program"}}
 
-        try:
-            instance = AlgorithmClass()
-            metrics = benchmark(instance)
-            return metrics if isinstance(metrics, dict) else {"score": metrics}
-        except Exception as e:
-            return {"score": 0.0, "error": str(e)}
+    module = importlib.util.module_from_spec(spec)
+
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Failed to execute program: {{str(e)}}"}}
+
+    if not hasattr(module, CLASS_NAME):
+        return {{"combined_score": 0.0, "score": 0.0, "error": f"Class '{{CLASS_NAME}}' not found"}}
+
+    AlgorithmClass = getattr(module, CLASS_NAME)
+
+    try:
+        instance = AlgorithmClass()
+        metrics = {benchmark.__name__}(instance)
+        if not isinstance(metrics, dict):
+            metrics = {{"score": metrics}}
+        if "combined_score" not in metrics:
+            metrics["combined_score"] = metrics.get("score", 0.0)
+        return metrics
+    except Exception as e:
+        return {{"combined_score": 0.0, "score": 0.0, "error": str(e)}}
+"""
 
     return run_evolution(
-        initial_program=class_source, evaluator=evaluator, iterations=iterations, **kwargs
+        initial_program=class_source, evaluator=evaluator_code, iterations=iterations, **kwargs
     )
 
 

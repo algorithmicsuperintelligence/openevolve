@@ -205,6 +205,11 @@ if __name__ == "__main__":
         help="Path to OpenEvolve run output directory (e.g. openevolve_output) or its checkpoints/checkpoint_*.",
     )
     parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Run Flask in debug mode (enables the interactive debugger; local use only)",
+    )
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument(
         "--log-level",
@@ -231,4 +236,4 @@ if __name__ == "__main__":
     os.environ["EVOLVE_OUTPUT"] = args.path
     logger.info(f"Starting server at http://{args.host}:{args.port} with log level {args.log_level.upper()}")
     logger.info(f"Manual UI: http://{args.host}:{args.port}/manual")
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=args.debug)

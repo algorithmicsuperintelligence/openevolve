@@ -21,7 +21,10 @@ def safe_numeric_average(metrics: Dict[str, Any]) -> float:
 
     numeric_values = []
     for value in metrics.values():
-        if isinstance(value, (int, float)):
+        # bool is a subclass of int, but a flag is not a score. Averaging it in
+        # would let e.g. {"error": 0.0, "timeout": True} score 0.5 instead of 0.0,
+        # giving a program that timed out a mid-range fitness.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
             try:
                 # Convert to float and check if it's a valid number
                 float_val = float(value)
@@ -99,7 +102,8 @@ def get_fitness_score(
     for key, value in metrics.items():
         # Exclude MAP feature dimensions from fitness calculation
         if key not in feature_dimensions:
-            if isinstance(value, (int, float)):
+            # Booleans are flags, not scores - see the note in safe_numeric_average.
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
                 try:
                     float_val = float(value)
                     if not (float_val != float_val):  # Check for NaN

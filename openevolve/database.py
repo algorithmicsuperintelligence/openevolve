@@ -3,6 +3,7 @@ Program database for OpenEvolve
 """
 
 import base64
+import copy
 import json
 import logging
 import os
@@ -10,7 +11,10 @@ import random
 import shutil
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
+from numbers import Integral
+from types import MappingProxyType
 
 # FileLock removed - no longer needed with threaded parallel processing
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -18,10 +22,27 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import numpy as np
 
 from openevolve.config import DatabaseConfig
+from openevolve.population import (
+    ArchiveDecision,
+    MigrationMove,
+    PopulationSnapshot,
+    PopulationStrategy,
+    ProgramState,
+)
 from openevolve.utils.code_utils import calculate_edit_distance
-from openevolve.utils.metrics_utils import safe_numeric_average, get_fitness_score
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _strategy_boundary():
+    """Tag strategy failures without replacing their exception chain."""
+    try:
+        yield
+    except Exception as exc:
+        exc._openevolve_strategy_error = True
+        raise
 
 
 def _safe_sum_metrics(metrics: Dict[str, Any]) -> float:
@@ -47,7 +68,9 @@ class Program:
     # Program identification
     id: str
     code: str
-    changes_description: str = ""  # compact program changes description (via LLM) stored per program
+    changes_description: str = (
+        ""  # compact program changes description (via LLM) stored per program
+    )
     language: str = "python"
 
     # Evolution information
@@ -119,8 +142,11 @@ class ProgramDatabase:
     It also tracks the absolute best program separately to ensure it's never lost.
     """
 
-    def __init__(self, config: DatabaseConfig):
+    def __init__(
+        self, config: DatabaseConfig, population_strategy: Optional[PopulationStrategy] = None
+    ):
         self.config = config
+        self.population_strategy = population_strategy
 
         # In-memory program storage
         self.programs: Dict[str, Program] = {}
@@ -160,6 +186,9 @@ class ProgramDatabase:
         # Track the last iteration number (for resuming)
         self.last_iteration: int = 0
 
+        # Initialize before loading so restored MAP-Elites scales are retained.
+        self.feature_stats: Dict[str, Dict[str, Union[float, float, List[float]]]] = {}
+
         # Load database from disk if path is provided
         if config.db_path and os.path.exists(config.db_path):
             self.load(config.db_path)
@@ -185,7 +214,6 @@ class ProgramDatabase:
         self.diversity_reference_size: int = getattr(config, "diversity_reference_size", 20)
 
         # Feature scaling infrastructure
-        self.feature_stats: Dict[str, Dict[str, Union[float, float, List[float]]]] = {}
         self.feature_scaling_method: str = "minmax"  # Options: minmax, zscore, percentile
 
         # Per-dimension bins support
@@ -204,13 +232,46 @@ class ProgramDatabase:
 
         self.novelty_llm = config.novelty_llm
         self.embedding_client = (
-            EmbeddingClient(config.embedding_model) if config.embedding_model else None
+            EmbeddingClient(config.embedding_model, config.embedding_api_base)
+            if config.embedding_model
+            else None
         )
         self.similarity_threshold = config.similarity_threshold
 
+    @staticmethod
+    def _program_state(program: Program) -> ProgramState:
+        return ProgramState(
+            id=program.id,
+            code=program.code,
+            metrics=MappingProxyType(copy.deepcopy(program.metrics)),
+            generation=program.generation,
+            parent_id=program.parent_id,
+            metadata=MappingProxyType(copy.deepcopy(program.metadata)),
+        )
+
+    def _population_snapshot(self) -> PopulationSnapshot:
+        """Detach strategy input from mutable database collections."""
+        return PopulationSnapshot(
+            programs=MappingProxyType(
+                {pid: self._program_state(program) for pid, program in self.programs.items()}
+            ),
+            islands=tuple(frozenset(island) for island in self.islands),
+            feature_maps=tuple(MappingProxyType(dict(grid)) for grid in self.island_feature_maps),
+            archive=frozenset(self.archive),
+            best_program_id=self.best_program_id,
+            population_limit=self.config.population_size,
+            archive_limit=self.config.archive_size,
+            feature_dimensions=tuple(self.config.feature_dimensions),
+            generations=tuple(self.island_generations),
+            last_migration_generation=self.last_migration_generation,
+            migration_interval=self.migration_interval,
+            migration_rate=self.migration_rate,
+            last_iteration=self.last_iteration,
+        )
+
     def add(
         self, program: Program, iteration: int = None, target_island: Optional[int] = None
-    ) -> str:
+    ) -> Optional[str]:
         """
         Add a program to the database
 
@@ -220,20 +281,59 @@ class ProgramDatabase:
             target_island: Specific island to add to (auto-detects parent's island if None)
 
         Returns:
-            Program ID
+            Program ID, or None when the admission strategy rejects the candidate
         """
-        # Store the program
-        # If iteration is provided, update the program's iteration_found
-        if iteration is not None:
-            program.iteration_found = iteration
-            # Update last_iteration if needed
-            self.last_iteration = max(self.last_iteration, iteration)
+        if self.population_strategy is None or not any(
+            (
+                self.population_strategy.replace_cell,
+                self.population_strategy.archive,
+                self.population_strategy.evict,
+            )
+        ):
+            return self._add(program, iteration, target_island)
 
-        self.programs[program.id] = program
+        # Strategy decisions can fail after provisional writes. Keep the mutable
+        # population state atomic without copying Program objects or the LLM client.
+        before = (
+            self.programs.copy(),
+            [island.copy() for island in self.islands],
+            [grid.copy() for grid in self.island_feature_maps],
+            self.archive.copy(),
+            self.best_program_id,
+            self.island_best_programs.copy(),
+            self.last_iteration,
+            copy.deepcopy(self.feature_stats),
+            copy.deepcopy(self.diversity_cache),
+            self.diversity_reference_set.copy(),
+            program.iteration_found,
+            program.embedding,
+            copy.deepcopy(program.metadata),
+        )
+        try:
+            return self._add(program, iteration, target_island)
+        except Exception:
+            (
+                self.programs,
+                self.islands,
+                self.island_feature_maps,
+                self.archive,
+                self.best_program_id,
+                self.island_best_programs,
+                self.last_iteration,
+                self.feature_stats,
+                self.diversity_cache,
+                self.diversity_reference_set,
+                program.iteration_found,
+                program.embedding,
+                metadata,
+            ) = before
+            program.metadata.clear()
+            program.metadata.update(metadata)
+            raise
 
-        # Calculate feature coordinates for MAP-Elites
-        feature_coords = self._calculate_feature_coords(program)
-
+    def _add(
+        self, program: Program, iteration: int = None, target_island: Optional[int] = None
+    ) -> Optional[str]:
         # Determine target island
         # If target_island is not specified and program has a parent, inherit parent's island
         if target_island is None and program.parent_id:
@@ -264,6 +364,29 @@ class ProgramDatabase:
 
         island_idx = island_idx % len(self.islands)  # Ensure valid island
 
+        if self.population_strategy and self.population_strategy.admit:
+            snapshot = self._population_snapshot()
+            candidate = self._program_state(program)
+            with _strategy_boundary():
+                decision = self.population_strategy.admit(snapshot, candidate, island_idx)
+                if type(decision) is not bool:
+                    raise ValueError("population_strategy.admit must return bool")
+                if not decision and not self.programs:
+                    raise ValueError("population_strategy.admit cannot reject the initial program")
+            if not decision:
+                if iteration is not None:
+                    self.last_iteration = max(self.last_iteration, iteration)
+                return None
+
+        # Store the program before novelty checks, which look it up by ID.
+        if iteration is not None:
+            program.iteration_found = iteration
+            self.last_iteration = max(self.last_iteration, iteration)
+        self.programs[program.id] = program
+
+        # Calculate feature coordinates for MAP-Elites
+        feature_coords = self._calculate_feature_coords(program)
+
         # Novelty check before adding
         if not self._is_novel(program.id, island_idx):
             logger.debug(
@@ -287,7 +410,22 @@ class ProgramDatabase:
                 )
             else:
                 # Program exists, compare fitness
-                should_replace = self._is_better(program, self.programs[existing_program_id])
+                if self.population_strategy and self.population_strategy.replace_cell:
+                    snapshot = self._population_snapshot()
+                    candidate = self._program_state(program)
+                    incumbent = self._program_state(self.programs[existing_program_id])
+                    with _strategy_boundary():
+                        should_replace = self.population_strategy.replace_cell(
+                            snapshot, candidate, incumbent, island_idx
+                        )
+                        if type(should_replace) is not bool:
+                            raise ValueError("population_strategy.replace_cell must return bool")
+                else:
+                    should_replace = self._is_better(program, self.programs[existing_program_id])
+
+        # Track a program that gets displaced from its cell so we can remove it
+        # from the population if it ends up orphaned (owning no cell, in no island).
+        replaced_program_id = None
 
         if should_replace:
             # Log significant MAP-Elites events
@@ -322,7 +460,7 @@ class ProgramDatabase:
                         existing_program.metrics, self.config.feature_dimensions
                     )
                     logger.info(
-                        "Island %d MAP-Elites cell improved: %s (fitness: %.3f -> %.3f)",
+                        "Island %d MAP-Elites cell replaced: %s (fitness: %.3f -> %.3f)",
                         island_idx,
                         coords_dict,
                         existing_fitness,
@@ -330,13 +468,16 @@ class ProgramDatabase:
                     )
 
                     # use MAP-Elites to manage archive
-                    if existing_program_id in self.archive:
+                    if existing_program_id in self.archive and not (
+                        self.population_strategy and self.population_strategy.archive
+                    ):
                         self.archive.discard(existing_program_id)
                         self.archive.add(program.id)
 
                 # Remove replaced program from island set to keep it consistent with feature map
                 # This prevents accumulation of stale/replaced programs in the island
                 self.islands[island_idx].discard(existing_program_id)
+                replaced_program_id = existing_program_id
 
             island_feature_map[feature_key] = program.id
 
@@ -349,15 +490,16 @@ class ProgramDatabase:
         # Update archive
         self._update_archive(program)
 
-        # Enforce population size limit BEFORE updating best program tracking
-        # This ensures newly added programs aren't immediately removed
-        self._enforce_population_limit(exclude_program_id=program.id)
-
-        # Update the absolute best program tracking (after population enforcement)
+        # Track the best before removing a displaced cell owner.
         self._update_best_program(program)
-
-        # Update island-specific best program tracking
         self._update_island_best_program(program, island_idx)
+
+        # Remove displaced non-best programs that no longer own a cell or island.
+        if replaced_program_id is not None and replaced_program_id != program.id:
+            self._remove_program_if_orphaned(replaced_program_id)
+
+        # The just-added program is protected while enforcing the population cap.
+        self._enforce_population_limit(exclude_program_id=program.id)
 
         # Save to disk if configured
         if self.config.db_path:
@@ -447,21 +589,13 @@ class ProgramDatabase:
             parent = self._sample_from_island_weighted(island_id)
             sampling_mode = "weighted"
 
-        # Select inspirations from the same island
+        # Select inspirations using the same elite/diversity-aware strategy as sample().
+        # Pass the requested island explicitly so parallel workers remain isolated even
+        # if an archive fallback returns a parent whose metadata points elsewhere.
         if num_inspirations is None:
             num_inspirations = 5  # Default for backward compatibility
 
-        # Get other programs from the island for inspirations
-        other_programs = [pid for pid in island_programs if pid != parent.id]
-
-        if len(other_programs) < num_inspirations:
-            # Not enough programs in island, use what we have
-            inspiration_ids = other_programs
-        else:
-            # Sample inspirations
-            inspiration_ids = random.sample(other_programs, num_inspirations)
-
-        inspirations = [self.programs[pid] for pid in inspiration_ids if pid in self.programs]
+        inspirations = self._sample_inspirations(parent, n=num_inspirations, island_id=island_id)
 
         logger.debug(
             f"Sampled parent {parent.id} and {len(inspirations)} inspirations from island {island_id} "
@@ -513,8 +647,10 @@ class ProgramDatabase:
                 logger.debug(f"Found best program by fitness score: {sorted_programs[0].id}")
 
         # Update the best program tracking if we found a better program
-        if sorted_programs and (
-            self.best_program_id is None or sorted_programs[0].id != self.best_program_id
+        if (
+            not metric
+            and sorted_programs
+            and (self.best_program_id is None or sorted_programs[0].id != self.best_program_id)
         ):
             old_id = self.best_program_id
             self.best_program_id = sorted_programs[0].id
@@ -606,16 +742,19 @@ class ProgramDatabase:
         # create directory if it doesn't exist
         os.makedirs(save_path, exist_ok=True)
 
+        # Create the programs directory once rather than once per program
+        programs_dir = os.path.join(save_path, "programs")
+        if self.programs:
+            os.makedirs(programs_dir, exist_ok=True)
+
+        # Neither of these can change while the loop runs
+        prompts_by_program = self.prompts_by_program
+        log_prompts = self.config.log_prompts and bool(prompts_by_program)
+
         # Save each program
         for program in self.programs.values():
-            prompts = None
-            if (
-                self.config.log_prompts
-                and self.prompts_by_program
-                and program.id in self.prompts_by_program
-            ):
-                prompts = self.prompts_by_program[program.id]
-            self._save_program(program, save_path, prompts=prompts)
+            prompts = prompts_by_program.get(program.id) if log_prompts else None
+            self._save_program(program, save_path, prompts=prompts, programs_dir=programs_dir)
 
         # Save metadata
         metadata = {
@@ -632,7 +771,7 @@ class ProgramDatabase:
         }
 
         with open(os.path.join(save_path, "metadata.json"), "w") as f:
-            json.dump(metadata, f)
+            f.write(json.dumps(metadata))
 
         logger.info(f"Saved database with {len(self.programs)} programs to {save_path}")
 
@@ -805,6 +944,7 @@ class ProgramDatabase:
         program: Program,
         base_path: Optional[str] = None,
         prompts: Optional[Dict[str, Dict[str, str]]] = None,
+        programs_dir: Optional[str] = None,
     ) -> None:
         """
         Save a program to disk
@@ -813,14 +953,19 @@ class ProgramDatabase:
             program: Program to save
             base_path: Base path to save to (uses config.db_path if None)
             prompts: Optional prompts to save with the program, in the format {template_key: { 'system': str, 'user': str }}
+            programs_dir: Directory to write into, already created by the caller.
+                save() passes this so the directory is not re-created once per
+                program. When omitted the directory is derived and created here,
+                which is what the single-program call site in add() relies on.
         """
-        save_path = base_path or self.config.db_path
-        if not save_path:
-            return
+        if programs_dir is None:
+            save_path = base_path or self.config.db_path
+            if not save_path:
+                return
 
-        # Create programs directory if it doesn't exist
-        programs_dir = os.path.join(save_path, "programs")
-        os.makedirs(programs_dir, exist_ok=True)
+            # Create programs directory if it doesn't exist
+            programs_dir = os.path.join(save_path, "programs")
+            os.makedirs(programs_dir, exist_ok=True)
 
         # Save program
         program_dict = program.to_dict()
@@ -829,7 +974,7 @@ class ProgramDatabase:
         program_path = os.path.join(programs_dir, f"{program.id}.json")
 
         with open(program_path, "w") as f:
-            json.dump(program_dict, f)
+            f.write(json.dumps(program_dict))
 
     def _calculate_feature_coords(self, program: Program) -> List[int]:
         """
@@ -993,6 +1138,7 @@ class ProgramDatabase:
         Use LLM to judge if a program is novel compared to a similar existing program
         """
         import asyncio
+
         from openevolve.novelty_judge import NOVELTY_SYSTEM_MSG, NOVELTY_USER_MSG
 
         user_msg = NOVELTY_USER_MSG.format(
@@ -1033,8 +1179,9 @@ class ProgramDatabase:
             content = content.strip()
 
             # Parse the response
-            NOVEL_i = content.upper().find("NOVEL")
-            NOT_NOVEL_i = content.upper().find("NOT NOVEL")
+            parsed_content = content.upper().replace("NOT_NOVEL", "NOT NOVEL")
+            NOVEL_i = parsed_content.find("NOVEL")
+            NOT_NOVEL_i = parsed_content.find("NOT NOVEL")
 
             if NOVEL_i == -1 and NOT_NOVEL_i == -1:
                 logger.warning(f"Unexpected novelty LLM response: {content}")
@@ -1081,9 +1228,7 @@ class ProgramDatabase:
             other = self.programs[pid]
 
             if other.embedding is None:
-                logger.warning(
-                    f"Program {other.id} has no embedding, skipping similarity check"
-                )
+                logger.warning(f"Program {other.id} has no embedding, skipping similarity check")
                 continue
 
             similarity = self._cosine_similarity(embd, other.embedding)
@@ -1135,6 +1280,36 @@ class ProgramDatabase:
         Args:
             program: Program to consider for archive
         """
+        if self.population_strategy and self.population_strategy.archive:
+            self.archive.intersection_update(self.programs)
+            snapshot = self._population_snapshot()
+            candidate = self._program_state(program)
+            with _strategy_boundary():
+                decision = self.population_strategy.archive(snapshot, candidate)
+                if (
+                    not isinstance(decision, ArchiveDecision)
+                    or type(decision.add) is not bool
+                    or (decision.evict_id is not None and not isinstance(decision.evict_id, str))
+                ):
+                    raise ValueError("population_strategy.archive must return ArchiveDecision")
+                if not decision.add and decision.evict_id is not None:
+                    raise ValueError("archive decision cannot evict without adding")
+                if decision.add and program.id in self.archive and decision.evict_id is not None:
+                    raise ValueError(
+                        "archive decision cannot evict when candidate is already archived"
+                    )
+                if decision.add and program.id not in self.archive:
+                    if decision.evict_id is not None and decision.evict_id not in self.archive:
+                        raise ValueError("archive decision must evict an archived program")
+                    if len(self.archive) >= self.config.archive_size and decision.evict_id is None:
+                        raise ValueError("archive decision must evict when archive is full")
+            if not decision.add or program.id in self.archive:
+                return
+            if decision.evict_id is not None:
+                self.archive.remove(decision.evict_id)
+            self.archive.add(program.id)
+            return
+
         # If archive not full, add program
         if len(self.archive) < self.config.archive_size:
             self.archive.add(program.id)
@@ -1235,12 +1410,12 @@ class ProgramDatabase:
             logger.debug(f"Set initial best program for island {island_idx} to {program.id}")
             return
 
-        # Check if current best still exists
-        if current_island_best_id not in self.programs:
-            logger.warning(
-                f"Island {island_idx} best program {current_island_best_id} no longer exists, updating to {program.id}"
-            )
-            self.island_best_programs[island_idx] = program.id
+        # An archived or global-best program can still exist after leaving this island.
+        if (
+            current_island_best_id not in self.islands[island_idx]
+            or current_island_best_id not in self.programs
+        ):
+            self._cleanup_stale_island_bests()
             return
 
         current_island_best = self.programs[current_island_best_id]
@@ -1295,9 +1470,9 @@ class ProgramDatabase:
 
         if not current_island_programs:
             # If current island is empty, initialize with best program or random program
-            if self.best_program_id and self.best_program_id in self.programs:
+            best_program = self.get_best_program()
+            if best_program:
                 # Create a copy of best program for the empty island (don't reuse same ID)
-                best_program = self.programs[self.best_program_id]
                 copy_program = Program(
                     id=str(uuid.uuid4()),
                     code=best_program.code,
@@ -1341,9 +1516,9 @@ class ProgramDatabase:
             logger.warning(
                 f"Island {self.current_island} has no valid programs after cleanup, reinitializing"
             )
-            if self.best_program_id and self.best_program_id in self.programs:
+            best_program = self.get_best_program()
+            if best_program:
                 # Create a copy of best program for the empty island (don't reuse same ID)
-                best_program = self.programs[self.best_program_id]
                 copy_program = Program(
                     id=str(uuid.uuid4()),
                     code=best_program.code,
@@ -1551,7 +1726,9 @@ class ProgramDatabase:
             parent_id = random.choice(valid_archive)
             return self.programs[parent_id]
 
-    def _sample_inspirations(self, parent: Program, n: int = 5) -> List[Program]:
+    def _sample_inspirations(
+        self, parent: Program, n: int = 5, island_id: Optional[int] = None
+    ) -> List[Program]:
         """
         Sample inspiration programs for the next evolution step.
 
@@ -1561,14 +1738,23 @@ class ProgramDatabase:
         Args:
             parent: Parent program
             n: Number of inspirations to sample
+            island_id: Explicit island to sample from. If omitted, use the
+                parent program's island metadata.
 
         Returns:
             List of inspiration programs from the current island
         """
         inspirations = []
 
-        # Get the parent's island (should be current_island)
-        parent_island = parent.metadata.get("island", self.current_island)
+        # Prefer an explicitly requested island. This matters for
+        # sample_from_island(), where archive fallback may return a parent whose
+        # metadata belongs to a different island.
+        if island_id is None:
+            parent_island = parent.metadata.get("island", self.current_island)
+        else:
+            parent_island = island_id
+
+        parent_island %= len(self.islands)
 
         # Get all programs from the current island
         island_program_ids = list(self.islands[parent_island])
@@ -1584,16 +1770,19 @@ class ProgramDatabase:
             island_best_id is not None
             and island_best_id != parent.id
             and island_best_id in self.programs
+            and island_best_id in self.islands[parent_island]
         ):
             island_best = self.programs[island_best_id]
             inspirations.append(island_best)
             logger.debug(
                 f"Including island {parent_island} best program {island_best_id} in inspirations"
             )
-        elif island_best_id is not None and island_best_id not in self.programs:
+        elif island_best_id is not None and (
+            island_best_id not in self.programs or island_best_id not in self.islands[parent_island]
+        ):
             # Clean up stale island best reference
             logger.warning(
-                f"Island {parent_island} best program {island_best_id} no longer exists, clearing reference"
+                f"Island {parent_island} best program {island_best_id} is no longer in the island, clearing reference"
             )
             self.island_best_programs[parent_island] = None
 
@@ -1605,7 +1794,7 @@ class ProgramDatabase:
                 inspirations.append(program)
 
         # Add diverse programs from within the island
-        if len(island_programs) > n and len(inspirations) < n:
+        if len(inspirations) < n:
             remaining_slots = n - len(inspirations)
 
             # Try to sample from different feature cells within the island
@@ -1625,8 +1814,14 @@ class ProgramDatabase:
             for _ in range(remaining_slots * 3):  # Try more times to find nearby programs
                 # Perturb coordinates
                 perturbed_coords = [
-                    max(0, min(self.feature_bins - 1, c + random.randint(-2, 2)))
-                    for c in feature_coords
+                    max(
+                        0,
+                        min(
+                            self.feature_bins_per_dim.get(dim, self.feature_bins) - 1,
+                            c + random.randint(-2, 2),
+                        ),
+                    )
+                    for dim, c in zip(self.config.feature_dimensions, feature_coords)
                 ]
 
                 cell_key = self._feature_coords_to_key(perturbed_coords)
@@ -1675,6 +1870,49 @@ class ProgramDatabase:
 
         return inspirations[:n]
 
+    def _remove_program_if_orphaned(self, program_id: str) -> None:
+        """
+        Remove a program from the population if it is orphaned.
+
+        A program is considered orphaned when it no longer owns a MAP-Elites cell
+        in any island's feature map and is not a member of any island. Such a
+        program (e.g. one displaced when its cell was improved) can never be
+        sampled again. The current global best is retained as historical best;
+        other orphans are removed from ``self.programs`` and the archive.
+
+        Args:
+            program_id: ID of the (possibly) orphaned program to check and remove
+        """
+        if program_id not in self.programs:
+            return
+
+        # Still owns a cell in some island? Then it is not orphaned.
+        for island_map in self.island_feature_maps:
+            if program_id in island_map.values():
+                return
+
+        # Still a member of some island? Then it is not orphaned.
+        for island in self.islands:
+            if program_id in island:
+                return
+
+        # A custom archive policy may deliberately retain a displaced elite.
+        if (
+            self.population_strategy
+            and self.population_strategy.archive
+            and program_id in self.archive
+        ):
+            return
+
+        if program_id == self.best_program_id:
+            return
+
+        # Fully orphaned - remove from all remaining structures.
+        del self.programs[program_id]
+        self.archive.discard(program_id)
+        self._cleanup_stale_island_bests()
+        logger.debug(f"Removed orphaned program {program_id} displaced from its cell")
+
     def _enforce_population_limit(self, exclude_program_id: Optional[str] = None) -> None:
         """
         Enforce the population size limit by removing worst programs if needed
@@ -1682,46 +1920,62 @@ class ProgramDatabase:
         Args:
             exclude_program_id: Program ID to never remove (e.g., newly added program)
         """
-        if len(self.programs) <= self.config.population_size:
+        best_id = self.best_program_id
+        orphan_best = (
+            best_id in self.programs
+            and not any(best_id in island for island in self.islands)
+            and not any(best_id in grid.values() for grid in self.island_feature_maps)
+        )
+        population_count = len(self.programs) - int(orphan_best)
+        if population_count <= self.config.population_size:
             return
 
         # Calculate how many programs to remove
-        num_to_remove = len(self.programs) - self.config.population_size
+        num_to_remove = population_count - self.config.population_size
 
         logger.info(
-            f"Population size ({len(self.programs)}) exceeds limit ({self.config.population_size}), removing {num_to_remove} programs"
+            f"Population size ({population_count}) exceeds limit ({self.config.population_size}), removing {num_to_remove} programs"
         )
 
-        # Get programs sorted by fitness (worst first)
+        protected_ids = {best_id, exclude_program_id} - {None}
+
         all_programs = list(self.programs.values())
 
-        # Sort by combined_score if available, otherwise by average metric (worst first)
-        sorted_programs = sorted(
-            all_programs,
-            key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
-        )
-
-        # Remove worst programs, but never remove the best program or excluded program
-        programs_to_remove = []
-        protected_ids = {self.best_program_id, exclude_program_id} - {None}
-
-        for program in sorted_programs:
-            if len(programs_to_remove) >= num_to_remove:
-                break
-            # Don't remove the best program or excluded program
-            if program.id not in protected_ids:
-                programs_to_remove.append(program)
-
-        # If we still need to remove more and only have protected programs,
-        # remove from the remaining programs anyway (but keep the protected ones)
-        if len(programs_to_remove) < num_to_remove:
-            remaining_programs = [
-                p
-                for p in sorted_programs
-                if p not in programs_to_remove and p.id not in protected_ids
-            ]
-            additional_removals = remaining_programs[: num_to_remove - len(programs_to_remove)]
-            programs_to_remove.extend(additional_removals)
+        if self.population_strategy and self.population_strategy.evict:
+            eligible_ids = {p.id for p in all_programs} - protected_ids
+            required = min(num_to_remove, len(eligible_ids))
+            snapshot = self._population_snapshot()
+            with _strategy_boundary():
+                chosen_ids = tuple(
+                    self.population_strategy.evict(snapshot, required, frozenset(protected_ids))
+                )
+                if (
+                    len(chosen_ids) != required
+                    or not all(isinstance(pid, str) for pid in chosen_ids)
+                    or len(set(chosen_ids)) != required
+                    or not set(chosen_ids) <= eligible_ids
+                ):
+                    raise ValueError(
+                        "population_strategy.evict must return distinct eligible program IDs"
+                    )
+            programs_to_remove = [self.programs[pid] for pid in chosen_ids]
+        else:
+            # Preserve MAP-Elites cell owners until non-owning programs are exhausted.
+            elite_ids = set()
+            for island_map in self.island_feature_maps:
+                elite_ids.update(island_map.values())
+            non_elite = sorted(
+                [p for p in all_programs if p.id not in elite_ids and p.id not in protected_ids],
+                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+            )
+            elite = sorted(
+                [p for p in all_programs if p.id in elite_ids and p.id not in protected_ids],
+                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+            )
+            programs_to_remove = non_elite[:num_to_remove]
+            if len(programs_to_remove) < num_to_remove:
+                remaining = num_to_remove - len(programs_to_remove)
+                programs_to_remove.extend(elite[:remaining])
 
         # Remove the selected programs
         for program in programs_to_remove:
@@ -1774,6 +2028,13 @@ class ProgramDatabase:
 
     def should_migrate(self) -> bool:
         """Check if migration should occur based on generation counters"""
+        if self.population_strategy and self.population_strategy.migration_due:
+            snapshot = self._population_snapshot()
+            with _strategy_boundary():
+                decision = self.population_strategy.migration_due(snapshot)
+                if type(decision) is not bool:
+                    raise ValueError("population_strategy.migration_due must return bool")
+            return decision
         max_generation = max(self.island_generations)
         return (max_generation - self.last_migration_generation) >= self.migration_interval
 
@@ -1787,6 +2048,35 @@ class ProgramDatabase:
             return
 
         logger.info("Performing migration between islands")
+
+        if self.population_strategy and self.population_strategy.migrate:
+            snapshot = self._population_snapshot()
+            with _strategy_boundary():
+                moves = tuple(self.population_strategy.migrate(snapshot))
+                for move in moves:
+                    if not isinstance(move, MigrationMove):
+                        raise ValueError(
+                            "population_strategy.migrate must return MigrationMove entries"
+                        )
+                    if not isinstance(move.program_id, str) or move.program_id not in self.programs:
+                        raise ValueError(f"migration program does not exist: {move.program_id}")
+                    if (
+                        isinstance(move.target_island, bool)
+                        or not isinstance(move.target_island, Integral)
+                        or not 0 <= move.target_island < len(self.islands)
+                    ):
+                        raise ValueError(f"invalid migration target island: {move.target_island!r}")
+                    if not any(move.program_id in island for island in self.islands):
+                        raise ValueError(
+                            f"migration program is not in an island: {move.program_id}"
+                        )
+                    if move.program_id in self.islands[int(move.target_island)]:
+                        raise ValueError("migration target must differ from source island")
+            for move in moves:
+                self._migrate_one(move.program_id, int(move.target_island))
+            self.last_migration_generation = max(self.island_generations)
+            self._validate_migration_results()
+            return
 
         for i, island in enumerate(self.islands):
             if len(island) == 0:
@@ -1811,66 +2101,8 @@ class ProgramDatabase:
             target_islands = [(i + 1) % len(self.islands), (i - 1) % len(self.islands)]
 
             for migrant in migrants:
-                # Prevent re-migration of already migrated programs to avoid exponential duplication.
-                # Analysis of actual evolution runs shows this causes severe issues:
-                # - Program cb5d07f2 had 183 descendant copies by iteration 850
-                # - Program 5645fbd2 had 31 descendant copies
-                # - IDs grow exponentially: program_migrant_2_migrant_3_migrant_4_migrant_0...
-                #
-                # This is particularly problematic for OpenEvolve's MAP-Elites + Island hybrid architecture:
-                # 1. All copies have identical code → same complexity/diversity/performance scores
-                # 2. They all map to the SAME MAP-Elites cell → only 1 survives, rest discarded
-                # 3. Wastes computation evaluating hundreds of identical programs
-                # 4. Reduces actual diversity as islands fill with duplicates
-                #
-                # By preventing already-migrated programs from migrating again, we ensure:
-                # - Each program migrates at most once per lineage
-                # - True diversity is maintained between islands
-                # - Computational resources aren't wasted on duplicates
-                # - Aligns with MAP-Elites' one-program-per-cell principle
-                if migrant.metadata.get("migrant", False):
-                    continue
-
                 for target_island in target_islands:
-                    # Skip migration if target island already has a program with identical code
-                    # Identical code produces identical metrics, so migration would be wasteful
-                    target_island_programs = [
-                        self.programs[pid]
-                        for pid in self.islands[target_island]
-                        if pid in self.programs
-                    ]
-                    has_duplicate_code = any(p.code == migrant.code for p in target_island_programs)
-
-                    if has_duplicate_code:
-                        logger.debug(
-                            f"Skipping migration of program {migrant.id[:8]} to island {target_island} "
-                            f"(duplicate code already exists)"
-                        )
-                        continue
-                    # Create a copy for migration with simple new UUID
-                    import uuid
-
-                    migrant_copy = Program(
-                        id=str(uuid.uuid4()),
-                        code=migrant.code,
-                        changes_description=migrant.changes_description,
-                        language=migrant.language,
-                        parent_id=migrant.id,
-                        generation=migrant.generation,
-                        metrics=migrant.metrics.copy(),
-                        metadata={**migrant.metadata, "island": target_island, "migrant": True},
-                    )
-
-                    # Use add() method to properly handle MAP-Elites deduplication,
-                    # feature map updates, and island tracking
-                    self.add(migrant_copy, target_island=target_island)
-
-                    # Log migration
-                    logger.info(
-                        "Program %s migrated to island %d",
-                        migrant_copy.id[:8],
-                        target_island,
-                    )
+                    self._migrate_one(migrant.id, target_island)
 
         # Update last migration generation
         self.last_migration_generation = max(self.island_generations)
@@ -1878,6 +2110,34 @@ class ProgramDatabase:
 
         # Validate migration results
         self._validate_migration_results()
+
+    def _migrate_one(self, program_id: str, target_island: int) -> None:
+        migrant = self.programs.get(program_id)
+        if migrant is None or migrant.metadata.get("migrant", False):
+            return
+        target_island_programs = [
+            self.programs[pid] for pid in self.islands[target_island] if pid in self.programs
+        ]
+        has_duplicate_code = any(p.code == migrant.code for p in target_island_programs)
+        if has_duplicate_code:
+            logger.debug(
+                f"Skipping migration of program {migrant.id[:8]} to island {target_island} "
+                f"(duplicate code already exists)"
+            )
+            return
+
+        migrant_copy = Program(
+            id=str(uuid.uuid4()),
+            code=migrant.code,
+            changes_description=migrant.changes_description,
+            language=migrant.language,
+            parent_id=migrant.id,
+            generation=migrant.generation,
+            metrics=migrant.metrics.copy(),
+            metadata={**migrant.metadata, "island": target_island, "migrant": True},
+        )
+        if self.add(migrant_copy, target_island=target_island) is not None:
+            logger.info("Program %s migrated to island %d", migrant_copy.id[:8], target_island)
 
     def _validate_migration_results(self) -> None:
         """
@@ -1964,8 +2224,8 @@ class ProgramDatabase:
                         # Sort by fitness and update
                         best_program = max(
                             island_programs,
-                            key=lambda p: p.metrics.get(
-                                "combined_score", safe_numeric_average(p.metrics)
+                            key=lambda p: get_fitness_score(
+                                p.metrics, self.config.feature_dimensions
                             ),
                         )
                         self.island_best_programs[i] = best_program.id
@@ -2534,8 +2794,9 @@ class ProgramDatabase:
         self,
         program_id: str,
         template_key: str,
-        prompt: Dict[str, str],
+        prompt: Dict[str, Any],
         responses: Optional[List[str]] = None,
+        token_usage: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Log a prompt for a program.
@@ -2546,6 +2807,7 @@ class ProgramDatabase:
         template_key: Key for the prompt template
         prompt: Prompts in the format {template_key: { 'system': str, 'user': str }}.
         responses: Optional list of responses to the prompt, if available.
+        token_usage: Optional token usage dictionary for this LLM call.
         """
 
         if not self.config.log_prompts:
@@ -2554,6 +2816,8 @@ class ProgramDatabase:
         if responses is None:
             responses = []
         prompt["responses"] = responses
+        if token_usage is not None:
+            prompt["token_usage"] = token_usage
 
         if self.prompts_by_program is None:
             self.prompts_by_program = {}

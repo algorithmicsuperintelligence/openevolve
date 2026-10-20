@@ -178,20 +178,47 @@ The key innovation in the final solution:
 - Representing both circle positions and radii as optimization variables
 - Carefully crafted constraints to enforce non-overlap and boundary conditions
 
-This approach achieved a sum of radii of 2.634, matching the AlphaEvolve paper's result of 2.635 to within 0.04%!
+This approach achieved a sum of radii of 2.634, matching the AlphaEvolve paper's result of 2.635 to within 0.04%. Subsequent evolution has since produced a program that exceeds the paper's result (see Results below).
 
 ![Final Packing Solution](circle_packing_460.png)
 
 ## Results
 
-Our final solution achieves:
+Our best solution to date, reported in issue #156 and found at iteration 206 (generation 13) of a run configured as phase_1 x100 -> phase_2 x100 -> phase_2 x250, achieves:
 
 ```
-Sum of radii: 2.634292402141039
-Target ratio: 0.9997314619131079 (99.97% of AlphaEvolve's result)
+Sum of radii: 2.635977394746595
+Target ratio: 1.0003709277975694 (100.04% of AlphaEvolve's 2.635, i.e. ~0.037% above it)
 ```
 
-This demonstrates that OpenEvolve can successfully reproduce the results from the AlphaEvolve paper on this mathematical optimization problem.
+This demonstrates that OpenEvolve can not only reproduce but exceed the results from the AlphaEvolve paper on this mathematical optimization problem.
+
+**Reproducibility note**: the recorded best program (`best_program.py`) is deterministic — it uses no random initialization, so its result can be independently re-verified with the repository evaluator (an earlier recorded best used an unseeded `np.random` fallback and was not reproducible):
+
+```bash
+python -c "import importlib.util; spec = importlib.util.spec_from_file_location('evaluator', 'examples/circle_packing/evaluator.py'); ev = importlib.util.module_from_spec(spec); spec.loader.exec_module(ev); print(ev.evaluate('examples/circle_packing/best_program.py'))"
+```
+
+This reports `validity=1.0` and `sum_radii=2.6359773947...` (the last digits may vary by ~1e-11 across scipy/BLAS versions). The result is also covered by the `tests/test_circle_packing_best_program.py` regression test.
+
+## Reproducibility & the target value
+
+The evaluator uses a `TARGET_VALUE` (default `2.635`, the AlphaEvolve result for n=26) only to compute the `target_ratio` and `combined_score` metrics. It creates evolutionary pressure by scaling fitness — it does not leak a solution to the model, and any positive value works (see issue #117):
+
+> You can put any other value for the target like 3.0 and it will still work. The target is used to compute the metrics and create evolutionary pressure. It by itself doesn't give a solution.
+
+To reproduce the search without the AlphaEvolve prior, override it via the environment:
+
+```bash
+export CIRCLE_PACKING_TARGET_VALUE=3.0  # or 1.0, 10.0, ... any positive value
+```
+
+Some empirical reference points for what OpenEvolve reaches on this problem without relying on the target as a hint:
+
+- With the default configuration, OpenEvolve reached a sum of radii of 2.634 in about 800 generations (see issue #117).
+- Issue #156 reports 2.635977394746595 — surpassing the AlphaEvolve result — found at iteration 206 of a 450-iteration multi-phase run.
+
+Note that the system messages in `config_phase_1.yaml` (line 24), `config_phase_2.yaml` (line 24), `config_phase_1_anthropic.yaml` (line 21) and `config_phase_2_anthropic.yaml` (line 22) mention the 2.635 value to the model as an encouraging upper bound. For a fully prior-free run, edit or remove those sentences in your own configs as well.
 
 ## Key Observations
 

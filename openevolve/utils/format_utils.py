@@ -20,8 +20,10 @@ def format_metrics_safe(metrics: Dict[str, Any]) -> str:
 
     formatted_parts = []
     for name, value in metrics.items():
-        # Check if value is numeric (int, float)
-        if isinstance(value, (int, float)):
+        # bool is a subclass of int, but logging it as 1.0000/0.0000 is confusing.
+        if isinstance(value, bool):
+            formatted_parts.append(f"{name}={value}")
+        elif isinstance(value, (int, float)):
             try:
                 # Only apply float formatting to numeric values
                 formatted_parts.append(f"{name}={value:.4f}")
@@ -54,7 +56,12 @@ def format_improvement_safe(parent_metrics: Dict[str, Any], child_metrics: Dict[
         if metric in parent_metrics:
             parent_value = parent_metrics[metric]
             # Only calculate improvement for numeric values
-            if isinstance(child_value, (int, float)) and isinstance(parent_value, (int, float)):
+            if (
+                isinstance(child_value, (int, float))
+                and isinstance(parent_value, (int, float))
+                and not isinstance(child_value, bool)
+                and not isinstance(parent_value, bool)
+            ):
                 try:
                     diff = child_value - parent_value
                     improvement_parts.append(f"{metric}={diff:+.4f}")

@@ -116,17 +116,17 @@ def test():
         """Test _prepare_evaluator with callable function"""
         def my_evaluator(program_path):
             return {"score": 0.8, "test": "passed"}
-        
+
         temp_files = []
         result = _prepare_evaluator(my_evaluator, self.temp_dir, temp_files)
-        
+
         self.assertTrue(os.path.exists(result))
-        self.assertEqual(len(temp_files), 1)
-        
+        # 2 temp files: the pickle file + the wrapper .py
+        self.assertEqual(len(temp_files), 2)
+
         with open(result, 'r') as f:
             content = f.read()
             self.assertIn("def evaluate(program_path)", content)
-            self.assertIn("user_evaluator", content)
     
     def test_prepare_evaluator_from_string(self):
         """Test _prepare_evaluator with code string"""
@@ -159,12 +159,12 @@ def test():
                     if arr[j] > arr[j+1]:
                         arr[j], arr[j+1] = arr[j+1], arr[j]
             return arr
-        
+
         test_cases = [
             ([3, 1, 2], [1, 2, 3]),
             ([5, 2], [2, 5]),
         ]
-        
+
         # Mock the async controller to avoid actual evolution
         with unittest.mock.patch('openevolve.api._run_evolution_async') as mock_async:
             mock_async.return_value = EvolutionResult(
@@ -174,12 +174,78 @@ def test():
                 metrics={"score": 1.0, "test_pass_rate": 1.0},
                 output_dir=None
             )
-            
+
             result = evolve_function(initial_sort, test_cases, iterations=1)
-            
+
             self.assertIsInstance(result, EvolutionResult)
             self.assertEqual(result.best_score, 1.0)
             mock_async.assert_called_once()
+
+    def test_evolve_function_evaluator_works_in_subprocess(self):
+        """Test that evolve_function generates an evaluator that works in a subprocess.
+
+        This is a regression test for the bug where callable evaluators stored in
+        globals() could not be accessed by process-based worker subprocesses.
+        """
+        import subprocess
+        import sys
+
+        def bubble_sort(arr):
+            for i in range(len(arr)):
+                for j in range(len(arr) - 1):
+                    if arr[j] > arr[j + 1]:
+                        arr[j], arr[j + 1] = arr[j + 1], arr[j]
+            return arr
+
+        test_cases = [([3, 1, 2], [1, 2, 3]), ([5, 2, 8], [2, 5, 8])]
+
+        # Call evolve_function but intercept the evaluator code it generates
+        # by capturing what gets passed to run_evolution
+        with unittest.mock.patch('openevolve.api.run_evolution') as mock_run:
+            mock_run.return_value = EvolutionResult(
+                best_program=None, best_score=1.0,
+                best_code="", metrics={}, output_dir=None
+            )
+            evolve_function(bubble_sort, test_cases, iterations=1)
+
+            # Extract the evaluator code string passed to run_evolution
+            call_kwargs = mock_run.call_args
+            evaluator_code = call_kwargs.kwargs.get('evaluator') or call_kwargs[1].get('evaluator')
+
+        self.assertIsInstance(evaluator_code, str, "evolve_function should pass evaluator as code string")
+        self.assertIn("def evaluate(program_path)", evaluator_code)
+        self.assertIn("combined_score", evaluator_code)
+
+        # Write the evaluator to a file
+        eval_file = os.path.join(self.temp_dir, "eval_test.py")
+        with open(eval_file, 'w') as f:
+            f.write(evaluator_code)
+
+        # Write a correct program for the evaluator to test
+        program_file = os.path.join(self.temp_dir, "program.py")
+        with open(program_file, 'w') as f:
+            f.write("def bubble_sort(arr):\n    return sorted(arr)\n")
+
+        # Run in a subprocess to verify it works across process boundaries
+        test_script = os.path.join(self.temp_dir, "run_eval.py")
+        with open(test_script, 'w') as f:
+            f.write(f"""
+import importlib.util
+spec = importlib.util.spec_from_file_location("evaluator", {eval_file!r})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+result = mod.evaluate({program_file!r})
+assert result["combined_score"] == 1.0, f"Expected 1.0, got {{result['combined_score']}}"
+assert result["tests_passed"] == 2, f"Expected 2, got {{result['tests_passed']}}"
+print("OK")
+""")
+
+        proc = subprocess.run(
+            [sys.executable, test_script],
+            capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(proc.returncode, 0, f"Subprocess failed: {proc.stderr}")
+        self.assertIn("OK", proc.stdout)
     
     def test_evolve_algorithm_basic(self):
         """Test evolve_algorithm with simple class"""
@@ -276,6 +342,78 @@ def test():
             
             self.assertEqual(result.output_dir, "/tmp/test_output")
             mock_async.assert_called_once()
+
+
+class TestEvaluatorCrossProcess(unittest.TestCase):
+    """Test that callable evaluators work across process boundaries"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_callable_evaluator_works_in_subprocess(self):
+        """Test that a callable evaluator serialized by _prepare_evaluator
+        can be loaded and executed in a separate process (simulating
+        ProcessPoolExecutor workers)."""
+        def my_evaluator(program_path):
+            return {"score": 0.42, "passed": True}
+
+        temp_files = []
+        eval_file = _prepare_evaluator(my_evaluator, self.temp_dir, temp_files)
+
+        # Load and run the evaluator in a subprocess — this is what
+        # process_parallel.py workers do.
+        import subprocess, sys, json
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                f"""
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("eval_mod", {eval_file!r})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(json.dumps(mod.evaluate("dummy_path.py")))
+"""
+            ],
+            capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(result.returncode, 0, f"Subprocess failed: {result.stderr}")
+        metrics = json.loads(result.stdout.strip())
+        self.assertAlmostEqual(metrics["score"], 0.42)
+        self.assertTrue(metrics["passed"])
+
+    def test_callable_evaluator_with_closure(self):
+        """Test that a closure (capturing local variables) works across processes."""
+        threshold = 0.5
+        func_name = "my_func"
+
+        def closure_evaluator(program_path):
+            return {"score": threshold, "func": func_name}
+
+        temp_files = []
+        eval_file = _prepare_evaluator(closure_evaluator, self.temp_dir, temp_files)
+
+        import subprocess, sys, json
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                f"""
+import importlib.util, json
+spec = importlib.util.spec_from_file_location("eval_mod", {eval_file!r})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(json.dumps(mod.evaluate("dummy.py")))
+"""
+            ],
+            capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(result.returncode, 0, f"Subprocess failed: {result.stderr}")
+        metrics = json.loads(result.stdout.strip())
+        self.assertAlmostEqual(metrics["score"], 0.5)
+        self.assertEqual(metrics["func"], "my_func")
 
 
 if __name__ == '__main__':

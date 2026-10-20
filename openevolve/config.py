@@ -56,6 +56,10 @@ class LLMModelConfig:
     api_key: Optional[str] = None
     name: str = None
 
+    # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
+    # Also supports "copilot_cli" (GitHub Copilot CLI)
+    provider: Optional[str] = None
+
     # Custom LLM client
     init_client: Optional[Callable] = None
 
@@ -78,6 +82,15 @@ class LLMModelConfig:
 
     # Reasoning parameters
     reasoning_effort: Optional[str] = None
+
+    # Claude Code CLI budget per call (USD)
+    max_budget_usd: Optional[float] = None
+
+    # GitHub Copilot CLI budget per call (AI credits)
+    max_ai_credits: Optional[float] = None
+
+    # GitHub Copilot CLI: run the agent with all tools pre-approved
+    allow_all_tools: Optional[bool] = None
 
     # Manual mode (human-in-the-loop)
     manual_mode: Optional[bool] = None
@@ -168,6 +181,12 @@ class LLMConfig(LLMModelConfig):
 
         # Update models with shared configuration values
         shared_config = {
+            # `provider` must be shared: without it a top-level `llm.provider`
+            # (e.g. "claude_code") never reaches the per-model configs, every model
+            # keeps provider=None, and LLMEnsemble silently routes them all to the
+            # OpenAI backend. Propagation uses overwrite=False, so an explicit
+            # per-model provider still wins.
+            "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
             "temperature": self.temperature,
@@ -222,6 +241,9 @@ class LLMConfig(LLMModelConfig):
 
         # Update models with shared configuration values
         shared_config = {
+            # See the note in __post_init__: `provider` has to be propagated here too,
+            # or rebuilding the models drops a top-level provider back to None.
+            "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
             "temperature": self.temperature,
@@ -242,6 +264,7 @@ class PromptConfig:
 
     template_dir: Optional[str] = None
     system_message: str = "system_message"
+    island_system_messages: List[Optional[str]] = field(default_factory=list)
     evaluator_system_message: str = "evaluator_system_message"
 
     # Large-codebase mode: represent programs in prompts via compact changes descriptions
@@ -350,6 +373,9 @@ class DatabaseConfig:
 
     novelty_llm: Optional["LLMInterface"] = None
     embedding_model: Optional[str] = None
+    # OpenAI-compatible base URL for embeddings (e.g. OpenRouter or a local server);
+    # falls back to the OPENAI_EMBEDDING_BASE_URL environment variable
+    embedding_api_base: Optional[str] = None
     similarity_threshold: float = 0.99
 
 
@@ -383,6 +409,11 @@ class EvaluatorConfig:
     enable_artifacts: bool = True
     max_artifact_storage: int = 100 * 1024 * 1024  # 100MB per program
 
+    # Extra keyword arguments forwarded to the user's evaluate() function
+    # (only applied when its signature accepts them; see openevolve.evaluator).
+    # Settable via YAML ('evaluator.evaluator_args') or the --evaluator-args CLI flag.
+    evaluator_args: Optional[Dict[str, Any]] = None
+
 
 @dataclass
 class EvolutionTraceConfig:
@@ -406,6 +437,9 @@ class Config:
     checkpoint_interval: int = 100
     log_level: str = "INFO"
     log_dir: Optional[str] = None
+    # Optional prefix applied to all OpenEvolve logger names (e.g. "run1" logs
+    # as "run1.openevolve.*"), useful to tell apart concurrent runs (issue #290)
+    logger_prefix: Optional[str] = None
     random_seed: Optional[int] = 42
     language: str = None
     file_suffix: str = ".py"
@@ -420,6 +454,8 @@ class Config:
     # Evolution settings
     diff_based_evolution: bool = True
     max_code_length: int = 10000
+    # Revert any LLM edits outside the EVOLVE-BLOCK-START/END regions
+    enforce_evolve_blocks: bool = False
     diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
 
     # Early stopping settings
@@ -461,6 +497,16 @@ class Config:
                 del config_dict["llm"]["temperature"]
             if "top_p" in config_dict["llm"] and config_dict["llm"]["top_p"] is None:
                 del config_dict["llm"]["top_p"]
+            # 'model' is not a config field (models are 'llm.models' or
+            # 'llm.primary_model'), and dacite silently drops unknown keys. Left
+            # unchecked, such configs pass validation with an empty model ensemble
+            # and every LLM call later fails with "IndexError: list index out of
+            # range" (issue #427). Fail here with the correct spelling instead.
+            if isinstance(config_dict["llm"], dict) and "model" in config_dict["llm"]:
+                raise ValueError(
+                    "Invalid config key 'llm.model'. Use 'llm.primary_model' or the "
+                    "'llm.models' array instead (see README configuration section)."
+                )
 
         config: Config = dacite.from_dict(
             data_class=cls,
@@ -473,6 +519,11 @@ class Config:
 
         if config.database.random_seed is None and config.random_seed is not None:
             config.database.random_seed = config.random_seed
+
+        if len(config.prompt.island_system_messages) > config.database.num_islands:
+            raise ValueError(
+                "prompt.island_system_messages has more entries than database.num_islands"
+            )
 
         if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
             raise ValueError(

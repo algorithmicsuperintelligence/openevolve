@@ -17,40 +17,15 @@ from openevolve.database import Program, ProgramDatabase
 from openevolve.evaluator import Evaluator
 from openevolve.evolution_trace import EvolutionTracer
 from openevolve.llm.ensemble import LLMEnsemble
+from openevolve.population import PopulationStrategy
 from openevolve.process_parallel import ProcessParallelController
 from openevolve.prompt.sampler import PromptSampler
+from openevolve.selection import IslandSelector
 from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
+from openevolve.utils.logging_utils import LoggerPrefixFilter
 
 logger = logging.getLogger(__name__)
-
-
-def _format_metrics(metrics: Dict[str, Any]) -> str:
-    """Safely format metrics, handling both numeric and string values"""
-    formatted_parts = []
-    for name, value in metrics.items():
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            try:
-                formatted_parts.append(f"{name}={value:.4f}")
-            except (ValueError, TypeError):
-                formatted_parts.append(f"{name}={value}")
-        else:
-            formatted_parts.append(f"{name}={value}")
-    return ", ".join(formatted_parts)
-
-
-def _format_improvement(improvement: Dict[str, Any]) -> str:
-    """Safely format improvement metrics"""
-    formatted_parts = []
-    for name, diff in improvement.items():
-        if isinstance(diff, (int, float)) and not isinstance(diff, bool):
-            try:
-                formatted_parts.append(f"{name}={diff:+.4f}")
-            except (ValueError, TypeError):
-                formatted_parts.append(f"{name}={diff}")
-        else:
-            formatted_parts.append(f"{name}={diff}")
-    return ", ".join(formatted_parts)
 
 
 class OpenEvolve:
@@ -73,9 +48,12 @@ class OpenEvolve:
         evaluation_file: str,
         config: Config,
         output_dir: Optional[str] = None,
+        island_selector: Optional[IslandSelector] = None,
+        population_strategy: Optional[PopulationStrategy] = None,
     ):
         # Load configuration (loaded in main_async)
         self.config = config
+        self.island_selector = island_selector
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
@@ -100,9 +78,13 @@ class OpenEvolve:
             random.seed(self.config.random_seed)
             np.random.seed(self.config.random_seed)
 
-            # Create hash-based seeds for different components
+            # Create hash-based seeds for different components. md5 is used only to
+            # derive a deterministic RNG seed from the configured seed, not for any
+            # security purpose; usedforsecurity=False documents that intent.
             base_seed = str(self.config.random_seed).encode("utf-8")
-            llm_seed = int(hashlib.md5(base_seed + b"llm").hexdigest()[:8], 16) % (2**31)
+            llm_seed = int(
+                hashlib.md5(base_seed + b"llm", usedforsecurity=False).hexdigest()[:8], 16
+            ) % (2**31)
 
             # Propagate seed to LLM configurations
             self.config.llm.random_seed = llm_seed
@@ -149,7 +131,9 @@ class OpenEvolve:
             self.config.database.random_seed = self.config.random_seed
 
         self.config.database.novelty_llm = self.llm_ensemble
-        self.database = ProgramDatabase(self.config.database)
+        self.database = ProgramDatabase(
+            self.config.database, population_strategy=population_strategy
+        )
 
         self.evaluator = Evaluator(
             self.config.evaluator,
@@ -197,17 +181,32 @@ class OpenEvolve:
         root_logger = logging.getLogger()
         root_logger.setLevel(getattr(logging, self.config.log_level))
 
+        # Optional prefix for all logger names (issue #290): rewriting
+        # record.name at the handler level means every downstream module
+        # logger (created via logging.getLogger(__name__)) is prefixed too.
+        prefix_filter = None
+        if self.config.logger_prefix:
+            prefix_filter = LoggerPrefixFilter(self.config.logger_prefix)
+
         # Add file handler
         log_file = os.path.join(log_dir, f"openevolve_{time.strftime('%Y%m%d_%H%M%S')}.log")
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
+        if prefix_filter is not None:
+            file_handler.addFilter(prefix_filter)
         root_logger.addHandler(file_handler)
 
         # Add console handler
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        console_format = "%(asctime)s - %(levelname)s - %(message)s"
+        if prefix_filter is not None:
+            # Include the (prefixed) logger name so console output is
+            # distinguishable across runs as well; default format is unchanged.
+            console_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            console_handler.addFilter(prefix_filter)
+        console_handler.setFormatter(logging.Formatter(console_format))
         root_logger.addHandler(console_handler)
 
         logger.info(f"Logging to {log_file}")
@@ -225,7 +224,7 @@ class OpenEvolve:
         if not bool(getattr(self.config.llm, "manual_mode", False)):
             return
 
-        qdir = (Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue")
+        qdir = Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue"
 
         # Clear stale tasks from previous runs
         if qdir.exists():
@@ -264,7 +263,6 @@ class OpenEvolve:
             Best program found
         """
         max_iterations = iterations or self.config.max_iterations
-
         # Determine starting iteration
         start_iteration = 0
         if checkpoint_path and os.path.exists(checkpoint_path):
@@ -303,6 +301,12 @@ class OpenEvolve:
 
             self.database.add(initial_program)
 
+            # Check for and store artifacts from initial program
+            initial_artifacts = self.evaluator.get_pending_artifacts(initial_program_id)
+            if initial_artifacts:
+                self.database.store_artifacts(initial_program_id, initial_artifacts)
+                logger.info(f"Stored artifacts for initial program")
+
             # Check if combined_score is present in the metrics
             if "combined_score" not in initial_metrics:
                 # Calculate average of numeric metrics
@@ -333,6 +337,7 @@ class OpenEvolve:
                 self.database,
                 self.evolution_tracer,
                 file_suffix=self.config.file_suffix,
+                island_selector=self.island_selector,
             )
 
             # Set up signal handlers for graceful shutdown

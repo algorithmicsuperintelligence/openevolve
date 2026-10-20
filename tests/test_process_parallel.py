@@ -4,17 +4,26 @@ Tests for process-based parallel controller
 
 import asyncio
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch, MagicMock
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ProcessPoolExecutor
+
+
+def _slow_test_worker(marker_path: str) -> str:
+    Path(marker_path).write_text(str(os.getpid()))
+    time.sleep(5)
+    return "finished"
+
 
 # Set dummy API key for testing
 os.environ["OPENAI_API_KEY"] = "test"
 
 from openevolve.config import Config, DatabaseConfig, EvaluatorConfig, LLMConfig, PromptConfig
 from openevolve.database import Program, ProgramDatabase
+from openevolve import process_parallel as process_parallel_module
 from openevolve.process_parallel import ProcessParallelController, SerializableResult
 
 
@@ -30,7 +39,9 @@ class TestProcessParallel(unittest.TestCase):
         self.config.max_iterations = 10
         self.config.evaluator.parallel_evaluations = 2
         self.config.evaluator.timeout = 10
-        self.config.database.num_islands = 2
+        # One island per test program so each owns its MAP-Elites cell and none is
+        # displaced (MAP-Elites removes programs displaced from their cell).
+        self.config.database.num_islands = 3
         self.config.database.in_memory = True
         self.config.checkpoint_interval = 5
 
@@ -46,7 +57,7 @@ def evaluate(program_path):
         # Create test database
         self.database = ProgramDatabase(self.config.database)
 
-        # Add some test programs
+        # Add some test programs, one per island so each survives as its cell owner
         for i in range(3):
             program = Program(
                 id=f"test_{i}",
@@ -55,7 +66,7 @@ def evaluate(program_path):
                 metrics={"score": 0.5 + i * 0.1, "performance": 0.4 + i * 0.1},
                 iteration_found=0,
             )
-            self.database.add(program)
+            self.database.add(program, target_island=i)
 
     def tearDown(self):
         """Clean up test environment"""
@@ -83,6 +94,55 @@ def evaluate(program_path):
         controller.stop()
         self.assertIsNone(controller.executor)
         self.assertTrue(controller.shutdown_event.is_set())
+
+    def test_controller_stop_terminates_running_workers(self):
+        """Stopping the controller does not wait for stuck process-pool work."""
+        controller = ProcessParallelController(self.config, self.eval_file, self.database)
+        executor = ProcessPoolExecutor(max_workers=1)
+        controller.executor = executor
+        marker_path = os.path.join(self.test_dir, "worker.pid")
+        future = executor.submit(_slow_test_worker, marker_path)
+
+        deadline = time.monotonic() + 5
+        while not os.path.exists(marker_path) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(os.path.exists(marker_path))
+        worker_pid = int(Path(marker_path).read_text())
+
+        started = time.monotonic()
+        controller.stop()
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1)
+        self.assertIsNone(controller.executor)
+        self.assertTrue(controller.shutdown_event.is_set())
+        deadline = time.monotonic() + 1
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(future.done())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(worker_pid, 0)
+
+        # Cleanup is idempotent after the executor reference is cleared.
+        controller.stop()
+
+    def test_process_pool_shutdown_escalates_to_kill(self):
+        """Workers still alive after terminate are killed before returning."""
+        process = Mock()
+        process.is_alive.return_value = True
+        executor = Mock(spec=["_processes", "shutdown"])
+        executor._processes = {123: process}
+
+        with patch.object(
+            process_parallel_module,
+            "_wait_for_processes",
+            side_effect=[[process], []],
+        ):
+            process_parallel_module._terminate_process_pool(executor)
+
+        executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
 
     def test_database_snapshot_creation(self):
         """Test creating database snapshot for workers"""
