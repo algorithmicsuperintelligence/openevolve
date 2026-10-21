@@ -34,6 +34,18 @@ class TestCodeUtils(unittest.TestCase):
         response = "```c\nint wrong;\n```\n```c++\nint correct;\n```"
         self.assertEqual(parse_full_rewrite(response, "c++"), "int correct;")
 
+    def test_parse_full_rewrite_horizontal_whitespace_after_language(self):
+        for whitespace in (" ", "\t", " \t"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(whitespace=repr(whitespace), newline=repr(newline)):
+                    response = (
+                        f"```python{whitespace}{newline}"
+                        f"def run():{newline}    return 42{newline}```"
+                    )
+                    namespace = {}
+                    exec(parse_full_rewrite(response), namespace)
+                    self.assertEqual(namespace["run"](), 42)
+
     def test_parse_full_rewrite_fallbacks(self):
         for response in ("```\nx = 1\n```", "x = 1"):
             with self.subTest(response=response):

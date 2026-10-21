@@ -5,7 +5,6 @@ Utilities for code parsing, diffing, and manipulation
 import re
 from typing import Dict, List, Optional, Tuple, Union
 
-
 _STANDARD_DIFF_PATTERN = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
 _STANDARD_DIFF_MARKER = re.compile(
     r"^[ \t]*(<<<<<<< SEARCH|=======|>>>>>>> REPLACE)[ \t]*\r?$", re.MULTILINE
@@ -238,7 +237,7 @@ def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[
     Returns:
         Extracted code or None if not found
     """
-    code_block_pattern = r"```" + re.escape(language) + r"\r?\n(.*?)```"
+    code_block_pattern = r"```" + re.escape(language) + r"[ \t]*\r?\n(.*?)```"
     matches = re.findall(code_block_pattern, llm_response, re.DOTALL)
 
     if matches:
