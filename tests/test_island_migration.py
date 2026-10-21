@@ -114,6 +114,21 @@ class TestIslandMigration(unittest.TestCase):
         # This is a known limitation of the current implementation that processes islands
         # sequentially while modifying them, causing interference between migration rounds.
 
+    def test_every_island_migrates_its_own_best(self):
+        """Migrants are chosen before any are moved, so an island's own best still migrates
+        even when a better migrant has just arrived from the previous island in the ring."""
+        # Different code lengths put the programs in different MAP-Elites cells
+        for pid, score, island, pad in [("a", 0.9, 0, 0), ("b", 0.5, 1, 400), ("c", 0.3, 2, 800)]:
+            program = self._create_test_program(pid, score, island)
+            program.code += "#" * (pad + 1)
+            self.db.add(program, target_island=island)
+
+        self.db.migrate_programs()
+
+        for island in self.db.islands:
+            scores = sorted(self.db.programs[pid].metrics["score"] for pid in island)
+            self.assertEqual(scores, [0.3, 0.5, 0.9])
+
     def test_migration_rate_respected(self):
         """Test that migration rate is properly applied"""
         # Add multiple programs to island 0
