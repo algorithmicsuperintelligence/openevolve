@@ -145,7 +145,10 @@ class LLMConfig(LLMModelConfig):
         if self.primary_model:
             # Create primary model
             primary_model = LLMModelConfig(
-                name=self.primary_model, weight=self.primary_model_weight or 1.0
+                name=self.primary_model,
+                weight=(
+                    self.primary_model_weight if self.primary_model_weight is not None else 1.0
+                ),
             )
             self.models.append(primary_model)
 
@@ -218,7 +221,10 @@ class LLMConfig(LLMModelConfig):
         if self.primary_model:
             # Create primary model
             primary_model = LLMModelConfig(
-                name=self.primary_model, weight=self.primary_model_weight or 1.0
+                name=self.primary_model,
+                weight=(
+                    self.primary_model_weight if self.primary_model_weight is not None else 1.0
+                ),
             )
             self.models.append(primary_model)
 
