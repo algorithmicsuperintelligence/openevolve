@@ -856,6 +856,11 @@ class ProgramDatabase:
         num_islands = max(len(saved_islands), self.config.num_islands)
         self.islands = [set() for _ in range(num_islands)]
 
+        # Retain saved cells and initialize maps for any newly configured islands.
+        self.island_feature_maps.extend(
+            {} for _ in range(num_islands - len(self.island_feature_maps))
+        )
+
         missing_programs = []
         restored_programs = 0
 
