@@ -281,7 +281,8 @@ class ProgramDatabase:
             target_island: Specific island to add to (auto-detects parent's island if None)
 
         Returns:
-            Program ID, or None when the admission strategy rejects the candidate
+            Program ID, or None when the admission strategy or the novelty check
+            rejects the candidate
         """
         if self.population_strategy is None or not any(
             (
@@ -382,17 +383,25 @@ class ProgramDatabase:
         if iteration is not None:
             program.iteration_found = iteration
             self.last_iteration = max(self.last_iteration, iteration)
+        previous_entry = self.programs.get(program.id)
         self.programs[program.id] = program
-
-        # Calculate feature coordinates for MAP-Elites
-        feature_coords = self._calculate_feature_coords(program)
 
         # Novelty check before adding
         if not self._is_novel(program.id, island_idx):
             logger.debug(
                 f"Program {program.id} failed in novelty check and won't be added in the island {island_idx}"
             )
-            return program.id  # Do not add non-novel program
+            # Undo the provisional store so the rejected program cannot be sampled,
+            # counted against the population limit, or saved to checkpoints.
+            if previous_entry is None:
+                del self.programs[program.id]
+            else:
+                self.programs[program.id] = previous_entry
+            return None
+
+        # Calculate feature coordinates for MAP-Elites (after the novelty check so
+        # rejected programs do not widen the feature scaling ranges)
+        feature_coords = self._calculate_feature_coords(program)
 
         # Add to island-specific feature map (replacing existing if better)
         feature_key = self._feature_coords_to_key(feature_coords)
