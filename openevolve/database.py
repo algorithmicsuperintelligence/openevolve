@@ -2660,7 +2660,9 @@ class ProgramDatabase:
         # Load small artifacts from JSON
         if program.artifacts_json:
             try:
-                small_artifacts = json.loads(program.artifacts_json)
+                small_artifacts = json.loads(
+                    program.artifacts_json, object_hook=self._artifact_deserializer
+                )
                 artifacts.update(small_artifacts)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to decode artifacts JSON for program {program_id}: {e}")
