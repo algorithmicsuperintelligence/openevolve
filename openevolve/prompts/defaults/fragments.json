@@ -22,7 +22,7 @@
   "attempt_all_metrics_improved": "Improvement in all metrics",
   "attempt_all_metrics_regressed": "Regression in all metrics",
   "attempt_mixed_metrics": "Mixed results",
-  "top_program_metrics_prefix": "Performs well on",
+  "top_program_metrics_prefix": "Metric:",
   "diverse_program_metrics_prefix": "Alternative approach to",
   "inspiration_type_diverse": "Diverse",
   "inspiration_type_migrant": "Migrant",
