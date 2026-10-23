@@ -12,6 +12,9 @@ The main configuration file containing all available options with sensible defau
 
 Use this file as a template for your own configurations.
 
+### `minimax_config.yaml`
+A complete configuration for using [MiniMax](https://platform.minimax.io/docs/api-reference/text-openai-api) models with OpenEvolve. MiniMax-M3.1-Flash is the default for evolution and evaluation; increase MiniMax-M3's weight to include it in the evolution ensemble. Both models provide a 1,000,000-token context window through the OpenAI-compatible API. The configuration documents international and mainland China endpoints.
+
 ### `island_config_example.yaml`
 A practical example configuration demonstrating proper island-based evolution setup. Shows:
 - Recommended island settings for most use cases

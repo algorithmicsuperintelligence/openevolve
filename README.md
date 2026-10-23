@@ -253,7 +253,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 <details>
 <summary><b>Advanced LLM Integration</b></summary>
 
-- **Universal API**: Works with OpenAI, Google, Claude Code CLI, local models, and proxies
+- **Universal API**: Works with OpenAI, Google, MiniMax, Claude Code CLI, local models, and proxies
 - **Intelligent Ensembles**: Weighted combinations with sophisticated fallback
 - **Test-Time Compute**: Enhanced reasoning through proxy systems (see [OptiLLM setup](#llm-provider-setup))
 - **Plugin Ecosystem**: Support for advanced reasoning plugins
@@ -332,6 +332,7 @@ docker run --rm -v $(pwd):/app ghcr.io/algorithmicsuperintelligence/openevolve:l
 - **o3-mini**: ~$0.03-0.12 per iteration (more cost-effective)
 - **Gemini-2.5-Pro**: ~$0.08-0.30 per iteration
 - **Gemini-2.5-Flash**: ~$0.01-0.05 per iteration (fastest and cheapest)
+- **MiniMax-M3.1-Flash / MiniMax-M3**: Cost depends on token usage; see [MiniMax pricing](https://platform.minimax.io/docs/pricing/overview).
 - **Local models**: Nearly free after setup
 - **OptiLLM**: Use cheaper models with test-time compute for better results
 
@@ -368,6 +369,33 @@ llm:
 ```bash
 export OPENAI_API_KEY="your-gemini-api-key"
 ```
+
+</details>
+
+<details>
+<summary><b>🧠 MiniMax</b></summary>
+
+[MiniMax](https://platform.minimax.io/docs/api-reference/text-openai-api) provides MiniMax-M3.1-Flash and MiniMax-M3 with 1,000,000-token context windows via an OpenAI-compatible API. This configuration selects Flash by default:
+
+```yaml
+# config.yaml
+llm:
+  api_base: "https://api.minimax.io/v1"
+  api_key: "${MINIMAX_API_KEY}"
+  models:
+    - name: "MiniMax-M3.1-Flash"
+      weight: 1.0
+    - name: "MiniMax-M3"
+      weight: 0.0  # Increase to include M3 in the ensemble
+```
+
+```bash
+export MINIMAX_API_KEY="your-minimax-api-key"
+```
+
+> **Note:** For mainland China, set `api_base` to `https://api.minimaxi.com/v1` with a regional API key. Both models accept temperature in `[0, 2]`. Flash always thinks; optionally set `reasoning_effort` to `low`, `medium`, `high`, `xhigh`, or `max` (the API default). M3 ignores effort. Explicit model IDs in existing configurations are passed through unchanged.
+
+See [`configs/minimax_config.yaml`](configs/minimax_config.yaml) for a complete configuration example.
 
 </details>
 
@@ -977,7 +1005,7 @@ See the [Cost Estimation](#cost-estimation) section in Installation & Setup for 
 
 **Yes!** OpenEvolve supports any OpenAI-compatible API:
 
-- **Commercial**: OpenAI, Google, Cohere
+- **Commercial**: OpenAI, Google, Cohere, MiniMax
 - **Local**: Ollama, vLLM, LM Studio, text-generation-webui
 - **Advanced**: OptiLLM for routing and test-time compute
 
