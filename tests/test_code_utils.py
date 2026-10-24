@@ -51,6 +51,15 @@ class TestCodeUtils(unittest.TestCase):
             with self.subTest(response=response):
                 self.assertEqual(parse_full_rewrite(response), "x = 1")
 
+    def test_parse_full_rewrite_other_language_tag(self):
+        for tag in ("py", "python3", "Python", "c++"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(tag=tag, newline=repr(newline)):
+                    response = f"```{tag}{newline}x = 1{newline}```"
+                    self.assertEqual(parse_full_rewrite(response), "x = 1")
+        response = "```js\nconsole.log(1)\n```"
+        self.assertEqual(parse_full_rewrite(response, "javascript"), "console.log(1)")
+
     def test_extract_diffs(self):
         """Test extracting diffs from a response"""
         diff_text = """
