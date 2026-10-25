@@ -39,10 +39,14 @@ ENV/
 
 # Output files
 examples/*/output/
+examples/*/archive/
 openevolve_output*/
 *.log
 demo_output*/
 pr_sanity*/
+
+# Claude Code
+.claude/
 
 # Test cache
 .pytest_cache/
