@@ -206,24 +206,43 @@ def extract_diffs(
         ValueError: The standard SEARCH/REPLACE response has an extra or
             unmatched delimiter line. Custom diff patterns retain their own grammar.
     """
-    matches = list(re.finditer(diff_pattern, diff_text, re.DOTALL))
     if diff_pattern == _STANDARD_DIFF_PATTERN:
-        # A permissive regex can absorb a second separator into replacement
-        # text and then insert it as code. Validate the complete response's
-        # delimiter lines before applying any matched block.
-        cursor = 0
-        for match in matches:
-            if _STANDARD_DIFF_MARKER.search(diff_text[cursor : match.start()]):
-                raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
-            block_markers = [
-                marker.group(1) for marker in _STANDARD_DIFF_MARKER.finditer(match.group(0))
-            ]
-            if block_markers != ["<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"]:
-                raise ValueError("Malformed SEARCH/REPLACE delimiter sequence")
-            cursor = match.end()
-        if _STANDARD_DIFF_MARKER.search(diff_text[cursor:]):
-            raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+        return _extract_standard_diffs(diff_text)
+    matches = re.finditer(diff_pattern, diff_text, re.DOTALL)
     return [(match.group(1).rstrip(), match.group(2).rstrip()) for match in matches]
+
+
+def _extract_standard_diffs(diff_text: str) -> List[Tuple[str, str]]:
+    """
+    Extract SEARCH/REPLACE blocks delimited by whole marker lines
+
+    A marker only counts on a line of its own, so code such as a "# =====" banner
+    comment stays part of a block. Every marker line in the response is checked
+    before any block is returned: a permissive match could otherwise absorb a
+    second separator into replacement text and insert it as code.
+    """
+    markers = ["<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"]
+    blocks: List[Tuple[str, str]] = []
+    texts: List[str] = []  # SEARCH and REPLACE text of the block being read
+    expected = 0
+    section_start = 0
+    for marker in _STANDARD_DIFF_MARKER.finditer(diff_text):
+        token = marker.group(1)
+        if token != markers[expected]:
+            if token == markers[1] and expected == 2:
+                raise ValueError("Malformed SEARCH/REPLACE delimiter sequence")
+            raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+        if expected > 0:
+            texts.append(diff_text[section_start : marker.start()].rstrip())
+        # A section's text starts on the line after its marker
+        section_start = marker.end() + 1
+        expected = (expected + 1) % 3
+        if expected == 0:
+            blocks.append((texts[0], texts[1]))
+            texts = []
+    if expected:
+        raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+    return blocks
 
 
 def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[str]:

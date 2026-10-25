@@ -237,12 +237,14 @@ class TestDiffDelimiterValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_diffs(text)
 
-    def test_crlf_marker_is_recognised(self):
-        # Standard pattern needs LF after markers, so a CRLF response yields no
-        # match; its marker lines are then reported rather than silently ignored.
+    def test_crlf_response_is_parsed(self):
         text = "<<<<<<< SEARCH\r\nx = 1\r\n=======\r\nx = 2\r\n>>>>>>> REPLACE\r\n"
-        with self.assertRaises(ValueError):
-            extract_diffs(text)
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
+        self.assertEqual(apply_diff("x = 1\ny = 1", text), "x = 2\ny = 1")
+
+    def test_marker_lines_with_trailing_whitespace_are_parsed(self):
+        text = "<<<<<<< SEARCH  \nx = 1\n=======\t\nx = 2\n>>>>>>> REPLACE \n"
+        self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
 
     def test_apply_diff_leaves_no_partial_changes(self):
         # A valid first block must not be applied when a later block is malformed.
@@ -265,6 +267,22 @@ class TestDiffDelimiterValidation(unittest.TestCase):
         replace = "print('=======')\n# ======= section\nsep = '=' * 7"
         text = f"<<<<<<< SEARCH\nx = 1\n=======\n{replace}\n>>>>>>> REPLACE\n"
         self.assertEqual(extract_diffs(text), [("x = 1", replace)])
+
+    def test_code_line_ending_in_separator_does_not_split_search(self):
+        # A banner comment such as "# =====" ends with the separator text; only a
+        # line that is the separator ends the SEARCH section.
+        banner = "# " + "=" * 25
+        search = f"{banner}\n# Helpers\n{banner}\ndef f(x):\n    return x + 1"
+        replace = f"{banner}\n# Helpers\n{banner}\ndef f(x):\n    return x + 2"
+        text = f"<<<<<<< SEARCH\n{search}\n=======\n{replace}\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [(search, replace)])
+        self.assertEqual(apply_diff(search + "\n", text), replace + "\n")
+
+    def test_code_line_ending_in_marker_text_is_not_a_marker(self):
+        search = "x = 1  # <<<<<<< SEARCH"
+        replace = "x = 2  # >>>>>>> REPLACE"
+        text = f"<<<<<<< SEARCH\n{search}\n=======\n{replace}\n>>>>>>> REPLACE\n"
+        self.assertEqual(extract_diffs(text), [(search, replace)])
 
     def test_marker_words_in_prose_are_allowed(self):
         text = (
