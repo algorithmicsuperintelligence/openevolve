@@ -97,6 +97,8 @@ def evaluate(program_path: str):
             )
 
         validate_packing_radii(circles[:, -1])
+        if not np.isfinite(circles).all():
+            raise ValueError("Circles must be finite")
         validate_packing_overlap_wtol(circles, TOL)
         validate_packing_inside_rect_wtol(circles, TOL)
 
