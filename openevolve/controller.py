@@ -17,40 +17,20 @@ from openevolve.database import Program, ProgramDatabase
 from openevolve.evaluator import Evaluator
 from openevolve.evolution_trace import EvolutionTracer
 from openevolve.llm.ensemble import LLMEnsemble
+from openevolve.population import PopulationStrategy
 from openevolve.process_parallel import ProcessParallelController
 from openevolve.prompt.sampler import PromptSampler
+from openevolve.selection import IslandSelector
 from openevolve.utils.code_utils import extract_code_language
 from openevolve.utils.format_utils import format_improvement_safe, format_metrics_safe
+from openevolve.utils.logging_utils import LoggerPrefixFilter
 
 logger = logging.getLogger(__name__)
 
 
-def _format_metrics(metrics: Dict[str, Any]) -> str:
-    """Safely format metrics, handling both numeric and string values"""
-    formatted_parts = []
-    for name, value in metrics.items():
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            try:
-                formatted_parts.append(f"{name}={value:.4f}")
-            except (ValueError, TypeError):
-                formatted_parts.append(f"{name}={value}")
-        else:
-            formatted_parts.append(f"{name}={value}")
-    return ", ".join(formatted_parts)
-
-
-def _format_improvement(improvement: Dict[str, Any]) -> str:
-    """Safely format improvement metrics"""
-    formatted_parts = []
-    for name, diff in improvement.items():
-        if isinstance(diff, (int, float)) and not isinstance(diff, bool):
-            try:
-                formatted_parts.append(f"{name}={diff:+.4f}")
-            except (ValueError, TypeError):
-                formatted_parts.append(f"{name}={diff}")
-        else:
-            formatted_parts.append(f"{name}={diff}")
-    return ", ".join(formatted_parts)
+class EvolutionFailedError(RuntimeError):
+    """Raised when every iteration of a run failed without producing a candidate
+    program, e.g. because the LLM endpoint is unreachable (issue #288)"""
 
 
 class OpenEvolve:
@@ -73,9 +53,12 @@ class OpenEvolve:
         evaluation_file: str,
         config: Config,
         output_dir: Optional[str] = None,
+        island_selector: Optional[IslandSelector] = None,
+        population_strategy: Optional[PopulationStrategy] = None,
     ):
         # Load configuration (loaded in main_async)
         self.config = config
+        self.island_selector = island_selector
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
@@ -100,9 +83,13 @@ class OpenEvolve:
             random.seed(self.config.random_seed)
             np.random.seed(self.config.random_seed)
 
-            # Create hash-based seeds for different components
+            # Create hash-based seeds for different components. md5 is used only to
+            # derive a deterministic RNG seed from the configured seed, not for any
+            # security purpose; usedforsecurity=False documents that intent.
             base_seed = str(self.config.random_seed).encode("utf-8")
-            llm_seed = int(hashlib.md5(base_seed + b"llm").hexdigest()[:8], 16) % (2**31)
+            llm_seed = int(
+                hashlib.md5(base_seed + b"llm", usedforsecurity=False).hexdigest()[:8], 16
+            ) % (2**31)
 
             # Propagate seed to LLM configurations
             self.config.llm.random_seed = llm_seed
@@ -132,6 +119,25 @@ class OpenEvolve:
             if not self.file_extension.startswith("."):
                 self.file_extension = f".{self.file_extension}"
 
+        # Load per-island initial programs (island 0 always starts from the initial program).
+        # Validate again: a Config built in code never passes through Config.from_dict
+        self.config.database.validate_island_initial_programs()
+        self.island_initial_program_codes: Dict[int, str] = {}
+        for island_idx, seed_path in enumerate(self.config.database.island_initial_programs):
+            if seed_path is None:
+                continue
+            if not os.path.isfile(seed_path):
+                raise FileNotFoundError(
+                    f"database.island_initial_programs[{island_idx}] '{seed_path}' does not exist"
+                )
+            if Path(seed_path).suffix != Path(initial_program_path).suffix:
+                logger.warning(
+                    f"Initial program for island {island_idx} '{seed_path}' has a different "
+                    f"extension than '{initial_program_path}'"
+                )
+            with open(seed_path, "r") as f:
+                self.island_initial_program_codes[island_idx] = f.read()
+
         # Set the file_suffix in config (can be overridden in YAML)
         if not hasattr(self.config, "file_suffix") or self.config.file_suffix == ".py":
             self.config.file_suffix = self.file_extension
@@ -149,7 +155,9 @@ class OpenEvolve:
             self.config.database.random_seed = self.config.random_seed
 
         self.config.database.novelty_llm = self.llm_ensemble
-        self.database = ProgramDatabase(self.config.database)
+        self.database = ProgramDatabase(
+            self.config.database, population_strategy=population_strategy
+        )
 
         self.evaluator = Evaluator(
             self.config.evaluator,
@@ -197,17 +205,32 @@ class OpenEvolve:
         root_logger = logging.getLogger()
         root_logger.setLevel(getattr(logging, self.config.log_level))
 
+        # Optional prefix for all logger names (issue #290): rewriting
+        # record.name at the handler level means every downstream module
+        # logger (created via logging.getLogger(__name__)) is prefixed too.
+        prefix_filter = None
+        if self.config.logger_prefix:
+            prefix_filter = LoggerPrefixFilter(self.config.logger_prefix)
+
         # Add file handler
         log_file = os.path.join(log_dir, f"openevolve_{time.strftime('%Y%m%d_%H%M%S')}.log")
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
+        if prefix_filter is not None:
+            file_handler.addFilter(prefix_filter)
         root_logger.addHandler(file_handler)
 
         # Add console handler
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        console_format = "%(asctime)s - %(levelname)s - %(message)s"
+        if prefix_filter is not None:
+            # Include the (prefixed) logger name so console output is
+            # distinguishable across runs as well; default format is unchanged.
+            console_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            console_handler.addFilter(prefix_filter)
+        console_handler.setFormatter(logging.Formatter(console_format))
         root_logger.addHandler(console_handler)
 
         logger.info(f"Logging to {log_file}")
@@ -225,7 +248,7 @@ class OpenEvolve:
         if not bool(getattr(self.config.llm, "manual_mode", False)):
             return
 
-        qdir = (Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue")
+        qdir = Path(self.output_dir).expanduser().resolve() / "manual_tasks_queue"
 
         # Clear stale tasks from previous runs
         if qdir.exists():
@@ -246,6 +269,38 @@ class OpenEvolve:
         with open(self.initial_program_path, "r") as f:
             return f.read()
 
+    async def _add_initial_program(
+        self, code: str, iteration: int, target_island: Optional[int] = None
+    ) -> Program:
+        """Evaluate a starting program, add it to the database, and store its artifacts"""
+        program_id = str(uuid.uuid4())
+
+        # Evaluate the initial program
+        metrics = await self.evaluator.evaluate_program(code, program_id)
+
+        program = Program(
+            id=program_id,
+            code=code,
+            changes_description=self.config.prompt.initial_changes_description,
+            language=self.config.language,
+            metrics=metrics,
+            iteration_found=iteration,
+        )
+
+        if self.database.add(program, target_island=target_island) is None:
+            logger.warning(
+                f"Population strategy rejected the initial program for island {target_island}"
+            )
+            return program
+
+        # Check for and store artifacts from initial program
+        artifacts = self.evaluator.get_pending_artifacts(program_id)
+        if artifacts:
+            self.database.store_artifacts(program_id, artifacts)
+            logger.info(f"Stored artifacts for initial program")
+
+        return program
+
     async def run(
         self,
         iterations: Optional[int] = None,
@@ -262,9 +317,11 @@ class OpenEvolve:
 
         Returns:
             Best program found
-        """
-        max_iterations = iterations or self.config.max_iterations
 
+        Raises:
+            EvolutionFailedError: If iterations ran but none produced a candidate program
+        """
+        max_iterations = self.config.max_iterations if iterations is None else iterations
         # Determine starting iteration
         start_iteration = 0
         if checkpoint_path and os.path.exists(checkpoint_path):
@@ -285,23 +342,14 @@ class OpenEvolve:
 
         if should_add_initial:
             logger.info("Adding initial program to database")
-            initial_program_id = str(uuid.uuid4())
-
-            # Evaluate the initial program
-            initial_metrics = await self.evaluator.evaluate_program(
-                self.initial_program_code, initial_program_id
+            initial_program = await self._add_initial_program(
+                self.initial_program_code, start_iteration
             )
+            initial_metrics = initial_program.metrics
 
-            initial_program = Program(
-                id=initial_program_id,
-                code=self.initial_program_code,
-                changes_description=self.config.prompt.initial_changes_description,
-                language=self.config.language,
-                metrics=initial_metrics,
-                iteration_found=start_iteration,
-            )
-
-            self.database.add(initial_program)
+            for island_idx, seed_code in self.island_initial_program_codes.items():
+                logger.info(f"Adding initial program for island {island_idx} to database")
+                await self._add_initial_program(seed_code, start_iteration, island_idx)
 
             # Check if combined_score is present in the metrics
             if "combined_score" not in initial_metrics:
@@ -333,6 +381,7 @@ class OpenEvolve:
                 self.database,
                 self.evolution_tracer,
                 file_suffix=self.config.file_suffix,
+                island_selector=self.island_selector,
             )
 
             # Set up signal handlers for graceful shutdown
@@ -369,6 +418,15 @@ class OpenEvolve:
             await self._run_evolution_with_checkpoints(
                 evolution_start, evolution_iterations, target_score
             )
+
+            # A run where nothing was generated must not end looking like a run that
+            # simply found nothing better than the seed (issue #288)
+            if self.parallel_controller.produced_no_candidates:
+                raise EvolutionFailedError(
+                    f"Evolution failed: 0/{self.parallel_controller.completed_iterations} "
+                    f"iterations produced a candidate program. "
+                    f"Last error: {self.parallel_controller.last_iteration_error}"
+                )
 
         finally:
             # Clean up parallel processing resources

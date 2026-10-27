@@ -3,10 +3,11 @@ Adapted from SakanaAI/ShinkaEvolve (Apache-2.0 License)
 Original source: https://github.com/SakanaAI/ShinkaEvolve/blob/main/shinka/llm/embedding.py
 """
 
-import os
-import openai
-from typing import Union, List
 import logging
+import os
+from typing import List, Optional, Union
+
+import openai
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,10 @@ AZURE_EMBEDDING_MODELS = [
     "azure-text-embedding-3-large",
 ]
 
+GEMINI_EMBEDDING_MODELS = [
+    "gemini-embedding-001",
+]
+
 OPENAI_EMBEDDING_COSTS = {
     "text-embedding-3-small": 0.02 / M,
     "text-embedding-3-large": 0.13 / M,
@@ -29,17 +34,28 @@ OPENAI_EMBEDDING_COSTS = {
 
 
 class EmbeddingClient:
-    def __init__(self, model_name: str = "text-embedding-3-small"):
+    def __init__(self, model_name: str = "text-embedding-3-small", api_base: Optional[str] = None):
         """
         Initialize the EmbeddingClient.
 
         Args:
             model (str): The OpenAI embedding model name to use.
+            api_base (str, optional): OpenAI-compatible base URL for embeddings.
+                Defaults to the OPENAI_EMBEDDING_BASE_URL environment variable.
         """
-        self.client, self.model = self._get_client_model(model_name)
+        self.client, self.model = self._get_client_model(model_name, api_base)
 
-    def _get_client_model(self, model_name: str) -> tuple[openai.OpenAI, str]:
-        if model_name in OPENAI_EMBEDDING_MODELS:
+    def _get_client_model(
+        self, model_name: str, api_base: Optional[str] = None
+    ) -> tuple[openai.OpenAI, str]:
+        api_base = api_base or os.getenv("OPENAI_EMBEDDING_BASE_URL")
+        if api_base:
+            # Any OpenAI-compatible endpoint (OpenRouter, local servers, ...)
+            # serves whatever embedding model name it supports
+            embedding_api_key = os.getenv("OPENAI_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
+            client = openai.OpenAI(api_key=embedding_api_key, base_url=api_base)
+            model_to_use = model_name
+        elif model_name in OPENAI_EMBEDDING_MODELS:
             # Use OPENAI_EMBEDDING_API_KEY if set, otherwise fall back to OPENAI_API_KEY
             # This allows users to use OpenRouter for LLMs while using OpenAI for embeddings
             embedding_api_key = os.getenv("OPENAI_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -53,6 +69,13 @@ class EmbeddingClient:
                 api_version=os.getenv("AZURE_API_VERSION"),
                 azure_endpoint=os.getenv("AZURE_API_ENDPOINT"),
             )
+        elif model_name in GEMINI_EMBEDDING_MODELS:
+            gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            client = openai.OpenAI(
+                api_key=gemini_api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
+            model_to_use = model_name
         else:
             raise ValueError(f"Invalid embedding model: {model_name}")
 

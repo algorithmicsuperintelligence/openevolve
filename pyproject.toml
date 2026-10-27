@@ -17,9 +17,11 @@ dependencies = [
     "tqdm>=4.64.0",
     "flask",
     "dacite>=1.9.2",
+    "cloudpickle>=2.0.0",
 ]
 
 [project.optional-dependencies]
+alphaevolve-env = ["python-dotenv>=1.0,<2"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -28,6 +30,7 @@ dev = [
     "mypy>=0.950",
     "requests>=2.28.0",
     "pre-commit>=4.5.1",
+    "python-dotenv>=1.0,<2",
 ]
 
 [tool.black]

@@ -2,18 +2,14 @@
 Tests for iteration counting and checkpoint behavior
 """
 
-import asyncio
 import os
 import tempfile
 import unittest
-from unittest.mock import Mock, patch, MagicMock
 
 # Set dummy API key for testing
 os.environ["OPENAI_API_KEY"] = "test"
 
 from openevolve.config import Config
-from openevolve.controller import OpenEvolve
-from openevolve.database import Program, ProgramDatabase
 
 
 class TestIterationCounting(unittest.TestCase):
@@ -144,95 +140,11 @@ def evaluate(program_path):
                 f"Failed for start={start}, max={max_iter}, interval={interval}",
             )
 
-    def test_controller_iteration_behavior(self):
-        """Test actual controller behavior with iteration counting - requires optillm server"""
-        # Skip if optillm server not available
-        try:
-            import requests
-            response = requests.get("http://localhost:8000/health", timeout=2)
-            if response.status_code != 200:
-                self.skipTest("optillm server not available at localhost:8000")
-        except:
-            self.skipTest("optillm server not available at localhost:8000")
-        
-        async def async_test():
-            from openevolve.config import LLMModelConfig
-            
-            config = Config()
-            config.max_iterations = 8  # Smaller for stability
-            config.checkpoint_interval = 4
-            config.database.in_memory = True
-            config.evaluator.parallel_evaluations = 1
-            config.evaluator.timeout = 30  # Longer timeout for small model
-
-            # Configure to use optillm server
-            config.llm.api_base = "http://localhost:8000/v1"
-            config.llm.models = [
-                LLMModelConfig(
-                    name="google/gemma-3-270m-it",
-                    api_key="optillm",
-                    api_base="http://localhost:8000/v1",
-                    weight=1.0
-                )
-            ]
-
-            controller = OpenEvolve(
-                initial_program_path=self.program_file,
-                evaluation_file=self.eval_file,
-                config=config,
-                output_dir=self.test_dir,
-            )
-
-            # Track checkpoint calls
-            checkpoint_calls = []
-            original_save = controller._save_checkpoint
-            controller._save_checkpoint = lambda i: checkpoint_calls.append(i) or original_save(i)
-
-            # Run with iterations
-            await controller.run(iterations=8)
-
-            # Check basic functionality
-            print(f"Checkpoint calls: {checkpoint_calls}")
-            print(f"Total programs: {len(controller.database.programs)}")
-
-            # Should have at least the initial program
-            self.assertGreaterEqual(
-                len(controller.database.programs),
-                1,
-                "Should have at least the initial program",
-            )
-
-            # If any evolution succeeded, verify checkpoint behavior
-            if len(controller.database.programs) > 1:
-                # Some iterations succeeded, should have appropriate checkpoints
-                print("Evolution succeeded - verifying checkpoint behavior")
-                # Check that if we have successful iterations, checkpoints align properly
-                expected_checkpoints = [4, 8]  # Based on interval=4, iterations=8
-                successful_checkpoints = [cp for cp in expected_checkpoints if cp in checkpoint_calls]
-                # At least final checkpoint should exist if evolution completed
-                if 8 in checkpoint_calls:
-                    print("Final checkpoint found as expected")
-
-        # Run the async test synchronously
-        asyncio.run(async_test())
+    # NOTE: The real-LLM test that exercised controller.run() against a live optillm
+    # server was moved to tests/integration/test_iteration_counting_with_llm.py so it
+    # runs against the shared model fixtures instead of being skipped when no server
+    # is reachable. This module now contains only server-free logic tests.
 
 
 if __name__ == "__main__":
-    # Run async test
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestIterationCounting)
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-
-    # Run the async test separately
-    async def run_async_test():
-        test = TestIterationCounting()
-        test.setUp()
-        try:
-            await test.test_controller_iteration_behavior()
-            print("✓ test_controller_iteration_behavior passed")
-        except Exception as e:
-            print(f"✗ test_controller_iteration_behavior failed: {e}")
-        finally:
-            test.tearDown()
-
-    asyncio.run(run_async_test())
+    unittest.main()

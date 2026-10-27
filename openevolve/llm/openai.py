@@ -63,6 +63,7 @@ class OpenAILLM(LLMInterface):
         self.api_key = model_cfg.api_key
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
+        self.last_usage: Optional[Dict[str, Any]] = None
 
         # Manual mode: enabled via llm.manual_mode in config.yaml
         self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
@@ -82,7 +83,7 @@ class OpenAILLM(LLMInterface):
             # Set up API client (normal mode)
             # OpenAI client requires max_retries to be int, not None
             max_retries = self.retries if self.retries is not None else 0
-            self.client = openai.OpenAI(
+            self.client = openai.AsyncOpenAI(
                 api_key=self.api_key,
                 base_url=self.api_base,
                 timeout=self.timeout,
@@ -155,9 +156,11 @@ class OpenAILLM(LLMInterface):
                 "model": self.model,
                 "messages": formatted_messages,
                 "temperature": kwargs.get("temperature", self.temperature),
-                "top_p": kwargs.get("top_p", self.top_p),
                 "max_tokens": kwargs.get("max_tokens", self.max_tokens),
             }
+            top_p = kwargs.get("top_p", self.top_p)
+            if top_p is not None:
+                params["top_p"] = top_p
 
             # Handle reasoning_effort for open source reasoning models.
             reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
@@ -214,15 +217,42 @@ class OpenAILLM(LLMInterface):
         if self.client is None:
             raise RuntimeError("OpenAI client is not initialized (manual_mode enabled?)")
 
-        # Use asyncio to run the blocking API call in a thread pool
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None, lambda: self.client.chat.completions.create(**params)
-        )
+        # Await the async client directly instead of running a blocking
+        # sync client in the default thread-pool executor, which can
+        # deadlock when the executor is saturated (see issue #278)
+        response = await self.client.chat.completions.create(**params, stream=False)
+        if isinstance(response, str):
+            # Some endpoints stream Server-Sent Events even when asked not to
+            raise ValueError(
+                "LLM endpoint returned a raw string instead of a chat completion "
+                f"(streaming responses are not supported): {response[:200]!r}"
+            )
         # Logging of system prompt, user message and response content
         logger = logging.getLogger(__name__)
         logger.debug(f"API parameters: {params}")
         logger.debug(f"API response: {response.choices[0].message.content}")
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+            total_tokens = getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens)
+            self.last_usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "model": str(self.model),
+            }
+            logger.info(
+                f"LLM Token Usage ({self.model}): "
+                f"prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={completion_tokens}, "
+                f"total_tokens={total_tokens}"
+            )
+        else:
+            self.last_usage = None
+            logger.info(f"LLM Token Usage ({self.model}): usage info not returned by API")
+
         return response.choices[0].message.content
 
     async def _manual_wait_for_answer(

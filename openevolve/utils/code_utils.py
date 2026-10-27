@@ -5,6 +5,28 @@ Utilities for code parsing, diffing, and manipulation
 import re
 from typing import Dict, List, Optional, Tuple, Union
 
+_STANDARD_DIFF_PATTERN = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+_STANDARD_DIFF_MARKER = re.compile(
+    r"^[ \t]*(<<<<<<< SEARCH|=======|>>>>>>> REPLACE)[ \t]*\r?$", re.MULTILINE
+)
+
+# A marker line starts with any comment syntax (#, //, /*, --, %, <!--, ...)
+# followed by the marker token, so evolve blocks work in any language.
+_EVOLVE_MARKER = re.compile(r"^\W*EVOLVE-BLOCK-(START|END)\b")
+
+
+def _evolve_marker(line: str) -> Optional[str]:
+    """Return "START" or "END" if the line is an evolve block marker"""
+    match = _EVOLVE_MARKER.match(line)
+    if match:
+        return match.group(1)
+    # Also accept a trailing Python-style marker comment, as before
+    if "# EVOLVE-BLOCK-START" in line:
+        return "START"
+    if "# EVOLVE-BLOCK-END" in line:
+        return "END"
+    return None
+
 
 def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
     """
@@ -24,11 +46,12 @@ def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
     block_content = []
 
     for i, line in enumerate(lines):
-        if "# EVOLVE-BLOCK-START" in line:
+        marker = _evolve_marker(line)
+        if marker == "START":
             in_block = True
             start_line = i
             block_content = []
-        elif "# EVOLVE-BLOCK-END" in line and in_block:
+        elif marker == "END" and in_block:
             in_block = False
             blocks.append((start_line, i, "\n".join(block_content)))
         elif in_block:
@@ -37,10 +60,102 @@ def parse_evolve_blocks(code: str) -> List[Tuple[int, int, str]]:
     return blocks
 
 
+def _split_evolve_regions(code: str) -> Optional[Tuple[List[List[str]], List[List[str]]]]:
+    """
+    Split code into the lines outside and inside evolve blocks
+
+    Returns (outside, blocks) where outside has one more segment than blocks and
+    includes the marker lines, or None if the markers are nested or unmatched.
+    """
+    lines = code.split("\n")
+    outside: List[List[str]] = []
+    blocks: List[List[str]] = []
+    segment_start = 0
+    open_line: Optional[int] = None
+
+    for i, line in enumerate(lines):
+        marker = _evolve_marker(line)
+        if marker == "START":
+            if open_line is not None:
+                return None
+            outside.append(lines[segment_start : i + 1])
+            open_line = i
+        elif marker == "END":
+            if open_line is None:
+                return None
+            blocks.append(lines[open_line + 1 : i])
+            segment_start = i
+            open_line = None
+
+    if open_line is not None:
+        return None
+    outside.append(lines[segment_start:])
+    return outside, blocks
+
+
+def enforce_evolve_blocks(original_code: str, new_code: str) -> str:
+    """
+    Keep everything outside the evolve blocks identical to the original code
+
+    The evolve block contents of new_code are placed back into the original
+    code, so edits made outside the blocks are reverted. If the original code
+    has no well-formed evolve blocks, new_code is returned unchanged.
+
+    Args:
+        original_code: Code whose evolve block markers define the editable regions
+        new_code: Code proposed by the LLM
+
+    Returns:
+        new_code with every region outside the evolve blocks restored
+
+    Raises:
+        ValueError: new_code does not keep the same number of well-formed
+            evolve blocks, so its edits cannot be mapped back.
+    """
+    original = _split_evolve_regions(original_code)
+    if original is None or not original[1]:
+        return new_code
+
+    proposed = _split_evolve_regions(new_code)
+    if proposed is None or len(proposed[1]) != len(original[1]):
+        raise ValueError(
+            "EVOLVE-BLOCK markers were changed or removed; "
+            f"expected {len(original[1])} evolve block(s)"
+        )
+
+    outside, _ = original
+    _, blocks = proposed
+    result: List[str] = []
+    for segment, block in zip(outside, blocks):
+        result.extend(segment)
+        result.extend(block)
+    result.extend(outside[-1])
+    return "\n".join(result)
+
+
+def _find_search_lines(lines: List[str], search_lines: List[str]) -> int:
+    """
+    Find the first occurrence of search_lines in lines
+
+    Matches exactly first, then ignoring trailing whitespace on each line, since
+    LLMs often drop or add trailing spaces in SEARCH text. Returns -1 if absent.
+    """
+    size = len(search_lines)
+    for i in range(len(lines) - size + 1):
+        if lines[i : i + size] == search_lines:
+            return i
+
+    stripped_search = [line.rstrip() for line in search_lines]
+    for i in range(len(lines) - size + 1):
+        if [line.rstrip() for line in lines[i : i + size]] == stripped_search:
+            return i
+    return -1
+
+
 def apply_diff(
     original_code: str,
     diff_text: str,
-    diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE",
+    diff_pattern: str = _STANDARD_DIFF_PATTERN,
 ) -> str:
     """
     Apply a diff to the original code
@@ -66,17 +181,16 @@ def apply_diff(
         replace_lines = replace_text.split("\n")
 
         # Find where the search pattern starts in the original code
-        for i in range(len(result_lines) - len(search_lines) + 1):
-            if result_lines[i : i + len(search_lines)] == search_lines:
-                # Replace the matched section
-                result_lines[i : i + len(search_lines)] = replace_lines
-                break
+        i = _find_search_lines(result_lines, search_lines)
+        if i >= 0:
+            # Replace the matched section
+            result_lines[i : i + len(search_lines)] = replace_lines
 
     return "\n".join(result_lines)
 
 
 def extract_diffs(
-    diff_text: str, diff_pattern: str = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+    diff_text: str, diff_pattern: str = _STANDARD_DIFF_PATTERN
 ) -> List[Tuple[str, str]]:
     """
     Extract diff blocks from the diff text
@@ -87,9 +201,48 @@ def extract_diffs(
 
     Returns:
         List of tuples (search_text, replace_text)
+
+    Raises:
+        ValueError: The standard SEARCH/REPLACE response has an extra or
+            unmatched delimiter line. Custom diff patterns retain their own grammar.
     """
-    diff_blocks = re.findall(diff_pattern, diff_text, re.DOTALL)
-    return [(match[0].rstrip(), match[1].rstrip()) for match in diff_blocks]
+    if diff_pattern == _STANDARD_DIFF_PATTERN:
+        return _extract_standard_diffs(diff_text)
+    matches = re.finditer(diff_pattern, diff_text, re.DOTALL)
+    return [(match.group(1).rstrip(), match.group(2).rstrip()) for match in matches]
+
+
+def _extract_standard_diffs(diff_text: str) -> List[Tuple[str, str]]:
+    """
+    Extract SEARCH/REPLACE blocks delimited by whole marker lines
+
+    A marker only counts on a line of its own, so code such as a "# =====" banner
+    comment stays part of a block. Every marker line in the response is checked
+    before any block is returned: a permissive match could otherwise absorb a
+    second separator into replacement text and insert it as code.
+    """
+    markers = ["<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"]
+    blocks: List[Tuple[str, str]] = []
+    texts: List[str] = []  # SEARCH and REPLACE text of the block being read
+    expected = 0
+    section_start = 0
+    for marker in _STANDARD_DIFF_MARKER.finditer(diff_text):
+        token = marker.group(1)
+        if token != markers[expected]:
+            if token == markers[1] and expected == 2:
+                raise ValueError("Malformed SEARCH/REPLACE delimiter sequence")
+            raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+        if expected > 0:
+            texts.append(diff_text[section_start : marker.start()].rstrip())
+        # A section's text starts on the line after its marker
+        section_start = marker.end() + 1
+        expected = (expected + 1) % 3
+        if expected == 0:
+            blocks.append((texts[0], texts[1]))
+            texts = []
+    if expected:
+        raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
+    return blocks
 
 
 def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[str]:
@@ -103,14 +256,14 @@ def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[
     Returns:
         Extracted code or None if not found
     """
-    code_block_pattern = r"```" + language + r"\n(.*?)```"
+    code_block_pattern = r"```" + re.escape(language) + r"[ \t]*\r?\n(.*?)```"
     matches = re.findall(code_block_pattern, llm_response, re.DOTALL)
 
     if matches:
         return matches[0].strip()
 
-    # Fallback to any code block
-    code_block_pattern = r"```(.*?)```"
+    # Fallback to any code block, without its language tag if it has one
+    code_block_pattern = r"```(?:[^\s`]*[ \t]*\r?\n)?(.*?)```"
     matches = re.findall(code_block_pattern, llm_response, re.DOTALL)
 
     if matches:
@@ -251,11 +404,10 @@ def apply_diff_blocks(original_text: str, diff_blocks: List[Tuple[str, str]]) ->
         search_lines = search_text.split("\n")
         replace_lines = replace_text.split("\n")
 
-        for i in range(len(lines) - len(search_lines) + 1):
-            if lines[i : i + len(search_lines)] == search_lines:
-                lines[i : i + len(search_lines)] = replace_lines
-                applied += 1
-                break
+        i = _find_search_lines(lines, search_lines)
+        if i >= 0:
+            lines[i : i + len(search_lines)] = replace_lines
+            applied += 1
 
     return "\n".join(lines), applied
 

@@ -1,0 +1,70 @@
+name: AlphaEvolve upstream examples
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/alphaevolve-interop.yml'
+      - 'openevolve/**'
+      - 'examples/alphaevolve_interop/**'
+      - 'examples/function_minimization/**'
+      - 'examples/circle_packing/**'
+      - 'tests/alphaevolve_upstream/**'
+      - 'pyproject.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alphaevolve-interop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upstream-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout OpenEvolve
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Read pinned upstream revision
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          revision = Path('tests/alphaevolve_upstream/revision.txt').read_text().strip()
+          if not re.fullmatch(r'[0-9a-f]{40}', revision):
+              raise SystemExit('Expected a full upstream commit SHA')
+          with open(os.environ['GITHUB_ENV'], 'a') as environment:
+              environment.write(f'ALPHAEVOLVE_REVISION={revision}\n')
+          PY
+
+      - name: Checkout official examples (fixed revision)
+        uses: actions/checkout@v4
+        with:
+          repository: Google-Cloud-AI/alphaevolve-on-googlecloud
+          ref: ${{ env.ALPHAEVOLVE_REVISION }}
+          path: .alphaevolve-upstream
+          persist-credentials: false
+
+      - name: Install local test dependencies (no Google SDK)
+        run: |
+          python -m pip install -e .
+          python -m pip install -r tests/alphaevolve_upstream/requirements.txt
+
+      - name: Run six original-entrypoint cases and offline tripwire tests
+        env:
+          ALPHAEVOLVE_UPSTREAM_DIR: ${{ github.workspace }}/.alphaevolve-upstream
+        run: python tests/alphaevolve_upstream/test_examples.py -v
+
+      - name: Round-trip two OpenEvolve examples through relocated export bundles
+        run: python tests/alphaevolve_upstream/test_roundtrip.py -v

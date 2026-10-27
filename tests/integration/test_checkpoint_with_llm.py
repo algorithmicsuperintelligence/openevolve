@@ -88,9 +88,25 @@ class TestCheckpointWithLLM:
                 latest_checkpoint = max(checkpoint_dirs, key=lambda d: int(d.name.split("_")[1]))
                 checkpoint_iter = int(latest_checkpoint.name.split("_")[1])
                 
-                # Test resume (simplified - just verify the checkpoint directory structure)
-                assert (latest_checkpoint / "database.json").exists(), "Database checkpoint should exist"
+                # ProgramDatabase.save writes metadata.json plus one JSON file per program
+                assert (latest_checkpoint / "metadata.json").exists(), "Database metadata should exist"
+                saved_ids = {p.stem for p in (latest_checkpoint / "programs").glob("*.json")}
+                assert saved_ids, "Checkpoint should contain saved programs"
                 print(f"Successfully created checkpoint at iteration {checkpoint_iter}")
+
+                # Resume from the checkpoint and run a few more iterations
+                controller2 = OpenEvolve(
+                    initial_program_path=str(test_program_file),
+                    evaluation_file=str(test_evaluator_file),
+                    config=evolution_config,
+                    output_dir=str(evolution_output_dir)
+                )
+                await controller2.run(iterations=3, checkpoint_path=str(latest_checkpoint))
+
+                assert saved_ids <= set(controller2.database.programs), \
+                    "Resumed database should contain every program from the checkpoint"
+                assert controller2.database.last_iteration > checkpoint_iter, \
+                    "Resumed run should continue past the checkpoint iteration"
             else:
                 print("No checkpoints created (likely due to all iterations failing)")
         else:

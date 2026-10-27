@@ -9,9 +9,8 @@
 *Turn your LLMs into autonomous code optimizers that discover breakthrough algorithms*
 
 <p align="center">
-  <a href="https://github.com/algorithmicsuperintelligence/openevolve/stargazers"><img src="https://img.shields.io/github/stars/algorithmicsuperintelligence/openevolve?style=social" alt="GitHub stars"></a>
   <a href="https://pypi.org/project/openevolve/"><img src="https://img.shields.io/pypi/v/openevolve" alt="PyPI version"></a>
-  <a href="https://pypi.org/project/openevolve/"><img src="https://img.shields.io/pypi/dm/openevolve" alt="PyPI downloads"></a>
+  <a href="https://pepy.tech/projects/openevolve"><img src="https://static.pepy.tech/personalized-badge/openevolve?period=monthly&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=GREEN&left_text=downloads%2Fmonth" alt="PyPI Downloads"></a>
   <a href="https://github.com/algorithmicsuperintelligence/openevolve/blob/main/LICENSE"><img src="https://img.shields.io/github/license/algorithmicsuperintelligence/openevolve" alt="License"></a>
 </p>
 
@@ -89,6 +88,12 @@ python openevolve-run.py examples/function_minimization/initial_program.py \
   examples/function_minimization/evaluator.py \
   --config examples/function_minimization/config.yaml \
   --iterations 50
+
+# Running several evolutions in parallel? Give each run a logger prefix so its
+# log output is distinguishable (logs as "run1.openevolve.*")
+python openevolve-run.py examples/function_minimization/initial_program.py \
+  examples/function_minimization/evaluator.py \
+  --logger-prefix run1
 ```
 
 **Note:** The example config uses Gemini by default, but you can use any OpenAI-compatible provider by modifying the `config.yaml`. See the [configs](configs/) for full configuration options.
@@ -119,13 +124,59 @@ def bubble_sort(arr):
                 arr[j], arr[j+1] = arr[j+1], arr[j] 
     return arr
 
-result = evolve_function(
-    bubble_sort,
-    test_cases=[([3,1,2], [1,2,3]), ([5,2,8], [2,5,8])],
-    iterations=50
-)
-print(f"Evolved sorting algorithm: {result.best_code}")
+if __name__ == '__main__':
+    result = evolve_function(
+        bubble_sort,
+        test_cases=[([3,1,2], [1,2,3]), ([5,2,8], [2,5,8])],
+        iterations=50
+    )
+    print(f"Evolved sorting algorithm: {result.best_code}")
 ```
+
+> **Note:** On macOS and Windows, Python uses `spawn` for multiprocessing. You must wrap evolution calls in `if __name__ == '__main__':` to avoid subprocess bootstrap errors.
+To experiment with island scheduling, pass an optional selector to `run_evolution`:
+
+```python
+def select_island(context):
+    # Schedule the next iteration on the island with the fewest pending tasks.
+    return min(range(len(context.islands)), key=lambda i: context.pending_counts[i])
+
+result = run_evolution(
+    initial_program="program.py",
+    evaluator="evaluator.py",
+    island_selector=select_island,
+)
+```
+
+The selector receives a read-only `IslandSelectionContext` with the iteration number,
+pending task counts, and each island's population size, best and average score, diversity, and
+generation. It must return an island ID from `0` to `num_islands - 1`. It runs in the
+main process before each iteration is submitted. Without a selector, OpenEvolve uses
+its existing balanced island scheduling.
+
+Population management can also use decision hooks. For example, this policy lets a
+candidate replace an island's MAP-Elites cell occupant when their scores tie:
+
+```python
+from openevolve import run_evolution
+from openevolve.population import PopulationStrategy
+
+strategy = PopulationStrategy(
+    replace_cell=lambda state, candidate, incumbent, island: (
+        candidate.metrics["combined_score"] >= incumbent.metrics["combined_score"]
+    ),
+)
+result = run_evolution("program.py", "evaluator.py", population_strategy=strategy)
+```
+
+Other optional hooks are `admit(state, candidate, island) -> bool`,
+`archive(state, candidate) -> ArchiveDecision`,
+`evict(state, count, protected_ids) -> sequence of program IDs`,
+`migration_due(state) -> bool`, and `migrate(state) -> sequence of MigrationMove`.
+`state` is a detached `PopulationSnapshot` of programs, island memberships, cell owners,
+the archive, population limits, and migration generations. Unspecified hooks retain
+the existing rules. `ProgramDatabase` validates decisions and applies all changes;
+the strategy never receives the mutable database. The initial seed cannot be rejected.
 
 **Prefer Docker?** See the [Installation & Setup](#installation--setup) section for Docker options.
 
@@ -202,7 +253,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 <details>
 <summary><b>Advanced LLM Integration</b></summary>
 
-- **Universal API**: Works with OpenAI, Google, local models, and proxies
+- **Universal API**: Works with OpenAI, Google, Claude Code CLI, local models, and proxies
 - **Intelligent Ensembles**: Weighted combinations with sophisticated fallback
 - **Test-Time Compute**: Enhanced reasoning through proxy systems (see [OptiLLM setup](#llm-provider-setup))
 - **Plugin Ecosystem**: Support for advanced reasoning plugins
@@ -233,7 +284,7 @@ OpenEvolve implements a sophisticated **evolutionary coding pipeline** that goes
 
 ### Requirements
 - **Python**: 3.10+ 
-- **LLM Access**: Any OpenAI-compatible API
+- **LLM Access**: Any OpenAI-compatible API, or [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - **Optional**: Docker for containerized runs
 
 ### Installation Options
@@ -311,7 +362,7 @@ export OPENAI_API_KEY="sk-..."
 # config.yaml
 llm:
   api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  model: "gemini-2.5-pro"
+  primary_model: "gemini-2.5-pro"
 ```
 
 ```bash
@@ -327,7 +378,7 @@ export OPENAI_API_KEY="your-gemini-api-key"
 # config.yaml
 llm:
   api_base: "http://localhost:11434/v1"  # Ollama
-  model: "codellama:7b"
+  primary_model: "codellama:7b"
 ```
 
 </details>
@@ -351,12 +402,98 @@ export OPENAI_API_KEY="your-actual-key"
 ```yaml
 llm:
   api_base: "http://localhost:8000/v1"
-  model: "moa&readurls-o3"  # Test-time compute + web access
+  primary_model: "moa&readurls-o3"  # Test-time compute + web access
 ```
 
 </details>
 
+<details>
+<summary><b>🔮 Claude Code CLI (No API Key)</b></summary>
+
+Use the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the LLM backend — no API keys needed, authentication uses the CLI's OAuth session.
+
+```bash
+# Install and authenticate
+npm install -g @anthropic-ai/claude-code
+claude login
+```
+
+```yaml
+# config.yaml
+llm:
+  provider: "claude_code"
+  models:
+    - name: "sonnet"
+      weight: 0.8
+      max_tokens: 16000
+      max_budget_usd: 1.0
+    - name: "haiku"
+      weight: 0.2
+      max_tokens: 8000
+```
+
+See the [Claude Code quickstart example](examples/claude_code_quickstart/) for a complete walkthrough.
+
+</details>
+
+<details>
+<summary><b>🤖 GitHub Copilot CLI (No API Key)</b></summary>
+
+Use the [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) as the LLM backend — no API keys needed, authentication uses your GitHub Copilot subscription.
+
+```bash
+# Install and authenticate
+npm install -g @github/copilot
+copilot login
+```
+
+```yaml
+# config.yaml
+llm:
+  provider: "copilot_cli"
+  models:
+    - name: "claude-sonnet-4.6"
+      weight: 0.8
+      reasoning_effort: "medium"
+    - name: "gpt-5.4"
+      weight: 0.2
+```
+
+See the [Copilot CLI quickstart example](examples/copilot_cli_quickstart/) for a complete walkthrough.
+
+</details>
+
+<details>
+<summary>🧩 Codex App Server (No API Key)</summary>
+
+Use the [Codex CLI's app-server](https://developers.openai.com/codex/app-server/) as the LLM backend — no API keys needed. Authentication uses your ChatGPT (Codex) subscription: the app-server owns the managed browser/device-code login and refreshes the tokens itself. OpenEvolve never reads the CLI's token files, and before each generation it verifies with the app-server that a ChatGPT-plan login is active (it fails with a clear message pointing at `codex login` otherwise). To bill an API key instead, keep the default OpenAI provider — both paths coexist.
+
+```bash
+# Install and authenticate
+npm install -g @openai/codex
+codex login          # browser flow, or: codex login --device-code
+```
+
+```yaml
+# config.yaml
+llm:
+  provider: "codex_app_server"
+  models:
+    - name: "gpt-5.3-codex"
+      weight: 0.8
+      reasoning_effort: "medium"
+    - name: "gpt-5.3-codex-mini"
+      weight: 0.2
+```
+
+Each call speaks newline-delimited JSON-RPC to a short-lived `codex app-server` process over stdio (unsupported on Windows). Threads run non-interactive: tool approvals are `never` and the sandbox is read-only, so responses are generated without mutating your workspace.
+
+</details>
+
 ## Examples Gallery
+
+To use unchanged local evaluators from Google's AlphaEvolve examples, see the
+[AlphaEvolve evaluator interoperability walkthrough](examples/alphaevolve_interop/).
 
 <div align="center">
 
@@ -448,6 +585,10 @@ OpenEvolve offers extensive configuration for advanced users:
 max_iterations: 1000
 random_seed: 42  # Full reproducibility
 
+# Optional prefix for all logger names, e.g. "run1" logs as "run1.openevolve.*";
+# useful to tell apart log output from multiple concurrent runs
+logger_prefix: "run1"
+
 llm:
   # Ensemble configuration
   models:
@@ -461,13 +602,22 @@ database:
   # MAP-Elites quality-diversity
   population_size: 500
   num_islands: 5  # Parallel evolution
+  # island_initial_programs: [null, "seeds/alt.py"]  # Optional per-island starting programs
   migration_interval: 20
   feature_dimensions: ["complexity", "diversity", "performance"]
+
+  # Optional novelty filtering with Gemini embeddings
+  embedding_model: "gemini-embedding-001"
+  similarity_threshold: 0.99
+  # Or any OpenAI-compatible embedding endpoint (OpenRouter, local servers):
+  # embedding_api_base: "https://openrouter.ai/api/v1"  # or OPENAI_EMBEDDING_BASE_URL
 
 evaluator:
   enable_artifacts: true      # Error feedback to LLM
   cascade_evaluation: true    # Multi-stage testing
   use_llm_feedback: true      # AI code quality assessment
+  evaluator_args:             # Keyword arguments forwarded to evaluate()
+    weight: 2.0
 
 prompt:
   # Sophisticated inspiration system
@@ -479,6 +629,9 @@ prompt:
   template_dir: "custom_prompts/"
   use_template_stochasticity: true  # Randomized prompts
 ```
+
+For Gemini embeddings, set `GEMINI_API_KEY`. `GOOGLE_API_KEY` is also supported
+as a fallback. OpenEvolve uses Google's OpenAI-compatible endpoint automatically.
 
 <details>
 <summary><b>🎯 Feature Engineering</b></summary>
@@ -500,6 +653,39 @@ database:
 ```
 
 **Important**: Return raw values from evaluator, OpenEvolve handles binning automatically.
+
+</details>
+
+<details>
+<summary><b>📞 Passing Arguments to Your Evaluator</b></summary>
+
+If your `evaluate()` function takes extra keyword arguments beyond the program
+path, pass them with the `--evaluator-args` CLI flag (a JSON object):
+
+```bash
+openevolve-run initial_program.py evaluator.py \
+  --evaluator-args '{"weight": 2.0, "label": "experiment-1"}'
+```
+
+or configure them in YAML:
+
+```yaml
+evaluator:
+  evaluator_args:
+    weight: 2.0
+    label: "experiment-1"
+```
+
+OpenEvolve inspects the signature of your `evaluate()` function: arguments are
+forwarded only when the function accepts them (named parameters or `**kwargs`),
+and a startup error lists the offending keys and the actual signature if it
+does not — so typos fail fast instead of silently doing nothing. Evaluators
+with a single `program_path` argument are unaffected.
+
+This replaces the earlier workaround of smuggling per-run settings to the
+evaluator through environment variables. (Note: custom top-level keys in
+`config.yaml` are dropped silently by the config parser — use
+`evaluator.evaluator_args` or the CLI flag instead.)
 
 </details>
 

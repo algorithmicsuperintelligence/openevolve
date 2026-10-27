@@ -12,6 +12,7 @@ random_seed: 42                       # Random seed for reproducibility (null = 
 # Evolution settings
 diff_based_evolution: true            # Use diff-based evolution (true) or full rewrites (false)
 max_code_length: 10000                # Maximum allowed code length in characters
+enforce_evolve_blocks: false          # Revert LLM edits outside EVOLVE-BLOCK-START/END markers
 
 # Early stopping settings
 early_stopping_patience: null         # Stop after N iterations without improvement (null = disabled)
@@ -56,6 +57,8 @@ llm:
 prompt:
   template_dir: null                  # Custom directory for prompt templates
   system_message: "You are an expert coder helping to improve programs through evolution."
+  # Optional literal text or template names by island index; null/missing uses system_message
+  island_system_messages: []
   evaluator_system_message: "You are an expert code reviewer."
 
   # Number of examples to include in the prompt
@@ -100,6 +103,10 @@ database:
   population_size: 1000               # Maximum number of programs to keep in memory
   archive_size: 100                   # Size of elite archive
   num_islands: 5                      # Number of islands for island model (separate populations)
+  # Optional starting program per island index; null/missing starts the island as usual.
+  # Entry 0 must be null: island 0 always starts from the initial program given on the
+  # command line. Relative paths resolve against this config file's directory.
+  # island_initial_programs: [null, "seeds/greedy.py", null, "seeds/random_search.py"]
 
   # Island-based evolution parameters
   # Islands provide diversity by maintaining separate populations that evolve independently.

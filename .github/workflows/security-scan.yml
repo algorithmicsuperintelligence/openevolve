@@ -1,0 +1,72 @@
+name: Security Scan (Frame SAST)
+
+# Runs the Frame neuro-symbolic SAST tool (https://github.com/lambdasec/frame)
+# on the Python files changed by a pull request. Scanning only the PR's changed
+# files surfaces issues introduced by the change without failing on pre-existing
+# findings elsewhere in the tree. The job fails only on high/critical severity.
+#
+# Mirrors the setup used in the optillm repo (no SARIF / code-scanning upload,
+# so no GitHub Advanced Security requirement).
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  frame-scan:
+    name: Frame SAST (changed files)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install Frame (pinned)
+        run: |
+          git clone https://github.com/lambdasec/frame.git /tmp/frame
+          git -C /tmp/frame checkout 75811925b0984f3d2ae3ab14b946d118e8f80617
+          pip install "/tmp/frame[scan]"
+
+      - name: Scan Python files changed in this PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+
+          # Added/copied/modified/renamed Python files in this PR (skip deletions).
+          mapfile -t FILES < <(git diff --name-only --diff-filter=ACMR "$BASE_SHA" HEAD -- '*.py')
+
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No Python files changed in this PR - nothing to scan."
+            exit 0
+          fi
+
+          echo "Scanning ${#FILES[@]} changed Python file(s) (fail on high/critical):"
+          printf '  %s\n' "${FILES[@]}"
+
+          FAIL=0
+          for f in "${FILES[@]}"; do
+            # File may have been renamed away or removed in a later commit.
+            [ -f "$f" ] || continue
+            echo "::group::Frame scan $f"
+            if ! frame scan "$f" --fail-on high; then
+              FAIL=1
+              echo "::error file=$f::Frame flagged a high/critical severity issue in $f"
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "Frame SAST found high/critical severity issue(s) in changed files."
+            exit 1
+          fi
+          echo "No high/critical severity issues in changed files."

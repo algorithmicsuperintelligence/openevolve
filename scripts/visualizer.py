@@ -1,23 +1,22 @@
+import glob
+import json
+import logging
 import math
 import os
-import json
-import glob
-import shutil
-import logging
 import re as _re
+import shutil
 from numbers import Number
-from typing import Optional, Any
+from typing import Any, Optional
 
-from flask import Flask, render_template, jsonify
-
+from flask import Flask, jsonify, render_template
 from manual import create_manual_blueprint
-
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="templates")
 
 
 def find_latest_checkpoint(base_folder):
+    base_folder = os.path.normpath(base_folder)
     # Check whether the base folder is itself a checkpoint folder
     if os.path.basename(base_folder).startswith("checkpoint_"):
         return base_folder
@@ -88,6 +87,7 @@ def load_evolution_data(checkpoint_folder):
         "checkpoint_dir": checkpoint_folder,
     }
 
+
 def sanitize_program_for_visualization(program: dict[str, Any]) -> None:
     for k, v in program["metrics"].items():
         if not check_json_float(v):
@@ -96,6 +96,7 @@ def sanitize_program_for_visualization(program: dict[str, Any]) -> None:
             for k, v in program["metadata"]["parent_metrics"].items():
                 if not check_json_float(v):
                     program["metadata"]["parent_metrics"][k] = None
+
 
 def check_json_float(v: Optional[float]) -> bool:
     return isinstance(v, Number) and not (math.isinf(v) or math.isnan(v))
@@ -191,7 +192,9 @@ def run_static_export(args):
 
 
 # Manual mode blueprint mounted at /manual
-app.register_blueprint(create_manual_blueprint(lambda: os.environ.get("EVOLVE_OUTPUT", "examples/")))
+app.register_blueprint(
+    create_manual_blueprint(lambda: os.environ.get("EVOLVE_OUTPUT", "examples/"))
+)
 
 
 if __name__ == "__main__":
@@ -205,6 +208,11 @@ if __name__ == "__main__":
         help="Path to OpenEvolve run output directory (e.g. openevolve_output) or its checkpoints/checkpoint_*.",
     )
     parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Run Flask in debug mode (enables the interactive debugger; local use only)",
+    )
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument(
         "--log-level",
@@ -229,6 +237,8 @@ if __name__ == "__main__":
         run_static_export(args)
 
     os.environ["EVOLVE_OUTPUT"] = args.path
-    logger.info(f"Starting server at http://{args.host}:{args.port} with log level {args.log_level.upper()}")
+    logger.info(
+        f"Starting server at http://{args.host}:{args.port} with log level {args.log_level.upper()}"
+    )
     logger.info(f"Manual UI: http://{args.host}:{args.port}/manual")
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=args.debug)

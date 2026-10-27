@@ -27,6 +27,9 @@ def verify_c3_solution(f_values: np.ndarray, c3_achieved: float, n_points: int):
     if f_values.shape != (n_points,):
         raise ValueError(f"Expected function values shape {(n_points,)}. Got {f_values.shape}.")
 
+    if not np.isfinite(f_values).all() or not np.isfinite(c3_achieved):
+        raise ValueError("Function values and the reported C3 must be finite.")
+
     # Recompute C3 using NumPy to verify
     dx = 0.5 / n_points
 

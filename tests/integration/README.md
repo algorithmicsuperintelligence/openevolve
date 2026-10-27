@@ -29,8 +29,8 @@ pytest tests/integration/ -m "slow"
 ```
 
 These tests:
-- Take ~1 hour to complete
-- Use real optillm server with google/gemma-3-270m-it model
+- Take ~30-60 minutes to complete
+- Use a real optillm server with the codelion/dhara-250m model
 - Test complete evolution pipelines, checkpointing, island migration, etc.
 - Require optillm server running on localhost:8000
 
@@ -50,6 +50,9 @@ All integration tests use:
 - **120 second timeout** per LLM call
 - **In-memory database** for speed
 - **Small iteration counts** (1-8 iterations) for CI compatibility
+- **Full rewrites** (`diff_based_evolution: false`): dhara-250m does not produce valid
+  SEARCH/REPLACE diffs, and a run where no iteration produces a candidate raises
+  `EvolutionFailedError` (#288), so the tests use full-rewrite mode to always get candidates
 
 ## CI Behavior
 
