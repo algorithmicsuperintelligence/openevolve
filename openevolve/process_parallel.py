@@ -3,6 +3,7 @@ Process-based parallel controller for true parallelism
 """
 
 import asyncio
+import hashlib
 import logging
 import multiprocessing as mp
 import pickle
@@ -141,6 +142,28 @@ def _lazy_init_worker_components():
         )
 
 
+def _iteration_model_seed(llm_seed: int, iteration: int) -> int:
+    """Seed for one iteration's model sampling, derived like ``llm_seed`` itself."""
+    digest = hashlib.md5(f"{llm_seed}:{iteration}".encode(), usedforsecurity=False)
+    return int(digest.hexdigest()[:8], 16)
+
+
+def _seed_worker_ensemble(iteration: int) -> None:
+    """
+    Reseed the worker's model sampler for this iteration.
+
+    Every worker builds its ensemble from the same ``llm_seed``, so without this
+    all workers draw the same sequence of models, and a recycled worker
+    (``max_tasks_per_child``) restarts it (issue #554). Seeding from
+    ``(llm_seed, iteration)`` keeps runs reproducible whichever worker runs which
+    iteration. With ``random_seed`` unset the sampler is unseeded and is left alone.
+    """
+    models = _worker_config.llm.models
+    llm_seed = getattr(models[0], "random_seed", None) if models else None
+    if llm_seed is not None:
+        _worker_llm_ensemble.random_state.seed(_iteration_model_seed(llm_seed, iteration))
+
+
 def _run_iteration_worker(
     iteration: int, db_snapshot: Dict[str, Any], parent_id: str, inspiration_ids: List[str]
 ) -> SerializableResult:
@@ -148,6 +171,7 @@ def _run_iteration_worker(
     try:
         # Lazy initialization
         _lazy_init_worker_components()
+        _seed_worker_ensemble(iteration)
 
         # Reconstruct programs from snapshot
         programs = {pid: Program(**prog_dict) for pid, prog_dict in db_snapshot["programs"].items()}
