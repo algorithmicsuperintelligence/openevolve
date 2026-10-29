@@ -148,6 +148,7 @@ def _run_iteration_worker(
     try:
         # Lazy initialization
         _lazy_init_worker_components()
+        _worker_llm_ensemble.reseed(iteration)
 
         # Reconstruct programs from snapshot
         programs = {pid: Program(**prog_dict) for pid, prog_dict in db_snapshot["programs"].items()}

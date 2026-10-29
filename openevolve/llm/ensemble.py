@@ -104,6 +104,13 @@ class LLMEnsemble:
         self.last_usage = getattr(model, "last_usage", None)
         return res
 
+    def reseed(self, iteration: int) -> None:
+        """Seed model sampling from the configured seed and `iteration`, so the pick depends
+        on the iteration rather than on how many picks this worker process has already made"""
+        seed = getattr(self.models_cfg[0], "random_seed", None) if self.models_cfg else None
+        if seed is not None:
+            self.random_state.seed(f"{seed}:{iteration}")
+
     def _sample_model(self) -> LLMInterface:
         """Sample a model from the ensemble based on weights"""
         index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
