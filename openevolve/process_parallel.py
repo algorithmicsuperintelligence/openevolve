@@ -22,6 +22,39 @@ from openevolve.utils.metrics_utils import safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
+_worker_event_loop = None
+
+
+def _close_worker_event_loop():
+    """Release the worker's loop on orderly process exit."""
+    global _worker_event_loop
+    loop = _worker_event_loop
+    _worker_event_loop = None
+    if loop is not None and not loop.is_closed():
+        try:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(loop.shutdown_default_executor())
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
+
+def _run_worker_async(coroutine):
+    """Keep cached async clients on one loop for the lifetime of a worker."""
+    global _worker_event_loop
+    if _worker_event_loop is None:
+        from multiprocessing.util import Finalize
+
+        _worker_event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_event_loop)
+        Finalize(None, _close_worker_event_loop, exitpriority=10)
+    return _worker_event_loop.run_until_complete(coroutine)
+
 
 class _CandidateRejected(Exception):
     """Stop processing an iteration after admission rejects its child."""
@@ -56,6 +89,10 @@ def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = Non
     global _worker_evaluator
     global _worker_llm_ensemble
     global _worker_prompt_sampler
+    global _worker_event_loop
+
+    # A forked worker must not inherit a loop owned by the parent process.
+    _worker_event_loop = None
 
     # Store config for later use
     # Reconstruct Config object from nested dictionaries
@@ -208,7 +245,7 @@ def _run_iteration_worker(
 
         # Generate code modification (sync wrapper for async)
         try:
-            llm_response = asyncio.run(
+            llm_response = _run_worker_async(
                 _worker_llm_ensemble.generate_with_context(
                     system_message=prompt["system"],
                     messages=[{"role": "user", "content": prompt["user"]}],
@@ -364,7 +401,7 @@ def _run_iteration_worker(
         import uuid
 
         child_id = str(uuid.uuid4())
-        child_metrics = asyncio.run(_worker_evaluator.evaluate_program(child_code, child_id))
+        child_metrics = _run_worker_async(_worker_evaluator.evaluate_program(child_code, child_id))
 
         # Get artifacts
         artifacts = _worker_evaluator.get_pending_artifacts(child_id)
