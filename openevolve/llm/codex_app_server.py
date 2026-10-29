@@ -125,20 +125,33 @@ class _AppServerSession:
         self._next_id += 1
         request_id = self._next_id
         self._send({"id": request_id, "method": method, "params": params or {}})
-        while True:
-            message = self.next_message(deadline)
-            if message.get("id") != request_id:
-                # A notification (e.g. an early item/completed) or a late
-                # response: park it instead of dropping it.
-                self._pending.append(message)
-                continue
-            if "error" in message:
-                error = message["error"] or {}
-                raise RuntimeError(
-                    f"codex app-server rejected {method}: "
-                    f"{error.get('code')}: {error.get('message')}"
-                )
-            return message.get("result")
+        # Non-matching messages must not be parked in self._pending here:
+        # next_message() drains _pending first, so a parked message would
+        # be returned again on the next iteration and the loop would spin
+        # forever without ever reading the actual response from the queue
+        # (a real codex app-server emits notifications before responses).
+        # Stash non-matching messages locally during the request and
+        # restore them to the front of _pending, in order, when the
+        # response arrives.
+        stash: List[Dict[str, Any]] = []
+        try:
+            while True:
+                message = self.next_message(deadline)
+                if message.get("id") != request_id:
+                    # A notification (e.g. an early item/completed) or a late
+                    # response: stash it instead of dropping it.
+                    stash.append(message)
+                    continue
+                if "error" in message:
+                    error = message["error"] or {}
+                    raise RuntimeError(
+                        f"codex app-server rejected {method}: "
+                        f"{error.get('code')}: {error.get('message')}"
+                    )
+                return message.get("result")
+        finally:
+            for stashed in reversed(stash):
+                self._pending.appendleft(stashed)
 
     def notify(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
         self._send({"method": method, "params": params or {}})
@@ -284,7 +297,11 @@ class CodexAppServerLLM(LLMInterface):
             thread_params: Dict[str, Any] = {
                 "model": self.model,
                 "approvalPolicy": "never",
-                "sandbox": {"mode": "read-only", "networkAccess": False},
+                # ThreadStartParams.sandbox is a SandboxMode string enum
+                # ("read-only" | "workspace-write" | "danger-full-access"),
+                # not a {"mode": ..., "networkAccess": ...} map — current
+                # app-server versions reject the map form with -32600.
+                "sandbox": "read-only",
             }
             if self.cwd:
                 thread_params["cwd"] = self.cwd
@@ -307,7 +324,11 @@ class CodexAppServerLLM(LLMInterface):
 
     def _ensure_authenticated(self, session: _AppServerSession, deadline: float) -> None:
         result = session.request("account/read", {}, deadline) or {}
-        if result.get("requiresOpenaiAuth") or result.get("account") is None:
+        # Current app-server versions return requiresOpenaiAuth=true
+        # together with a valid ChatGPT account — the flag describes the
+        # auth mode, not a missing login. The account presence/type check
+        # below is the real auth boundary.
+        if result.get("account") is None:
             raise CodexAuthError("Codex app-server reports the account is not authenticated.")
         account = result.get("account") or {}
         if account.get("type") != "chatgpt":
