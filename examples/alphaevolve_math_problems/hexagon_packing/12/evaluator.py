@@ -163,6 +163,15 @@ def verify_construction(
     Raises:
     AssertionError if the construction is not valid.
     """
+    if not np.isfinite(inner_hex_data).all():
+        raise AssertionError("Inner hexagon coordinates and angles must be finite.")
+    if not np.isfinite(outer_hex_center).all():
+        raise AssertionError("Outer hexagon center must be finite.")
+    if not np.isfinite(outer_hex_angle_degrees):
+        raise AssertionError("Outer hexagon angle must be finite.")
+    if not np.isfinite(outer_hex_side_length) or outer_hex_side_length <= 0:
+        raise AssertionError("Outer hexagon side length must be finite and positive.")
+
     inner_hex_params_list = [
         (x, y, 1, angle) for x, y, angle in inner_hex_data
     ]  # Sets the side length to 1.
