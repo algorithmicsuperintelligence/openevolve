@@ -46,6 +46,8 @@ def verify_c5_solution(h_values: np.ndarray, c5_achieved: float, n_points: int):
     if not np.isclose(computed_c5, c5_achieved, atol=1e-4):
         raise ValueError(f"C5 mismatch: reported {c5_achieved:.6f}, computed {computed_c5:.6f}")
 
+    return computed_c5
+
 
 def evaluate(program_path: str):
     try:
@@ -64,11 +66,11 @@ def evaluate(program_path: str):
             if program_dir in sys.path:
                 sys.path.remove(program_dir)
 
-        verify_c5_solution(h_values, c5_bound, n_points)
+        computed_c5 = verify_c5_solution(h_values, c5_bound, n_points)
 
         return {
-            "c5_bound": float(c5_bound),
-            "combined_score": BENCHMARK / float(c5_bound),
+            "c5_bound": float(computed_c5),
+            "combined_score": BENCHMARK / float(computed_c5),
             "n_points": int(n_points),
             "eval_time": float(eval_time),
         }
