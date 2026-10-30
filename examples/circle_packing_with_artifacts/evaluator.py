@@ -29,7 +29,7 @@ def timeout_handler(signum, frame):
 
 def validate_packing(centers, radii):
     """
-    Validate that circles don't overlap and are inside the unit square
+    Validate finite circles with non-negative radii inside the unit square, without overlaps
 
     Args:
         centers: np.array of shape (n, 2) with (x, y) coordinates
@@ -39,14 +39,29 @@ def validate_packing(centers, radii):
         Tuple of (is_valid: bool, validation_details: dict)
     """
     n = centers.shape[0]
+    finite_radii = np.all(np.isfinite(radii))
     validation_details = {
         "total_circles": n,
         "boundary_violations": [],
         "overlaps": [],
-        "min_radius": float(np.min(radii)),
-        "max_radius": float(np.max(radii)),
-        "avg_radius": float(np.mean(radii)),
+        "invalid_values": [],
+        "min_radius": float(np.min(radii)) if finite_radii else None,
+        "max_radius": float(np.max(radii)) if finite_radii else None,
+        "avg_radius": float(np.mean(radii)) if finite_radii else None,
     }
+
+    # NaN can bypass geometric comparisons, so check numeric values first.
+    if not np.all(np.isfinite(centers)):
+        validation_details["invalid_values"].append(
+            "Circle centers must contain only finite values"
+        )
+    if not finite_radii:
+        validation_details["invalid_values"].append("Circle radii must contain only finite values")
+    if np.any(radii < 0):
+        validation_details["invalid_values"].append("Circle radii must be non-negative")
+    if validation_details["invalid_values"]:
+        validation_details["is_valid"] = False
+        return False, validation_details
 
     # Check if circles are inside the unit square
     for i in range(n):
@@ -291,11 +306,18 @@ def evaluate(program_path):
         artifacts = {
             "execution_time": f"{eval_time:.2f}s",
             "packing_summary": f"Sum of radii: {sum_radii:.6f}/{TARGET_VALUE} = {target_ratio:.4f}",
-            "validation_report": f"Valid: {valid}, Violations: {len(validation_details.get('boundary_violations', []))} boundary, {len(validation_details.get('overlaps', []))} overlaps",
+            "validation_report": (
+                f"Valid: {valid}, Violations: "
+                f"{len(validation_details.get('boundary_violations', []))} boundary, "
+                f"{len(validation_details.get('overlaps', []))} overlaps, "
+                f"{len(validation_details.get('invalid_values', []))} invalid values"
+            ),
         }
 
         # Add validation details if there are issues
         if not valid:
+            if validation_details.get("invalid_values"):
+                artifacts["invalid_values"] = "\n".join(validation_details["invalid_values"])
             if validation_details.get("boundary_violations"):
                 artifacts["boundary_violations"] = "\n".join(
                     validation_details["boundary_violations"]
@@ -435,9 +457,14 @@ def evaluate_stage1(program_path):
             # Add validation issues if any
             if not valid:
                 artifacts["stderr"] = (
-                    f"Validation failed: {len(validation_details.get('boundary_violations', []))} boundary violations, {len(validation_details.get('overlaps', []))} overlaps"
+                    "Validation failed: "
+                    f"{len(validation_details.get('boundary_violations', []))} boundary violations, "
+                    f"{len(validation_details.get('overlaps', []))} overlaps, "
+                    f"{len(validation_details.get('invalid_values', []))} invalid values"
                 )
                 artifacts["failure_stage"] = "stage1_geometric_validation"
+                if validation_details.get("invalid_values"):
+                    artifacts["invalid_values"] = "\n".join(validation_details["invalid_values"])
                 if validation_details.get("boundary_violations"):
                     artifacts["boundary_issues"] = validation_details["boundary_violations"][
                         0
