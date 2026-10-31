@@ -2083,12 +2083,18 @@ class ProgramDatabase:
             self._validate_migration_results()
             return
 
+        # Choose every island's migrants from the population before this round. Choosing them
+        # while migrating lets an island's top slots go to copies it has just received (which
+        # _migrate_one skips), and lets those copies displace its own programs from their cells
+        # before they get the chance to migrate.
+        planned_moves = []
         for i, island in enumerate(self.islands):
-            if len(island) == 0:
-                continue
-
-            # Select top programs from this island for migration
-            island_programs = [self.programs[pid] for pid in island if pid in self.programs]
+            # Migrant copies are never migrated again, so they must not take migration slots
+            island_programs = [
+                self.programs[pid]
+                for pid in island
+                if pid in self.programs and not self.programs[pid].metadata.get("migrant", False)
+            ]
             if not island_programs:
                 continue
 
@@ -2107,7 +2113,10 @@ class ProgramDatabase:
 
             for migrant in migrants:
                 for target_island in target_islands:
-                    self._migrate_one(migrant.id, target_island)
+                    planned_moves.append((migrant.id, target_island))
+
+        for program_id, target_island in planned_moves:
+            self._migrate_one(program_id, target_island)
 
         # Update last migration generation
         self.last_migration_generation = max(self.island_generations)
