@@ -114,6 +114,7 @@ def evaluate(program_path):
                     mock_controller.stop = Mock(return_value=None)
                     mock_controller.shutdown_event = Mock()
                     mock_controller.shutdown_event.is_set.return_value = False
+                    mock_controller.produced_no_candidates = False
                     mock_controller_class.return_value = mock_controller
 
                     # Run for 0 iterations (just initialization)
@@ -170,6 +171,7 @@ def evaluate(program_path):
                     mock_controller.stop = Mock(return_value=None)
                     mock_controller.shutdown_event = Mock()
                     mock_controller.shutdown_event.is_set.return_value = False
+                    mock_controller.produced_no_candidates = False
                     mock_controller_class.return_value = mock_controller
 
                     # Run for 0 iterations (just initialization)
@@ -225,6 +227,7 @@ def evaluate(program_path):
                     mock_controller.stop = Mock(return_value=None)
                     mock_controller.shutdown_event = Mock()
                     mock_controller.shutdown_event.is_set.return_value = False
+                    mock_controller.produced_no_candidates = False
                     mock_controller_class.return_value = mock_controller
 
                     # Run for 0 iterations (just initialization)
@@ -283,6 +286,7 @@ def evaluate(program_path):
                     mock_controller.stop = Mock(return_value=None)
                     mock_controller.shutdown_event = Mock()
                     mock_controller.shutdown_event.is_set.return_value = False
+                    mock_controller.produced_no_candidates = False
                     mock_controller_class.return_value = mock_controller
 
                     # Run for 0 iterations (just initialization)
@@ -324,6 +328,7 @@ def evaluate(program_path):
                     mock_parallel.start = MagicMock()
                     mock_parallel.stop = MagicMock()
                     mock_parallel.shutdown_event.is_set.return_value = False
+                    mock_parallel.produced_no_candidates = False
                     mock_parallel_class.return_value = mock_parallel
 
                     # Run first time

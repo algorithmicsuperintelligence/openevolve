@@ -7,6 +7,9 @@ to maintain consistent behavior between single-process and parallel execution mo
 
 import random
 import unittest
+from math import fsum
+from unittest.mock import patch
+
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
 
@@ -189,25 +192,27 @@ class TestSampleFromIslandRatios(unittest.TestCase):
         self.db.config.exploration_ratio = 0.0
         self.db.config.exploitation_ratio = 0.0
 
-        random.seed(42)
+        # Inspect the actual distribution passed to the standard-library sampler.
+        # A small Monte Carlo sample can miss this bias, even with a fixed RNG
+        # seed, because the population comes from a hash-ordered set.
+        with patch("openevolve.database.random.choices", wraps=random.choices) as choose:
+            parent, _ = self.db.sample_from_island(island_id=0, num_inspirations=0)
 
-        # Sample many times and track which programs are selected
-        sampled_scores = []
-        for _ in range(200):
-            parent, _ = self.db.sample_from_island(island_id=0)
-            sampled_scores.append(parent.metrics["score"])
+        choose.assert_called_once()
+        population = choose.call_args.args[0]
+        weights = choose.call_args.kwargs["weights"]
+        self.assertEqual(choose.call_args.kwargs["k"], 1)
+        self.assertEqual({p.id for p in population}, self.db.islands[0])
+        self.assertIn(parent.id, self.db.islands[0])
+        self.assertEqual(len(weights), len(population))
 
-        # Average sampled score should be higher than mean score of all programs
-        # (mean represents what uniform random sampling would produce)
-        island_programs = [self.db.programs[pid] for pid in self.db.islands[0]]
-        all_scores = [p.metrics["score"] for p in island_programs]
-        mean_score = sum(all_scores) / len(all_scores)
-        avg_sampled_score = sum(sampled_scores) / len(sampled_scores)
+        all_scores = [p.metrics["score"] for p in population]
+        mean_score = fsum(all_scores) / len(all_scores)
+        expected_score = fsum(s * w for s, w in zip(all_scores, weights)) / fsum(weights)
 
-        # Weighted sampling should favor higher scores (shift average upward from mean)
-        self.assertGreater(avg_sampled_score, mean_score,
-                          f"Weighted sampling should favor high fitness: "
-                          f"sampled_avg={avg_sampled_score:.4f} should be > mean={mean_score:.4f}")
+        # Keep the fitness preference assertion, without random false failures.
+        # The tolerance also rejects effectively uniform weighting.
+        self.assertGreater(expected_score, mean_score + 1e-9)
 
 
 class TestSampleFromIslandEdgeCases(unittest.TestCase):

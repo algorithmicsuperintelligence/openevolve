@@ -121,50 +121,12 @@ def test():
         result = _prepare_evaluator(my_evaluator, self.temp_dir, temp_files)
 
         self.assertTrue(os.path.exists(result))
-        self.assertEqual(len(temp_files), 1)
+        # 2 temp files: the pickle file + the wrapper .py
+        self.assertEqual(len(temp_files), 2)
 
         with open(result, 'r') as f:
             content = f.read()
             self.assertIn("def evaluate(program_path)", content)
-            self.assertIn("my_evaluator", content)
-
-    def test_prepare_evaluator_callable_works_in_subprocess(self):
-        """Test that callable evaluator can be executed in a subprocess"""
-        import subprocess
-        import sys
-
-        def my_evaluator(program_path):
-            return {"score": 0.8, "combined_score": 0.8}
-
-        temp_files = []
-        eval_file = _prepare_evaluator(my_evaluator, self.temp_dir, temp_files)
-
-        # Write a dummy program file for the evaluator to receive
-        program_file = os.path.join(self.temp_dir, "dummy_program.py")
-        with open(program_file, 'w') as f:
-            f.write("x = 1\n")
-
-        # Run the evaluator in a subprocess (simulating process-based parallelism)
-        test_script = os.path.join(self.temp_dir, "run_eval.py")
-        with open(test_script, 'w') as f:
-            f.write(f"""
-import sys
-import importlib.util
-spec = importlib.util.spec_from_file_location("evaluator", {eval_file!r})
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-result = mod.evaluate({program_file!r})
-assert isinstance(result, dict), f"Expected dict, got {{type(result)}}"
-assert result["score"] == 0.8, f"Expected score 0.8, got {{result['score']}}"
-print("OK")
-""")
-
-        proc = subprocess.run(
-            [sys.executable, test_script],
-            capture_output=True, text=True, timeout=10
-        )
-        self.assertEqual(proc.returncode, 0, f"Subprocess failed: {proc.stderr}")
-        self.assertIn("OK", proc.stdout)
     
     def test_prepare_evaluator_from_string(self):
         """Test _prepare_evaluator with code string"""
@@ -380,6 +342,78 @@ print("OK")
             
             self.assertEqual(result.output_dir, "/tmp/test_output")
             mock_async.assert_called_once()
+
+
+class TestEvaluatorCrossProcess(unittest.TestCase):
+    """Test that callable evaluators work across process boundaries"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_callable_evaluator_works_in_subprocess(self):
+        """Test that a callable evaluator serialized by _prepare_evaluator
+        can be loaded and executed in a separate process (simulating
+        ProcessPoolExecutor workers)."""
+        def my_evaluator(program_path):
+            return {"score": 0.42, "passed": True}
+
+        temp_files = []
+        eval_file = _prepare_evaluator(my_evaluator, self.temp_dir, temp_files)
+
+        # Load and run the evaluator in a subprocess — this is what
+        # process_parallel.py workers do.
+        import subprocess, sys, json
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                f"""
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("eval_mod", {eval_file!r})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(json.dumps(mod.evaluate("dummy_path.py")))
+"""
+            ],
+            capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(result.returncode, 0, f"Subprocess failed: {result.stderr}")
+        metrics = json.loads(result.stdout.strip())
+        self.assertAlmostEqual(metrics["score"], 0.42)
+        self.assertTrue(metrics["passed"])
+
+    def test_callable_evaluator_with_closure(self):
+        """Test that a closure (capturing local variables) works across processes."""
+        threshold = 0.5
+        func_name = "my_func"
+
+        def closure_evaluator(program_path):
+            return {"score": threshold, "func": func_name}
+
+        temp_files = []
+        eval_file = _prepare_evaluator(closure_evaluator, self.temp_dir, temp_files)
+
+        import subprocess, sys, json
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                f"""
+import importlib.util, json
+spec = importlib.util.spec_from_file_location("eval_mod", {eval_file!r})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(json.dumps(mod.evaluate("dummy.py")))
+"""
+            ],
+            capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(result.returncode, 0, f"Subprocess failed: {result.stderr}")
+        metrics = json.loads(result.stdout.strip())
+        self.assertAlmostEqual(metrics["score"], 0.5)
+        self.assertEqual(metrics["func"], "my_func")
 
 
 if __name__ == '__main__':

@@ -143,6 +143,14 @@ def get_integration_config(port: int = DEFAULT_PORT) -> Config:
     # room for a small code diff.
     config.llm.max_tokens = 256
 
+    # Use full rewrites rather than diffs. dhara-250m never emits a well-formed
+    # SEARCH/REPLACE block, so in diff mode every iteration ends with "No valid
+    # diffs found" and no candidate is produced. Since #288 a run in which no
+    # iteration produces a candidate raises EvolutionFailedError. Full-rewrite
+    # parsing falls back to the raw response, so each iteration yields a candidate
+    # and these tests exercise the full evaluate/add/migrate/checkpoint path.
+    config.diff_based_evolution = False
+
     # Configure to use optillm server
     base_url = f"http://localhost:{port}/v1"
     config.llm.api_base = base_url

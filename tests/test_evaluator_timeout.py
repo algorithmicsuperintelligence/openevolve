@@ -389,6 +389,23 @@ def evaluate_stage3(program_path):
 
         asyncio.run(run_test())
 
+    def test_timeout_does_not_hang_process_on_cleanup(self):
+        """Regression test for issue #399: a timed-out evaluation's orphaned
+        thread must not block asyncio.run() cleanup and hang the worker."""
+
+        async def run_test():
+            evaluator = self._create_evaluator(timeout=3)
+            program_code = "# SLEEP_LONG\ndef test(): return 'long'"
+            result = await evaluator.evaluate_program(program_code, "test_no_hang")
+            self.assertTrue(result.get("timeout"))
+
+        outer_start = time.time()
+        asyncio.run(run_test())
+        outer_elapsed = time.time() - outer_start
+
+        # SLEEP_LONG takes 8s; before the fix this blocked until it finished.
+        self.assertLess(outer_elapsed, 5)
+
 
 class TestTimeoutIntegration(unittest.TestCase):
     """Integration tests for timeout functionality"""

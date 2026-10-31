@@ -3,6 +3,7 @@ High-level API for using OpenEvolve as a library
 """
 
 import asyncio
+import pickle
 import tempfile
 import os
 import uuid
@@ -14,6 +15,8 @@ from pathlib import Path
 from openevolve.controller import OpenEvolve
 from openevolve.config import Config, load_config, LLMModelConfig
 from openevolve.database import Program
+from openevolve.population import PopulationStrategy
+from openevolve.selection import IslandSelector
 
 
 @dataclass
@@ -39,6 +42,8 @@ def run_evolution(
     cleanup: bool = True,
     target_score: Optional[float] = None,
     checkpoint_path: Optional[str] = None,
+    island_selector: Optional[IslandSelector] = None,
+    population_strategy: Optional[PopulationStrategy] = None,
 ) -> EvolutionResult:
     """
     Run evolution with flexible inputs - the main library API
@@ -58,6 +63,10 @@ def run_evolution(
         iterations: Number of iterations (overrides config)
         output_dir: Output directory (None for temp directory)
         cleanup: If True, clean up temp files after evolution
+        island_selector: Optional callable that chooses an island ID from an
+            IslandSelectionContext. When omitted, the existing balanced scheduling is used.
+        population_strategy: Optional PopulationStrategy with decision hooks for
+            admission, cell replacement, archive membership, eviction, and migration.
 
     Returns:
         EvolutionResult with best program and metrics
@@ -92,7 +101,18 @@ def run_evolution(
         )
     """
     return asyncio.run(
-        _run_evolution_async(initial_program, evaluator, config, iterations, output_dir, cleanup, target_score, checkpoint_path)
+        _run_evolution_async(
+            initial_program,
+            evaluator,
+            config,
+            iterations,
+            output_dir,
+            cleanup,
+            target_score,
+            checkpoint_path,
+            island_selector,
+            population_strategy=population_strategy,
+        )
     )
 
 
@@ -105,6 +125,8 @@ async def _run_evolution_async(
     cleanup: bool,
     target_score: Optional[float] = None,
     checkpoint_path: Optional[str] = None,
+    island_selector: Optional[IslandSelector] = None,
+    population_strategy: Optional[PopulationStrategy] = None,
 ) -> EvolutionResult:
     """Async implementation of run_evolution"""
 
@@ -158,6 +180,8 @@ async def _run_evolution_async(
             evaluation_file=evaluator_path,
             config=config_obj,
             output_dir=actual_output_dir,
+            island_selector=island_selector,
+            population_strategy=population_strategy,
         )
 
         best_program = await controller.run(iterations=iterations,target_score=target_score,checkpoint_path=checkpoint_path)
@@ -295,59 +319,33 @@ def _prepare_evaluator(
 
     # If it's a callable, create a wrapper module
     if callable(evaluator):
-        # Try to get the source code of the callable so it can be serialized
-        # into a standalone file that works in subprocesses
         try:
-            func_source = inspect.getsource(evaluator)
-            # Dedent in case the function was defined inside another scope
-            import textwrap
+            import cloudpickle as _pickle_mod
+        except ImportError:
+            _pickle_mod = pickle
 
-            func_source = textwrap.dedent(func_source)
-            func_name = evaluator.__name__
+        # Serialize the callable to a file so subprocess workers can load it
+        if temp_dir is None:
+            temp_dir = tempfile.gettempdir()
 
-            if func_name == "<lambda>":
-                # A lambda has no usable name (referencing it as `<lambda>` is a
-                # syntax error). Extract the lambda expression from the source and
-                # bind it to a real name so the generated module is self-contained
-                # and works in subprocess workers.
-                lambda_src = _extract_lambda_source(func_source)
-                if lambda_src is None:
-                    # Couldn't isolate the expression; fall back to the globals path
-                    raise TypeError("cannot serialize lambda source")
-                func_name = "_user_evaluator"
-                func_source = f"{func_name} = {lambda_src}"
+        pickle_path = os.path.join(temp_dir, f"evaluator_{uuid.uuid4().hex[:8]}.pkl")
+        with open(pickle_path, "wb") as pf:
+            _pickle_mod.dump(evaluator, pf)
+        temp_files.append(pickle_path)
 
-            # Build a self-contained evaluator module with the function source
-            # and an evaluate() entry point that calls it
-            evaluator_code = f"""
-# Auto-generated evaluator from user-provided callable
-import importlib.util
-import sys
-import os
-import copy
-import json
-import time
+        evaluator_code = f"""
+# Wrapper for user-provided evaluator function (serialized to disk for cross-process access)
+import pickle
 
-{func_source}
+_cached_evaluator = None
 
 def evaluate(program_path):
-    '''Wrapper that calls the user-provided evaluator function'''
-    return {func_name}(program_path)
-"""
-        except (OSError, TypeError):
-            # If we can't get source (e.g. built-in, lambda, or closure),
-            # fall back to the globals-based approach
-            evaluator_id = f"_openevolve_evaluator_{uuid.uuid4().hex[:8]}"
-            globals()[evaluator_id] = evaluator
-
-            evaluator_code = f"""
-# Wrapper for user-provided evaluator function
-import {__name__} as api_module
-
-def evaluate(program_path):
-    '''Wrapper for user-provided evaluator function'''
-    user_evaluator = getattr(api_module, '{evaluator_id}')
-    return user_evaluator(program_path)
+    '''Wrapper that loads the evaluator from a pickle file'''
+    global _cached_evaluator
+    if _cached_evaluator is None:
+        with open({pickle_path!r}, 'rb') as f:
+            _cached_evaluator = pickle.load(f)
+    return _cached_evaluator(program_path)
 """
     else:
         # Treat as code string

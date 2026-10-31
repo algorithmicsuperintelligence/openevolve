@@ -20,6 +20,12 @@ import numpy as np
 
 BENCHMARK = 32
 
+# Fixed target tensor dimensions for this example: <n, m, p> = <2, 4, 5>.
+# The evaluator must check the dimensions a candidate reports against these:
+# the reported values are produced inside the EVOLVE-BLOCK and must not be
+# trusted (see https://github.com/algorithmicsuperintelligence/openevolve/issues/514).
+TARGET_N, TARGET_M, TARGET_P = 2, 4, 5
+
 
 def verify_tensor_decomposition(
     decomposition: tuple[np.ndarray, np.ndarray, np.ndarray], n: int, m: int, p: int, rank: int
@@ -30,8 +36,10 @@ def verify_tensor_decomposition(
     if not all(isinstance(arr, np.ndarray) for arr in decomposition) or not decomposition:
         raise ValueError("Decomposition must be a tuple of NumPy arrays.")
     if any(arr.size == 0 for arr in decomposition):
-        print("Warning: One or more decomposition arrays are empty. Verification skipped.")
-        return
+        # An empty factor matrix can never reproduce the target tensor, so this
+        # is a failed verification -- not something to silently skip. Skipping
+        # would let a candidate score without solving the task (see #514).
+        raise ValueError("Verification failed: one or more decomposition arrays are empty.")
 
     # Check that each factor matrix has the correct shape.
     factor_matrix_1, factor_matrix_2, factor_matrix_3 = decomposition
@@ -78,7 +86,9 @@ def evaluate(program_path: str):
             sys.path.insert(0, program_dir)
             program = __import__(module_name)
             start_time = time.time()
-            decomposition, n, m, p, loss, rank = program.run()
+            # NOTE: the reported n, m, p and rank come from the EVOLVE-BLOCK and
+            # are deliberately not trusted below (see #514).
+            decomposition, n, m, p, loss, _reported_rank = program.run()
             end_time = time.time()
             eval_time = end_time - start_time
         except Exception as err:
@@ -86,6 +96,22 @@ def evaluate(program_path: str):
         finally:
             if program_dir in sys.path:
                 sys.path.remove(program_dir)
+
+        # The candidate must solve the fixed <2, 4, 5> problem: reject any
+        # reported dimensions that do not match the target.
+        if (n, m, p) != (TARGET_N, TARGET_M, TARGET_P):
+            raise ValueError(
+                f"Candidate reported dimensions (n, m, p) = {(n, m, p)}; "
+                f"expected {(TARGET_N, TARGET_M, TARGET_P)}."
+            )
+
+        # Derive the rank from the actual factor matrices instead of trusting
+        # the candidate-reported value: a candidate could otherwise claim an
+        # arbitrarily low rank and score above the state of the art.
+        try:
+            rank = int(decomposition[0].shape[1])
+        except (AttributeError, IndexError, TypeError) as exc:
+            raise ValueError(f"Could not determine rank from the decomposition: {exc}")
 
         verify_tensor_decomposition(decomposition, n, m, p, rank)
 

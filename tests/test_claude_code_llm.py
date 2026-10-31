@@ -50,7 +50,20 @@ class TestClaudeCodeLLM(unittest.TestCase):
         self.assertIn("-p", cmd)
         self.assertIn("--model", cmd)
         self.assertIn("sonnet", cmd)
-        self.assertIn("test prompt", cmd)
+        self.assertNotIn("test prompt", cmd)
+        self.assertEqual(mock_run.call_args.kwargs["input"], "test prompt")
+
+    @patch("openevolve.llm.claude_code.subprocess.run")
+    def test_large_prompt_not_passed_as_argument(self, mock_run):
+        # Linux caps a single argv string at 128 KiB (MAX_ARG_STRLEN); a prompt that
+        # carries a few parent programs easily exceeds it, so it must go through stdin.
+        mock_run.return_value = MagicMock(returncode=0, stdout="response", stderr="")
+        llm = ClaudeCodeLLM()
+        prompt = "x" * 200_000
+        asyncio.run(llm.generate(prompt))
+        cmd = mock_run.call_args[0][0]
+        self.assertTrue(all(len(arg) < 128 * 1024 for arg in cmd))
+        self.assertEqual(mock_run.call_args.kwargs["input"], prompt)
 
     @patch("openevolve.llm.claude_code.subprocess.run")
     def test_system_message_passed(self, mock_run):
@@ -102,8 +115,7 @@ class TestClaudeCodeLLM(unittest.TestCase):
             )
         )
         self.assertEqual(result, "ctx response")
-        cmd = mock_run.call_args[0][0]
-        self.assertIn("first\n\nsecond", cmd[-1])
+        self.assertIn("first\n\nsecond", mock_run.call_args.kwargs["input"])
 
 
 class TestMaxBudgetConfig(unittest.TestCase):

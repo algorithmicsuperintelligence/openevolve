@@ -28,6 +28,9 @@ def verify_autocorrelation_solution(f_values: np.ndarray, c1_achieved: float, n_
     if f_values.shape != (n_points,):
         raise ValueError(f"Expected function values shape {(n_points,)}. Got {f_values.shape}.")
 
+    if not np.isfinite(f_values).all():
+        raise ValueError("Function values must be finite")
+
     # Check non-negativity
     if np.any(f_values < 0.0):
         raise ValueError("Function must be non-negative.")

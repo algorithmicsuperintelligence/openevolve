@@ -19,7 +19,22 @@ _PROVIDER_REGISTRY = {
 
 try:
     from openevolve.llm.claude_code import ClaudeCodeLLM
+
     _PROVIDER_REGISTRY["claude_code"] = lambda cfg: ClaudeCodeLLM(cfg)
+except ImportError:
+    pass
+
+try:
+    from openevolve.llm.copilot_cli import CopilotCLILLM
+
+    _PROVIDER_REGISTRY["copilot_cli"] = lambda cfg: CopilotCLILLM(cfg)
+except ImportError:
+    pass
+
+try:
+    from openevolve.llm.codex_app_server import CodexAppServerLLM
+
+    _PROVIDER_REGISTRY["codex_app_server"] = lambda cfg: CodexAppServerLLM(cfg)
 except ImportError:
     pass
 
@@ -71,17 +86,30 @@ class LLMEnsemble:
             )
             logger._ensemble_logged = True
 
+        self.last_usage: Optional[Dict[str, Any]] = None
+
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate text using a randomly selected model based on weights"""
         model = self._sample_model()
-        return await model.generate(prompt, **kwargs)
+        res = await model.generate(prompt, **kwargs)
+        self.last_usage = getattr(model, "last_usage", None)
+        return res
 
     async def generate_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
     ) -> str:
         """Generate text using a system message and conversational context"""
         model = self._sample_model()
-        return await model.generate_with_context(system_message, messages, **kwargs)
+        res = await model.generate_with_context(system_message, messages, **kwargs)
+        self.last_usage = getattr(model, "last_usage", None)
+        return res
+
+    def reseed(self, iteration: int) -> None:
+        """Seed model sampling from the configured seed and `iteration`, so the pick depends
+        on the iteration rather than on how many picks this worker process has already made"""
+        seed = getattr(self.models_cfg[0], "random_seed", None) if self.models_cfg else None
+        if seed is not None:
+            self.random_state.seed(f"{seed}:{iteration}")
 
     def _sample_model(self) -> LLMInterface:
         """Sample a model from the ensemble based on weights"""
@@ -102,9 +130,16 @@ class LLMEnsemble:
 
     async def generate_all_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
-    ) -> str:
-        """Generate text using a all available models and average their returned metrics"""
-        responses = []
-        for model in self.models:
+    ) -> List[Optional[str]]:
+        """Request feedback from positive-weight models.
+
+        Keep a None slot for each disabled model so response indices still match
+        the ensemble weights when the evaluator aggregates and logs feedback.
+        """
+        responses: List[Optional[str]] = []
+        for model, weight in zip(self.models, self.weights):
+            if weight <= 0:
+                responses.append(None)
+                continue
             responses.append(await model.generate_with_context(system_message, messages, **kwargs))
         return responses

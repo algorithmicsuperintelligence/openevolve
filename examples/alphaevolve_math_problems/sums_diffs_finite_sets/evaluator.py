@@ -11,10 +11,12 @@
 #
 # ===--------------------------------------------------------------------------------------===#
 
-import sys
+import math
 import os
-from importlib import __import__
+import sys
 import time
+from importlib import __import__
+
 import numpy as np
 
 BENCHMARK = 1.158417281556896
@@ -25,6 +27,16 @@ def verify_c6_solution(u_set: np.ndarray, c6_achieved: float):
 
     if not isinstance(u_set, np.ndarray) or u_set.ndim != 1:
         raise ValueError("Solution U must be a 1D numpy array of integers.")
+
+    try:
+        integer_values = [int(value) for value in u_set]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Set U must contain finite integers.") from exc
+    if any(value != integer for value, integer in zip(u_set, integer_values)):
+        raise ValueError("Set U must contain finite integers.")
+
+    # Use Python integers so sums, differences, and 2 * max(U) + 1 cannot wrap.
+    u_set = np.array(integer_values, dtype=object)
 
     # Verify constraints
     if 0 not in u_set:
@@ -38,11 +50,13 @@ def verify_c6_solution(u_set: np.ndarray, c6_achieved: float):
 
     size_U_plus_U = len(u_plus_u)
     size_U_minus_U = len(u_minus_u)
-    max_U = np.max(u_set)
+    max_U = int(np.max(u_set))
+    if max_U == 0:
+        raise ValueError("Set U must contain a positive integer.")
 
     ratio = size_U_minus_U / size_U_plus_U
     log_ratio = np.log(ratio)
-    log_denom = np.log(2 * max_U + 1)
+    log_denom = math.log(2 * max_U + 1)
 
     computed_c6 = 1 + log_ratio / log_denom
 

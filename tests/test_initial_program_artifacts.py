@@ -84,6 +84,7 @@ class TestInitialProgramArtifacts(unittest.TestCase):
             instance = mock_ppc.return_value
             instance.start.return_value = None
             instance.stop.return_value = None
+            instance.produced_no_candidates = False
 
             asyncio.run(controller.run(iterations=1))
 
@@ -118,6 +119,7 @@ class TestInitialProgramArtifacts(unittest.TestCase):
         ):
             mock_ppc.return_value.start.return_value = None
             mock_ppc.return_value.stop.return_value = None
+            mock_ppc.return_value.produced_no_candidates = False
             asyncio.run(controller.run(iterations=1))
 
         self.assertEqual(len(controller.database.programs), 1)

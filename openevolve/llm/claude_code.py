@@ -79,7 +79,8 @@ class ClaudeCodeLLM(LLMInterface):
         budget = kwargs.get("max_budget_usd", self.max_budget_usd)
         cmd.extend(["--max-budget-usd", str(budget)])
 
-        cmd.append(user_content)
+        # The prompt goes through stdin: as one argv string it hits Linux's 128 KiB
+        # per-argument limit (MAX_ARG_STRLEN) once a few programs are in the prompt.
 
         timeout = kwargs.get("timeout", self.timeout)
         retries = kwargs.get("retries", self.retries)
@@ -89,7 +90,7 @@ class ClaudeCodeLLM(LLMInterface):
         for attempt in range(retries + 1):
             try:
                 result = await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda: self._run_cli(cmd, timeout)),
+                    loop.run_in_executor(None, lambda: self._run_cli(cmd, timeout, user_content)),
                     timeout=timeout + 30,
                 )
                 return result
@@ -112,10 +113,11 @@ class ClaudeCodeLLM(LLMInterface):
                     logger.error(f"All {retries + 1} attempts failed with error: {e}")
                     raise
 
-    def _run_cli(self, cmd: list, timeout: int) -> str:
+    def _run_cli(self, cmd: list, timeout: int, prompt: Optional[str] = None) -> str:
         try:
             result = subprocess.run(
                 cmd,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

@@ -1,0 +1,7 @@
+# Optional scientific dependencies for the Python 3.12 upstream-example job.
+# No Google SDK, cloud credentials or model server is needed.
+numpy==2.5.4
+scipy==1.18.1
+matplotlib==3.10.9
+nest-asyncio==1.6.0
+python-dotenv==1.2.4

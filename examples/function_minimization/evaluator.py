@@ -42,6 +42,18 @@ def safe_float(value):
         return 0.0
 
 
+def _objective_function(x, y):
+    """The objective being minimized.
+
+    Always recomputed by the evaluator from the returned point: a
+    candidate-reported value comes from the EVOLVE-BLOCK and must not be
+    trusted for scoring -- a candidate could otherwise claim an arbitrary
+    score without finding a good point.
+    See https://github.com/algorithmicsuperintelligence/openevolve/issues/514
+    """
+    return np.sin(x) * np.cos(y) + np.sin(x * y) + (x**2 + y**2) / 20
+
+
 def evaluate(program_path):
     """
     Evaluate the program by running it multiple times and checking how close
@@ -104,12 +116,15 @@ def evaluate(program_path):
                 # Handle different result formats
                 if isinstance(result, tuple):
                     if len(result) == 3:
-                        x, y, value = result
+                        # Never trust the candidate-reported value: it is produced
+                        # inside the EVOLVE-BLOCK, so it is recomputed from (x, y)
+                        # below (see _objective_function).
+                        x, y, _reported_value = result
                     elif len(result) == 2:
                         # Assume it's (x, y) and calculate value
                         x, y = result
                         # Calculate the function value since it wasn't returned
-                        value = np.sin(x) * np.cos(y) + np.sin(x * y) + (x**2 + y**2) / 20
+                        value = _objective_function(x, y)
                         print(f"Trial {trial}: Got 2 values, calculated function value: {value}")
                     else:
                         print(
@@ -127,7 +142,9 @@ def evaluate(program_path):
                 # Ensure all values are float
                 x = safe_float(x)
                 y = safe_float(y)
-                value = safe_float(value)
+                # Always (re)compute the objective from (x, y) instead of trusting
+                # a candidate-reported value (see _objective_function).
+                value = _objective_function(x, y)
 
                 # Check if the result is valid (not NaN or infinite)
                 if (
@@ -296,12 +313,15 @@ def evaluate_stage1(program_path):
             # Handle different result formats
             if isinstance(result, tuple):
                 if len(result) == 3:
-                    x, y, value = result
+                    # Never trust the candidate-reported value: it is produced
+                    # inside the EVOLVE-BLOCK, so it is recomputed from (x, y)
+                    # below (see _objective_function).
+                    x, y, _reported_value = result
                 elif len(result) == 2:
                     # Assume it's (x, y) and calculate value
                     x, y = result
                     # Calculate the function value since it wasn't returned
-                    value = np.sin(x) * np.cos(y) + np.sin(x * y) + (x**2 + y**2) / 20
+                    value = _objective_function(x, y)
                     print(f"Stage 1: Got 2 values, calculated function value: {value}")
                 else:
                     print(
@@ -343,7 +363,9 @@ def evaluate_stage1(program_path):
             # Ensure all values are float
             x = safe_float(x)
             y = safe_float(y)
-            value = safe_float(value)
+            # Always (re)compute the objective from (x, y) instead of trusting
+            # a candidate-reported value (see _objective_function).
+            value = _objective_function(x, y)
 
             # Check if the result is valid
             if (

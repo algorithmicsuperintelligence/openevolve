@@ -1,0 +1,353 @@
+{
+  "date_utc": "2026-10-09T18:40:09.588Z",
+  "base_sha": "9196d8763300d1e46cc8b48cb0dc987966db3d48",
+  "environment": {
+    "python": "3.12.3",
+    "os": "Darwin",
+    "arch": "arm64",
+    "openevolve": "0.4.0"
+  },
+  "source_sha256": {
+    "openevolve/coevolution.py": "4439a24c5c5ac859b73caf1f63fc83c3899736bdbf1e6b3bfeb28d8a40d236c9",
+    "tests/test_coevolution.py": "287a14848132230f8fc7317cbc81f768dc1e10ec73692621dbbd45462c322e9a",
+    "examples/competitive_resource_allocation/compare.py": "10025075a353408ac8fd1be8d917158cd2e71df939255d1c547b9b172f4bae9c"
+  },
+  "reports": {
+    "pure": {
+      "generation": "scripted grid proposals, not an LLM",
+      "mixed_attacker": false,
+      "results": [
+        {
+          "seed": 0,
+          "competitive": {
+            "allocation": [
+              0.3333333333333333,
+              0.3333333333333333,
+              0.3333333333333333
+            ],
+            "worst_channel_detection": 0.3333333333333333,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 310,
+              "attacker": 251
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_generation_matched": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 84,
+              "attacker": 59
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_larger_budget": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 602,
+              "attacker": 338
+            },
+            "generation_calls": {
+              "defender": 620,
+              "attacker": 502
+            }
+          }
+        },
+        {
+          "seed": 1,
+          "competitive": {
+            "allocation": [
+              0.3333333333333333,
+              0.3333333333333333,
+              0.3333333333333333
+            ],
+            "worst_channel_detection": 0.3333333333333333,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 312,
+              "attacker": 255
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_generation_matched": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 82,
+              "attacker": 58
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_larger_budget": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 606,
+              "attacker": 349
+            },
+            "generation_calls": {
+              "defender": 624,
+              "attacker": 510
+            }
+          }
+        },
+        {
+          "seed": 2,
+          "competitive": {
+            "allocation": [
+              0.3333333333333333,
+              0.3333333333333333,
+              0.3333333333333333
+            ],
+            "worst_channel_detection": 0.3333333333333333,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 317,
+              "attacker": 262
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_generation_matched": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 85,
+              "attacker": 49
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_larger_budget": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 612,
+              "attacker": 357
+            },
+            "generation_calls": {
+              "defender": 634,
+              "attacker": 524
+            }
+          }
+        }
+      ]
+    },
+    "mixed": {
+      "generation": "scripted grid proposals, not an LLM",
+      "mixed_attacker": true,
+      "results": [
+        {
+          "seed": 0,
+          "competitive": {
+            "allocation": [
+              0.3333333333333333,
+              0.3333333333333333,
+              0.3333333333333333
+            ],
+            "worst_channel_detection": 0.3333333333333333,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 314,
+              "attacker": 312
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_generation_matched": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 82,
+              "attacker": 82
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_larger_budget": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 602,
+              "attacker": 608
+            },
+            "generation_calls": {
+              "defender": 628,
+              "attacker": 624
+            }
+          }
+        },
+        {
+          "seed": 1,
+          "competitive": {
+            "allocation": [
+              0.3333333333333333,
+              0.3333333333333333,
+              0.3333333333333333
+            ],
+            "worst_channel_detection": 0.3333333333333333,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 318,
+              "attacker": 315
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_generation_matched": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 84,
+              "attacker": 85
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_larger_budget": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 607,
+              "attacker": 611
+            },
+            "generation_calls": {
+              "defender": 636,
+              "attacker": 630
+            }
+          }
+        },
+        {
+          "seed": 2,
+          "competitive": {
+            "allocation": [
+              0.3333333333333333,
+              0.3333333333333333,
+              0.3333333333333333
+            ],
+            "worst_channel_detection": 0.3333333333333333,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 313,
+              "attacker": 312
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_generation_matched": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 83,
+              "attacker": 83
+            },
+            "generation_calls": {
+              "defender": 84,
+              "attacker": 84
+            }
+          },
+          "static_larger_budget": {
+            "allocation": [
+              1,
+              0,
+              0
+            ],
+            "worst_channel_detection": 0,
+            "mean_detection": 0.3333333333333333,
+            "match_calls": {
+              "defender": 606,
+              "attacker": 604
+            },
+            "generation_calls": {
+              "defender": 626,
+              "attacker": 624
+            }
+          }
+        }
+      ]
+    }
+  }
+}

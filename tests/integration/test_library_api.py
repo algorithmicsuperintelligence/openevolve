@@ -36,6 +36,9 @@ def _get_library_test_config(port: int = 8000) -> Config:
     # Bound generation length so the (non-stopping) dhara model does not ramble to
     # the 4096-token default on every call (see tests/test_utils.py for details).
     config.llm.max_tokens = 256
+    # Full rewrites so the small model always yields a candidate (see
+    # get_integration_config in tests/test_utils.py); runs with no candidates fail.
+    config.diff_based_evolution = False
     config.llm.models = [
         LLMModelConfig(
             name=TEST_MODEL,
@@ -74,7 +77,7 @@ class TestLibraryAPIIntegration:
         result = evolve_function(
             simple_multiply,
             test_cases,
-            iterations=2,  # Very small number for CI speed
+            iterations=3,  # A few iterations: one empty reply from the small model would leave no candidate
             output_dir=str(temp_workspace / "evolve_function_output"),
             cleanup=False,  # Keep files for inspection
             config=_get_library_test_config(optillm_server["port"]),
@@ -162,7 +165,7 @@ def fibonacci(n):
         result = evolve_code(
             initial_code,
             fibonacci_evaluator,
-            iterations=1,  # Minimal for CI speed
+            iterations=3,  # A few iterations: one empty reply from the small model would leave no candidate
             output_dir=str(temp_workspace / "evolve_code_output"),
             cleanup=False,  # Keep output directory
             config=_get_library_test_config(optillm_server["port"]),
@@ -257,7 +260,7 @@ def evaluate(program_path):
         result = run_evolution(
             initial_program=str(initial_program),
             evaluator=str(evaluator_file),
-            iterations=1,  # Minimal for CI speed
+            iterations=3,  # A few iterations: one empty reply from the small model would leave no candidate
             output_dir=str(temp_workspace / "run_evolution_output"),
             cleanup=False,  # Keep output directory
             config=_get_library_test_config(optillm_server["port"]),
@@ -284,7 +287,7 @@ def evaluate(program_path):
         result2 = run_evolution(
             initial_program=initial_program.read_text(),
             evaluator=lambda path: {"score": 0.8, "test": "passed"},  # Simple callable evaluator
-            iterations=1,
+            iterations=3,  # A few iterations: one empty reply from the small model would leave no candidate
             output_dir=str(temp_workspace / "run_evolution_string_output"),
             cleanup=False,  # Keep output directory
             config=_get_library_test_config(optillm_server["port"]),
