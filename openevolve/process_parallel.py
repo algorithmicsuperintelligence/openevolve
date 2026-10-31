@@ -1015,7 +1015,7 @@ class ProcessParallelController:
                                         break
 
             except _CandidateRejected as rejected:
-                logger.info("Admission strategy rejected program %s", rejected)
+                logger.info("Database rejected program %s", rejected)
                 try:
                     self._checkpoint_if_due(completed_iteration, checkpoint_callback)
                 except Exception as e:
