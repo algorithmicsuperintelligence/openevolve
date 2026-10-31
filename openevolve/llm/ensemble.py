@@ -4,6 +4,7 @@ Model ensemble for LLMs
 
 import asyncio
 import logging
+import math
 import random
 from typing import Dict, List, Optional, Tuple
 
@@ -54,13 +55,22 @@ class LLMEnsemble:
     def __init__(self, models_cfg: List[LLMModelConfig]):
         self.models_cfg = models_cfg
 
-        # Initialize models from the configuration
-        self.models = [_create_model(model_cfg) for model_cfg in models_cfg]
-
-        # Extract and normalize model weights
+        # Validate weights before initializing clients, which may have side effects.
         self.weights = [model.weight for model in models_cfg]
+        if any(not math.isfinite(weight) or weight < 0 for weight in self.weights):
+            raise ValueError("LLM ensemble weights must be finite and non-negative")
         total = sum(self.weights)
-        self.weights = [w / total for w in self.weights]
+        if self.weights and total <= 0:
+            raise ValueError("LLM ensemble must contain at least one model with a positive weight")
+        if not math.isfinite(total):
+            # Finite weights can still overflow when added. Rescale only this
+            # case so ordinary normalization and seeded sampling stay unchanged.
+            scale = max(self.weights)
+            self.weights = [weight / scale for weight in self.weights]
+            total = sum(self.weights)
+        self.weights = [weight / total for weight in self.weights]
+
+        self.models = [_create_model(model_cfg) for model_cfg in models_cfg]
 
         # Set up random state for deterministic model selection
         self.random_state = random.Random()
