@@ -130,9 +130,16 @@ class LLMEnsemble:
 
     async def generate_all_with_context(
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
-    ) -> str:
-        """Generate text using a all available models and average their returned metrics"""
-        responses = []
-        for model in self.models:
+    ) -> List[Optional[str]]:
+        """Request feedback from positive-weight models.
+
+        Keep a None slot for each disabled model so response indices still match
+        the ensemble weights when the evaluator aggregates and logs feedback.
+        """
+        responses: List[Optional[str]] = []
+        for model, weight in zip(self.models, self.weights):
+            if weight <= 0:
+                responses.append(None)
+                continue
             responses.append(await model.generate_with_context(system_message, messages, **kwargs))
         return responses
