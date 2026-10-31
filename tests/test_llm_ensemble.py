@@ -8,6 +8,7 @@ from openevolve.llm.ensemble import LLMEnsemble
 from openevolve.config import LLMModelConfig
 from openevolve.llm.base import LLMInterface
 
+
 class TestLLMEnsemble(unittest.TestCase):
     def test_weighted_sampling(self):
         models = [
@@ -35,7 +36,6 @@ class TestLLMEnsemble(unittest.TestCase):
         self.assertEqual(len(sampled_models), len(models))
 
 
-
 class TestEnsembleInit(unittest.TestCase):
     class MyCustomLLM(LLMInterface):
         def __init__(self, model, some_field):
@@ -45,7 +45,9 @@ class TestEnsembleInit(unittest.TestCase):
         async def generate(self, prompt: str, **kwargs) -> str:
             return "custom-generate"
 
-        async def generate_with_context(self, system_message: str, messages: List[Dict[str, str]], **kwargs) -> str:
+        async def generate_with_context(
+            self, system_message: str, messages: List[Dict[str, str]], **kwargs
+        ) -> str:
             return "custom-generate-with-context"
 
     def init_custom_llm(self, model_cfg):
@@ -116,6 +118,47 @@ class TestTokenUsageLogging(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ensemble.last_usage, llm.last_usage)
 
 
+class TestCustomClientSampling(unittest.IsolatedAsyncioTestCase):
+    class InterfaceOnlyLLM(LLMInterface):
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, prompt, **kwargs):
+            self.calls.append((prompt, kwargs))
+            return "custom answer"
+
+        async def generate_with_context(self, system_message, messages, **kwargs):
+            self.calls.append((system_message, messages, kwargs))
+            return "custom context answer"
+
+    class PropertyModelLLM(InterfaceOnlyLLM):
+        @property
+        def model(self):
+            return "custom model"
+
+    async def check_custom_client(self, client):
+        ensemble = LLMEnsemble(
+            [LLMModelConfig(name="custom model", init_client=lambda _cfg: client)]
+        )
+        messages = [{"role": "user", "content": "question"}]
+        with self.assertLogs("openevolve.llm.ensemble", level="INFO") as logs:
+            self.assertEqual(await ensemble.generate("question", temperature=0), "custom answer")
+            self.assertEqual(
+                await ensemble.generate_with_context("system", messages, max_tokens=8),
+                "custom context answer",
+            )
+        self.assertEqual(
+            client.calls,
+            [("question", {"temperature": 0}), ("system", messages, {"max_tokens": 8})],
+        )
+        self.assertTrue(all("custom model" in message for message in logs.output))
+
+    async def test_interface_only_client_can_generate(self):
+        await self.check_custom_client(self.InterfaceOnlyLLM())
+
+    async def test_property_backed_model_client_can_generate(self):
+        await self.check_custom_client(self.PropertyModelLLM())
+
+
 if __name__ == "__main__":
     unittest.main()
-
