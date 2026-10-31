@@ -115,7 +115,7 @@ class LLMEnsemble:
         """Sample a model from the ensemble based on weights"""
         index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
         sampled_model = self.models[index]
-        logger.info(f"Sampled model: {vars(sampled_model)['model']}")
+        logger.info(f"Sampled model: {self.models_cfg[index].name}")
         return sampled_model
 
     async def generate_multiple(self, prompt: str, n: int, **kwargs) -> List[str]:
