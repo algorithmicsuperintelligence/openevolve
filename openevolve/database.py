@@ -2800,7 +2800,7 @@ class ProgramDatabase:
         program_id: str,
         template_key: str,
         prompt: Dict[str, Any],
-        responses: Optional[List[str]] = None,
+        responses: Optional[List[Optional[str]]] = None,
         token_usage: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -2812,6 +2812,7 @@ class ProgramDatabase:
         template_key: Key for the prompt template
         prompt: Prompts in the format {template_key: { 'system': str, 'user': str }}.
         responses: Optional list of responses to the prompt, if available.
+            A None entry marks a disabled model that was not called.
         token_usage: Optional token usage dictionary for this LLM call.
         """
 
