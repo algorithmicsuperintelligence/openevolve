@@ -141,6 +141,42 @@ def evaluate(program_path):
 
         self.assertTrue(controller.early_stopping_triggered)
 
+    def test_zero_threshold_counts_equal_scores_as_a_plateau(self):
+        self.config.convergence_threshold = 0.0
+        controller, _ = self._run_evolution(lambda i: {"combined_score": 0.0}, max_iterations=8)
+
+        self.assertTrue(controller.early_stopping_triggered)
+        self.assertEqual(self.database.last_iteration, 4)
+
+    def test_zero_threshold_still_accepts_small_negative_score_improvements(self):
+        self.config.convergence_threshold = 0.0
+        controller, submit = self._run_evolution(
+            lambda i: {"combined_score": -0.5 + i * 1e-9}, max_iterations=8
+        )
+
+        self.assertFalse(controller.early_stopping_triggered)
+        self.assertEqual(submit.call_count, 8)
+
+    def test_positive_threshold_still_accepts_an_exact_threshold_improvement(self):
+        self.config.early_stopping_patience = 2
+        self.config.convergence_threshold = 0.25
+        controller, submit = self._run_evolution(
+            lambda i: {"combined_score": 0.25 * ((i - 1) // 2)}, max_iterations=8
+        )
+
+        self.assertFalse(controller.early_stopping_triggered)
+        self.assertEqual(submit.call_count, 8)
+
+    def test_event_based_stopping_still_accepts_a_zero_target(self):
+        self.config.early_stopping_patience = -1
+        self.config.convergence_threshold = 0.0
+        controller, _ = self._run_evolution(
+            lambda i: {"combined_score": 0.0 if i == 3 else -0.5}, max_iterations=8
+        )
+
+        self.assertTrue(controller.early_stopping_triggered)
+        self.assertEqual(self.database.last_iteration, 3)
+
     def test_negative_best_not_poisoned_by_failures(self):
         """After a real (negative) best score, failures scoring 0.0 must not look
         like improvements that reset the patience counter"""

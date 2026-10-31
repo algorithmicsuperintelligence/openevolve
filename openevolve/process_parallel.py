@@ -975,7 +975,10 @@ class ProcessParallelController:
                                 # Check for improvement
                                 if self.config.early_stopping_patience > 0:
                                     improvement = current_score - best_score
-                                    if improvement >= self.config.convergence_threshold:
+                                    if (
+                                        current_score > best_score
+                                        and improvement >= self.config.convergence_threshold
+                                    ):
                                         best_score = current_score
                                         iterations_without_improvement = 0
                                         logger.debug(
