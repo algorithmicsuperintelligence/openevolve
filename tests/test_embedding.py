@@ -70,6 +70,70 @@ class TestEmbeddingClient(unittest.TestCase):
             encoding_format="float",
         )
 
+    def test_single_request_failure_returns_empty_vector_and_can_recover(self):
+        client = EmbeddingClient.__new__(EmbeddingClient)
+        client.model = "text-embedding-3-small"
+        client.client = MagicMock()
+        client.client.embeddings.create.side_effect = [
+            RuntimeError("embedding unavailable"),
+            SimpleNamespace(data=[SimpleNamespace(embedding=[0.1, 0.2])]),
+        ]
+
+        with self.assertLogs("openevolve.embedding", level="INFO") as logs:
+            result = client.get_embedding("first")
+        self.assertEqual(result, [])
+        self.assertFalse(result)
+        self.assertIn("embedding unavailable", logs.output[0])
+        self.assertEqual(client.get_embedding("second"), [0.1, 0.2])
+
+    def test_batch_request_failure_preserves_input_cardinality(self):
+        for batch in ([], ["first"], ["first", "second", "third"]):
+            with self.subTest(batch=batch):
+                client = EmbeddingClient.__new__(EmbeddingClient)
+                client.model = "text-embedding-3-small"
+                client.client = MagicMock()
+                client.client.embeddings.create.side_effect = RuntimeError("embedding unavailable")
+                result = client.get_embedding(batch)
+                self.assertEqual(result, [[] for _ in batch])
+                client.client.embeddings.create.assert_called_once_with(
+                    model=client.model, input=batch, encoding_format="float"
+                )
+
+    def test_failed_embedding_does_not_break_database_novelty_checks(self):
+        from openevolve.config import DatabaseConfig
+        from openevolve.database import Program, ProgramDatabase
+
+        for dimensions, failures in ((2, 1), (3, 2)):
+            with self.subTest(dimensions=dimensions, failures=failures):
+                seed = [1.0] + [0.0] * (dimensions - 1)
+                recovered = [0.0, 1.0] + [0.0] * (dimensions - 2)
+                client = EmbeddingClient.__new__(EmbeddingClient)
+                client.model = "text-embedding-3-small"
+                client.client = MagicMock()
+                client.client.embeddings.create.side_effect = [
+                    SimpleNamespace(data=[SimpleNamespace(embedding=seed)]),
+                    *[RuntimeError("embedding unavailable") for _ in range(failures)],
+                    SimpleNamespace(data=[SimpleNamespace(embedding=recovered)]),
+                ]
+                config = DatabaseConfig(
+                    in_memory=True,
+                    num_islands=1,
+                    embedding_model=client.model,
+                    similarity_threshold=0.9,
+                )
+                with patch("openevolve.embedding.EmbeddingClient", return_value=client):
+                    database = ProgramDatabase(config)
+                programs = [
+                    Program(id=str(i), code=f"x = {i}", metrics={"combined_score": i})
+                    for i in range(failures + 2)
+                ]
+                for program in programs:
+                    self.assertEqual(database.add(program), program.id)
+                for program in programs[1:-1]:
+                    self.assertEqual(program.embedding, [])
+                self.assertEqual(programs[-1].embedding, recovered)
+                self.assertIn(programs[-1].id, database.islands[0])
+
 
 if __name__ == "__main__":
     unittest.main()
