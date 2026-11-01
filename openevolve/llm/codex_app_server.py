@@ -168,19 +168,27 @@ class _AppServerSession:
             raise RuntimeError(f"Failed to write to codex app-server: {e}. {self.stderr_summary()}")
 
     def close(self) -> None:
-        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
-            try:
-                if stream:
-                    stream.close()
-            except (OSError, ValueError):
-                pass
+        try:
+            if self.proc.stdin:
+                self.proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+        # Closing stdout while the reader is blocked in it can wait forever for
+        # the stream's lock. Stop and reap the child before closing its read pipes.
         try:
             self.proc.terminate()
             self.proc.wait(timeout=5)
         except Exception:
             try:
                 self.proc.kill()
+                self.proc.wait(timeout=5)
             except Exception:
+                pass
+        for stream in (self.proc.stdout, self.proc.stderr):
+            try:
+                if stream:
+                    stream.close()
+            except (OSError, ValueError):
                 pass
 
 
