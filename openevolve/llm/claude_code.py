@@ -125,8 +125,9 @@ class ClaudeCodeLLM(LLMInterface):
             )
             if result.returncode != 0:
                 stderr = result.stderr.strip()
-                if stderr:
-                    logger.warning(f"Claude CLI stderr: {stderr[:500]}")
+                raise RuntimeError(
+                    f"Claude CLI exited with code {result.returncode}. stderr: {stderr[:500]}"
+                )
             output = result.stdout.strip()
             if not output:
                 raise RuntimeError(f"Empty response from Claude CLI. stderr: {result.stderr[:500]}")
