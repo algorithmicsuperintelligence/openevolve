@@ -152,6 +152,7 @@ class CopilotCLILLM(LLMInterface):
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=timeout,
                 cwd=self.cwd,
             )
