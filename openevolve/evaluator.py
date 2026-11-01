@@ -575,14 +575,14 @@ class Evaluator:
 
             # Merge results from stage 1 and 2
             merged_metrics = {}
-            # Convert all values to float to avoid type errors
+            # Normalize numeric scores while preserving boolean flags as metadata
             for name, value in stage1_eval_result.metrics.items():
                 if isinstance(value, (int, float)) and name != "error":
-                    merged_metrics[name] = float(value)
+                    merged_metrics[name] = value if isinstance(value, bool) else float(value)
 
             for name, value in stage2_eval_result.metrics.items():
                 if isinstance(value, (int, float)) and name != "error":
-                    merged_metrics[name] = float(value)
+                    merged_metrics[name] = value if isinstance(value, bool) else float(value)
 
             # Merge artifacts
             merged_artifacts = {}
@@ -640,7 +640,7 @@ class Evaluator:
             # Merge stage 3 results
             for name, value in stage3_eval_result.metrics.items():
                 if isinstance(value, (int, float)) and name != "error":
-                    merged_result.metrics[name] = float(value)
+                    merged_result.metrics[name] = value if isinstance(value, bool) else float(value)
 
             merged_result.artifacts.update(stage3_eval_result.artifacts)
 
@@ -808,8 +808,8 @@ class Evaluator:
         # This maintains backward compatibility
         valid_metrics = []
         for name, value in metrics.items():
-            # Skip 'error' keys and ensure values are numeric
-            if name != "error" and isinstance(value, (int, float)):
+            # Flags are metadata, not scores (bool is a subclass of int).
+            if name != "error" and isinstance(value, (int, float)) and not isinstance(value, bool):
                 try:
                     valid_metrics.append(float(value))
                 except (TypeError, ValueError):
