@@ -59,6 +59,8 @@ class OpenEvolve:
         # Load configuration (loaded in main_async)
         self.config = config
         self.island_selector = island_selector
+        # A Config built in code never passes through Config.from_dict, so validate here too
+        self.config.validate_evolution_mode()
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
@@ -185,6 +187,7 @@ class OpenEvolve:
                 format=self.config.evolution_trace.format,
                 include_code=self.config.evolution_trace.include_code,
                 include_prompts=self.config.evolution_trace.include_prompts,
+                include_failures=self.config.evolution_trace.include_failures,
                 enabled=True,
                 buffer_size=self.config.evolution_trace.buffer_size,
                 compress=self.config.evolution_trace.compress,

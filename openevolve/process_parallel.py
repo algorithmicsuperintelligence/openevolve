@@ -6,6 +6,7 @@ import asyncio
 import logging
 import multiprocessing as mp
 import pickle
+import random
 import signal
 import time
 from concurrent.futures import Future, ProcessPoolExecutor
@@ -74,6 +75,36 @@ class SerializableResult:
     error: Optional[str] = None
     target_island: Optional[int] = None  # Island where child should be placed
     token_usage: Optional[Dict[str, Any]] = None
+    # "diff" or "full_rewrite": the mode this iteration prompted and parsed with
+    evolution_mode: Optional[str] = None
+
+
+EVOLUTION_MODE_DIFF = "diff"
+EVOLUTION_MODE_FULL_REWRITE = "full_rewrite"
+
+
+def _choose_evolution_mode(config: Config, iteration: int) -> str:
+    """Pick diff or full rewrite for one iteration.
+
+    With random_seed set, the choice is seeded from the seed and the iteration, so it does not
+    depend on which worker runs the iteration and does not disturb other random draws"""
+    if not config.diff_based_evolution:
+        return EVOLUTION_MODE_FULL_REWRITE
+    p = config.full_rewrite_probability
+    if p <= 0:
+        return EVOLUTION_MODE_DIFF
+    if p >= 1:
+        return EVOLUTION_MODE_FULL_REWRITE
+    if config.random_seed is not None:
+        rng = random.Random(f"{config.random_seed}:{iteration}:evolution_mode")
+    else:
+        rng = random.Random()
+    return EVOLUTION_MODE_FULL_REWRITE if rng.random() < p else EVOLUTION_MODE_DIFF
+
+
+def _prompt_template_key(evolution_mode: Optional[str]) -> str:
+    """The user template an iteration in `evolution_mode` was prompted with"""
+    return "full_rewrite_user" if evolution_mode == EVOLUTION_MODE_FULL_REWRITE else "diff_user"
 
 
 def _worker_init(config_dict: dict, evaluation_file: str, parent_env: dict = None) -> None:
@@ -183,6 +214,26 @@ def _run_iteration_worker(
 ) -> SerializableResult:
     """Run a single iteration in a worker process"""
     try:
+        evolution_mode = _choose_evolution_mode(_worker_config, iteration)
+    except Exception as e:
+        logger.exception(f"Error choosing evolution mode in worker iteration {iteration}")
+        return SerializableResult(error=str(e), iteration=iteration)
+    result = _run_iteration(iteration, db_snapshot, parent_id, inspiration_ids, evolution_mode)
+    # Recorded on failures too, so parse/compile failure rates can be compared per mode
+    result.evolution_mode = evolution_mode
+    return result
+
+
+def _run_iteration(
+    iteration: int,
+    db_snapshot: Dict[str, Any],
+    parent_id: str,
+    inspiration_ids: List[str],
+    evolution_mode: str,
+) -> SerializableResult:
+    """Run one iteration, prompting and parsing as `evolution_mode` says"""
+    diff_based = evolution_mode == EVOLUTION_MODE_DIFF
+    try:
         # Lazy initialization
         _lazy_init_worker_components()
         _worker_llm_ensemble.reseed(iteration)
@@ -235,7 +286,7 @@ def _run_iteration_worker(
             inspirations=[p.to_dict() for p in inspirations],
             language=_worker_config.language,
             evolution_round=iteration,
-            diff_based_evolution=_worker_config.diff_based_evolution,
+            diff_based_evolution=diff_based,
             program_artifacts=parent_artifacts,
             feature_dimensions=db_snapshot.get("feature_dimensions", []),
             current_changes_description=parent_changes_desc,
@@ -263,8 +314,20 @@ def _run_iteration_worker(
                 error="LLM returned None response", iteration=iteration, token_usage=token_usage
             )
 
+        def _reject(error: str) -> SerializableResult:
+            """A failed iteration that still carries what the LLM was asked and answered"""
+            return SerializableResult(
+                error=error,
+                iteration=iteration,
+                token_usage=token_usage,
+                prompt=prompt,
+                llm_response=llm_response,
+                parent_id=parent.id,
+                target_island=db_snapshot.get("sampling_island"),
+            )
+
         # Parse response based on evolution mode
-        if _worker_config.diff_based_evolution:
+        if diff_based:
             from openevolve.utils.code_utils import (
                 apply_diff_blocks,
                 extract_diffs,
@@ -275,15 +338,9 @@ def _run_iteration_worker(
             try:
                 diff_blocks = extract_diffs(llm_response, _worker_config.diff_pattern)
             except ValueError as exc:
-                return SerializableResult(
-                    error=str(exc), iteration=iteration, token_usage=token_usage
-                )
+                return _reject(error=str(exc))
             if not diff_blocks:
-                return SerializableResult(
-                    error="No valid diffs found in response",
-                    iteration=iteration,
-                    token_usage=token_usage,
-                )
+                return _reject(error="No valid diffs found in response")
 
             if _worker_config.prompt.programs_as_changes_description:
                 try:
@@ -293,9 +350,7 @@ def _run_iteration_worker(
                         changes_description_text=parent_changes_desc,
                     )
                 except Exception as e:
-                    return SerializableResult(
-                        error=str(e), iteration=iteration, token_usage=token_usage
-                    )
+                    return _reject(error=str(e))
 
                 child_code, _ = apply_diff_blocks(parent.code, code_blocks)
                 child_changes_desc, desc_applied = apply_diff_blocks(
@@ -308,10 +363,8 @@ def _run_iteration_worker(
                     or not child_changes_desc.strip()
                     or child_changes_desc.strip() == parent_changes_desc.strip()
                 ):
-                    return SerializableResult(
-                        error="changes_description was not updated or empty, program is discarded",
-                        iteration=iteration,
-                        token_usage=token_usage,
+                    return _reject(
+                        error="changes_description was not updated or empty, program is discarded"
                     )
 
                 changes_summary = format_diff_summary(
@@ -323,13 +376,11 @@ def _run_iteration_worker(
                 # All diffs applied only to code
                 child_code, applied = apply_diff_blocks(parent.code, diff_blocks)
                 if applied == 0:
-                    return SerializableResult(
+                    return _reject(
                         error=(
                             f"None of the {len(diff_blocks)} SEARCH block(s) matched the "
                             "parent program"
                         ),
-                        iteration=iteration,
-                        token_usage=token_usage,
                     )
                 if applied < len(diff_blocks):
                     logger.warning(
@@ -337,11 +388,7 @@ def _run_iteration_worker(
                         "SEARCH block(s) matched the parent program"
                     )
                 if child_code == parent.code:
-                    return SerializableResult(
-                        error="Diff did not change the parent program",
-                        iteration=iteration,
-                        token_usage=token_usage,
-                    )
+                    return _reject(error="Diff did not change the parent program")
                 changes_summary = format_diff_summary(
                     diff_blocks,
                     max_line_len=_worker_config.prompt.diff_summary_max_line_len,
@@ -352,18 +399,10 @@ def _run_iteration_worker(
 
             new_code = parse_full_rewrite(llm_response, _worker_config.language)
             if not new_code:
-                return SerializableResult(
-                    error=f"No valid code found in response",
-                    iteration=iteration,
-                    token_usage=token_usage,
-                )
+                return _reject(error=f"No valid code found in response")
 
             if new_code == parent.code:
-                return SerializableResult(
-                    error="Rewrite is identical to the parent program",
-                    iteration=iteration,
-                    token_usage=token_usage,
-                )
+                return _reject(error="Rewrite is identical to the parent program")
 
             child_code = new_code
             changes_summary = "Full rewrite"
@@ -375,27 +414,19 @@ def _run_iteration_worker(
             try:
                 enforced_code = enforce_evolve_blocks(parent.code, child_code)
             except ValueError as exc:
-                return SerializableResult(
-                    error=str(exc), iteration=iteration, token_usage=token_usage
-                )
+                return _reject(error=str(exc))
             if enforced_code != child_code:
                 logger.info(
                     f"Iteration {iteration}: reverted edits outside the EVOLVE-BLOCK regions"
                 )
                 child_code = enforced_code
                 if child_code == parent.code:
-                    return SerializableResult(
-                        error="All edits were outside the EVOLVE-BLOCK regions",
-                        iteration=iteration,
-                        token_usage=token_usage,
-                    )
+                    return _reject(error="All edits were outside the EVOLVE-BLOCK regions")
 
         # Check code length
         if len(child_code) > _worker_config.max_code_length:
-            return SerializableResult(
-                error=f"Generated code exceeds maximum length ({len(child_code)} > {_worker_config.max_code_length})",
-                iteration=iteration,
-                token_usage=token_usage,
+            return _reject(
+                error=f"Generated code exceeds maximum length ({len(child_code)} > {_worker_config.max_code_length})"
             )
 
         # Evaluate the child program
@@ -422,6 +453,7 @@ def _run_iteration_worker(
                 "parent_metrics": parent.metrics,
                 "island": parent_island,
                 "token_usage": token_usage,
+                "evolution_mode": evolution_mode,
             },
         )
 
@@ -803,9 +835,22 @@ class ProcessParallelController:
 
                 if result.error:
                     self.last_iteration_error = result.error
+                    mode_str = f" [{result.evolution_mode}]" if result.evolution_mode else ""
                     logger.warning(
-                        f"Iteration {completed_iteration} error: {result.error}{token_str}"
+                        f"Iteration {completed_iteration} error{mode_str}: "
+                        f"{result.error}{token_str}"
                     )
+                    if self.evolution_tracer:
+                        self.evolution_tracer.log_failure(
+                            iteration=completed_iteration,
+                            error=result.error,
+                            parent_id=result.parent_id,
+                            evolution_mode=result.evolution_mode,
+                            prompt=result.prompt,
+                            llm_response=result.llm_response,
+                            token_usage=result.token_usage,
+                            island_id=result.target_island,
+                        )
                 elif result.child_program_dict:
                     successful_iterations += 1
 
@@ -851,17 +896,14 @@ class ProcessParallelController:
                                     "iteration_time": result.iteration_time,
                                     "changes": child_program.metadata.get("changes", ""),
                                     "token_usage": result.token_usage,
+                                    "evolution_mode": result.evolution_mode,
                                 },
                             )
 
                     # Log prompts
                     if result.prompt:
                         self.database.log_prompt(
-                            template_key=(
-                                "full_rewrite_user"
-                                if not self.config.diff_based_evolution
-                                else "diff_user"
-                            ),
+                            template_key=_prompt_template_key(result.evolution_mode),
                             program_id=child_program.id,
                             prompt=result.prompt,
                             responses=[result.llm_response] if result.llm_response else [],

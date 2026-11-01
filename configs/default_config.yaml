@@ -11,6 +11,8 @@ random_seed: 42                       # Random seed for reproducibility (null = 
 
 # Evolution settings
 diff_based_evolution: true            # Use diff-based evolution (true) or full rewrites (false)
+full_rewrite_probability: 0.0         # With diffs on, chance (0-1) an iteration asks for a full rewrite instead
+                                      # (the mode used is saved as metadata["evolution_mode"] on each program)
 max_code_length: 10000                # Maximum allowed code length in characters
 enforce_evolve_blocks: false          # Revert LLM edits outside EVOLVE-BLOCK-START/END markers
 
@@ -181,6 +183,9 @@ evolution_trace:
   format: 'jsonl'                     # Output format: 'jsonl', 'json', or 'hdf5'
   include_code: false                 # Include full program code in traces
   include_prompts: true               # Include prompts and LLM responses
+  include_failures: false             # Also log failed iterations (error, mode, and with
+                                      # include_prompts the prompt and response) to
+                                      # <trace name>_failures.jsonl
   output_path: null                   # Path for trace output (defaults to output_dir/evolution_trace.{format})
   buffer_size: 10                     # Number of traces to buffer before writing
   compress: false                     # Compress output file (jsonl only)

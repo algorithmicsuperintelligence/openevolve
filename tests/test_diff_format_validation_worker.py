@@ -53,6 +53,7 @@ class _WorkerTestBase(unittest.TestCase):
         self.sampler.build_prompt.return_value = {"system": "sys", "user": "usr"}
 
     def _run(self, llm_response):
+        self.llm_response = llm_response
         llm = MagicMock()
         llm.generate_with_context = AsyncMock(return_value=llm_response)
         llm.last_usage = USAGE
@@ -72,6 +73,10 @@ class _WorkerTestBase(unittest.TestCase):
         self.assertIn(message, result.error)
         self.assertEqual(result.iteration, 3)
         self.assertEqual(result.token_usage, USAGE)
+        # Kept so failed iterations can be inspected (evolution_trace.include_failures)
+        self.assertEqual(result.llm_response, self.llm_response)
+        self.assertEqual(result.prompt, {"system": "sys", "user": "usr"})
+        self.assertEqual(result.parent_id, "parent")
         self.evaluator.evaluate_program.assert_not_called()
 
     def evaluated_code(self):
