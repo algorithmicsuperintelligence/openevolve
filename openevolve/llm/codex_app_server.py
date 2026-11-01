@@ -355,6 +355,7 @@ class CodexAppServerLLM(LLMInterface):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
             cwd=self.cwd,
         )
         return _AppServerSession(proc)
