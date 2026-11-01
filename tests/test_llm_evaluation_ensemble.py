@@ -64,3 +64,48 @@ class TestLLMEvaluationEnsemble(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(
             metrics["llm_average"], 0.8 * self.evaluator.config.llm_feedback_weight
         )
+
+    async def test_nonfinite_metrics_do_not_poison_other_judges(self):
+        for invalid in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):
+            for invalid_index in (0, 1):
+                with self.subTest(invalid=invalid, invalid_index=invalid_index):
+                    responses = ['{"quality": 0.8}'] * 2
+                    responses[invalid_index] = '{"quality": ' + invalid + ', "clarity": 0.6}'
+                    result = await self.evaluate_responses(responses)
+                    self.assertEqual(set(result.metrics), {"quality", "clarity"})
+                    self.assertAlmostEqual(result.metrics["quality"], 0.8)
+                    self.assertAlmostEqual(result.metrics["clarity"], 0.6)
+
+    async def test_unrepresentable_integer_keeps_other_metrics(self):
+        response = '{"quality": ' + "1" + "0" * 400 + ', "clarity": 0.6}'
+        result = await self.evaluate_responses([response, '{"quality": 0.8}'])
+        self.assertEqual(set(result.metrics), {"quality", "clarity"})
+        self.assertAlmostEqual(result.metrics["quality"], 0.8)
+        self.assertAlmostEqual(result.metrics["clarity"], 0.6)
+
+    async def test_boolean_judge_fields_remain_artifacts(self):
+        result = await self.evaluate_responses(
+            ['{"quality": 0.4, "valid": true}', '{"quality": 0.8, "timeout": false}']
+        )
+        self.assertAlmostEqual(result.metrics["quality"], 0.7)
+        self.assertEqual(set(result.metrics), {"quality"})
+        self.assertEqual(result.artifacts, {"valid": True, "timeout": False})
+
+    async def test_invalid_numeric_feedback_leaves_measured_fitness_unchanged(self):
+        self.ensemble.generate_all_with_context = AsyncMock(
+            return_value=['{"quality": NaN}', '{"quality": Infinity}']
+        )
+        metrics = await self.evaluator.evaluate_program("x = 1", "nonfinite-judges")
+        self.assertEqual(metrics, {"combined_score": 0.5})
+
+    async def test_valid_judge_survives_nonfinite_peer_in_combined_fitness(self):
+        self.ensemble.generate_all_with_context = AsyncMock(
+            return_value=['{"quality": NaN}', '{"quality": 0.8}']
+        )
+        metrics = await self.evaluator.evaluate_program("x = 1", "finite-peer")
+        self.assertAlmostEqual(metrics["combined_score"], 0.59)
+        self.assertAlmostEqual(metrics["llm_quality"], 0.08)
+
+    async def test_finite_scores_are_not_clamped(self):
+        result = await self.evaluate_responses(['{"quality": -2, "clarity": 3}', "{}"])
+        self.assertEqual(result.metrics, {"quality": -2.0, "clarity": 3.0})

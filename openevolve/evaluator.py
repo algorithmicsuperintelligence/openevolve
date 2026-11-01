@@ -8,6 +8,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -729,12 +730,24 @@ class Evaluator:
                         continue
 
                     for name, value in result.items():
-                        if not isinstance(value, (int, float)):
+                        # Flags are metadata, and invalid numeric feedback must
+                        # not poison valid scores from this or another judge.
+                        if isinstance(value, bool) or not isinstance(value, (int, float)):
                             artifacts[name] = value
                             continue
-                        weighted_metrics[name] = (
-                            weighted_metrics.get(name, 0.0) + float(value) * weight
-                        )
+                        try:
+                            score = float(value)
+                        except (ValueError, TypeError, OverflowError):
+                            logger.warning(
+                                "Skipping invalid LLM judge metric %s from judge %d", name, i
+                            )
+                            continue
+                        if not math.isfinite(score):
+                            logger.warning(
+                                "Skipping non-finite LLM judge metric %s from judge %d", name, i
+                            )
+                            continue
+                        weighted_metrics[name] = weighted_metrics.get(name, 0.0) + score * weight
                         metric_weights[name] = metric_weights.get(name, 0.0) + weight
 
                 # A missing or invalid response is not a zero score. Normalize
