@@ -54,7 +54,7 @@ def export_traces_json(
     Args:
         traces: List of trace objects with to_dict() method
         output_path: Path to save the JSON file
-        metadata: Optional metadata to include in the output
+        metadata: Optional metadata to include in the output, without modifying the caller's dict
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ def export_traces_json(
             trace_dicts.append(trace)
 
     # Build output structure
-    output_data = {"metadata": metadata or {}, "traces": trace_dicts}
+    output_data = {"metadata": dict(metadata or {}), "traces": trace_dicts}
 
     # Add default metadata
     output_data["metadata"].setdefault("total_traces", len(trace_dicts))
