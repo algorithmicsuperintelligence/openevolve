@@ -47,6 +47,7 @@ class TestWorkerConfigSerialization(unittest.TestCase):
         self.config.language = "rust"
         self.config.file_suffix = ".rs"
         self.config.diff_based_evolution = False
+        self.config.full_rewrite_probability = 0.25
         self.config.max_code_length = 1234
         self.config.enforce_evolve_blocks = True
         self.config.diff_pattern = CUSTOM_DIFF_PATTERN

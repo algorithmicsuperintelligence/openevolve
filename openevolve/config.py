@@ -445,6 +445,9 @@ class EvolutionTraceConfig:
     format: str = "jsonl"  # Options: "jsonl", "json", "hdf5"
     include_code: bool = False
     include_prompts: bool = True
+    # Also record iterations that failed before a child program existed (unparseable
+    # response, diff that did not apply, ...) in <output_path stem>_failures.jsonl
+    include_failures: bool = False
     output_path: Optional[str] = None
     buffer_size: int = 10
     compress: bool = False
@@ -475,6 +478,9 @@ class Config:
 
     # Evolution settings
     diff_based_evolution: bool = True
+    # With diff_based_evolution, the chance that an iteration asks for a full rewrite instead
+    # of SEARCH/REPLACE diffs (issue #116). 0.0 keeps every iteration diff-based
+    full_rewrite_probability: float = 0.0
     max_code_length: int = 10000
     # Revert any LLM edits outside the EVOLVE-BLOCK-START/END regions
     enforce_evolve_blocks: bool = False
@@ -559,13 +565,27 @@ class Config:
 
         config.database.validate_island_initial_programs()
 
-        if config.prompt.programs_as_changes_description and not config.diff_based_evolution:
-            raise ValueError(
-                "prompt.programs_as_changes_description=true requires diff_based_evolution=true "
-                "(full rewrites cannot reliably update code and changes_description together)"
-            )
+        config.validate_evolution_mode()
 
         return config
+
+    def validate_evolution_mode(self) -> None:
+        """Check that diff_based_evolution, full_rewrite_probability and
+        prompt.programs_as_changes_description agree"""
+        p = self.full_rewrite_probability
+        if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0.0 <= p <= 1.0:
+            raise ValueError(f"full_rewrite_probability must be between 0 and 1, got {p!r}")
+        if p > 0 and not self.diff_based_evolution:
+            raise ValueError(
+                "full_rewrite_probability only applies when diff_based_evolution=true "
+                "(diff_based_evolution=false already makes every iteration a full rewrite)"
+            )
+        if self.prompt.programs_as_changes_description and (not self.diff_based_evolution or p > 0):
+            raise ValueError(
+                "prompt.programs_as_changes_description=true requires diff_based_evolution=true "
+                "and full_rewrite_probability=0 (full rewrites cannot reliably update code and "
+                "changes_description together)"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -73,6 +73,7 @@ class EvolutionTracer:
         buffer_size: int = 10,
         compress: bool = False,
         include_changes_description: bool = True,
+        include_failures: bool = False,
     ):
         """
         Initialize the evolution tracer
@@ -86,12 +87,14 @@ class EvolutionTracer:
             buffer_size: Number of traces to buffer before writing
             compress: Whether to compress output files
             include_changes_description: Whether to include per-program changes descriptions
+            include_failures: Whether to record failed iterations (see log_failure)
         """
         self.enabled = enabled
         self.format = format
         self.include_code = include_code
         self.include_prompts = include_prompts
         self.include_changes_description = include_changes_description
+        self.include_failures = include_failures
         self.compress = compress
         self.buffer_size = buffer_size
 
@@ -120,6 +123,11 @@ class EvolutionTracer:
 
         # Create parent directory if needed
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Failed iterations have no child program, so they go to their own JSONL file rather
+        # than into the trace, whose records (and exports) all describe a parent/child pair
+        stem = self.output_path.name.split(".")[0]
+        self.failures_path = self.output_path.with_name(f"{stem}_failures.jsonl")
 
         # Initialize buffer for batched writing
         self.buffer: List[EvolutionTrace] = []
@@ -206,6 +214,43 @@ class EvolutionTracer:
 
         except Exception as e:
             logger.error(f"Error logging evolution trace: {e}")
+
+    def log_failure(
+        self,
+        iteration: int,
+        error: str,
+        parent_id: Optional[str] = None,
+        evolution_mode: Optional[str] = None,
+        prompt: Optional[Dict[str, str]] = None,
+        llm_response: Optional[str] = None,
+        token_usage: Optional[Dict[str, Any]] = None,
+        island_id: Optional[int] = None,
+    ) -> None:
+        """
+        Record an iteration that failed before producing a child program
+
+        Written straight to failures_path (no buffering) when include_failures is set.
+        The prompt and response are kept only when include_prompts is also set.
+        """
+        if not self.enabled or not self.include_failures:
+            return
+
+        record = {
+            "iteration": iteration,
+            "timestamp": time.time(),
+            "error": error,
+            "parent_id": parent_id,
+            "evolution_mode": evolution_mode,
+            "island_id": island_id,
+            "token_usage": token_usage,
+        }
+        if self.include_prompts:
+            record["prompt"] = prompt
+            record["llm_response"] = llm_response
+        try:
+            append_trace_jsonl(record, self.failures_path, compress=self.compress)
+        except Exception as e:
+            logger.error(f"Error logging failed iteration: {e}")
 
     def _update_stats(self, trace: EvolutionTrace):
         """Update running statistics"""

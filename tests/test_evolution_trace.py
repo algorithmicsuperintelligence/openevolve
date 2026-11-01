@@ -650,5 +650,53 @@ class TestCheckpointExtraction(unittest.TestCase):
             extract_evolution_trace_from_checkpoint(empty_checkpoint)
 
 
+class TestTracerFailures(unittest.TestCase):
+    """Failed iterations go to a separate file, only when include_failures is set"""
+
+    FAILURE = dict(
+        iteration=4,
+        error="No valid diffs found in response",
+        parent_id="p1",
+        evolution_mode="diff",
+        prompt={"system": "s", "user": "u"},
+        llm_response="no diff here",
+        token_usage={"completion_tokens": 3},
+        island_id=1,
+    )
+
+    def _tracer(self, tmp, **kwargs):
+        return EvolutionTracer(output_path=str(Path(tmp) / "trace.jsonl"), **kwargs)
+
+    def _read(self, path):
+        with open(path) as f:
+            return [json.loads(line) for line in f if line.strip()]
+
+    def test_writes_failure_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracer = self._tracer(tmp, include_failures=True)
+            tracer.log_failure(**self.FAILURE)
+            self.assertEqual(tracer.failures_path, Path(tmp) / "trace_failures.jsonl")
+            [record] = self._read(tracer.failures_path)
+            for key, value in self.FAILURE.items():
+                self.assertEqual(record[key], value)
+            # The trace itself only ever holds parent/child records
+            self.assertFalse((Path(tmp) / "trace.jsonl").exists())
+
+    def test_prompt_and_response_follow_include_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracer = self._tracer(tmp, include_failures=True, include_prompts=False)
+            tracer.log_failure(**self.FAILURE)
+            [record] = self._read(tracer.failures_path)
+            self.assertNotIn("llm_response", record)
+            self.assertNotIn("prompt", record)
+            self.assertEqual(record["error"], self.FAILURE["error"])
+
+    def test_off_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracer = self._tracer(tmp)
+            tracer.log_failure(**self.FAILURE)
+            self.assertFalse(tracer.failures_path.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
