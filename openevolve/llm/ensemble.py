@@ -3,10 +3,11 @@ Model ensemble for LLMs
 """
 
 import asyncio
+import hashlib
 import logging
 import math
 import random
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from openevolve.llm.base import LLMInterface
 from openevolve.llm.openai import OpenAILLM
@@ -97,11 +98,14 @@ class LLMEnsemble:
             logger._ensemble_logged = True
 
         self.last_usage: Optional[Dict[str, Any]] = None
+        # Set by reseed(); gives each iteration's requests their own seed
+        self._iteration: Optional[int] = None
 
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate text using a randomly selected model based on weights"""
-        model = self._sample_model()
-        res = await model.generate(prompt, **kwargs)
+        index = self._sample_index()
+        model = self.models[index]
+        res = await model.generate(prompt, **self._request_kwargs(index, kwargs))
         self.last_usage = getattr(model, "last_usage", None)
         return res
 
@@ -109,8 +113,11 @@ class LLMEnsemble:
         self, system_message: str, messages: List[Dict[str, str]], **kwargs
     ) -> str:
         """Generate text using a system message and conversational context"""
-        model = self._sample_model()
-        res = await model.generate_with_context(system_message, messages, **kwargs)
+        index = self._sample_index()
+        model = self.models[index]
+        res = await model.generate_with_context(
+            system_message, messages, **self._request_kwargs(index, kwargs)
+        )
         self.last_usage = getattr(model, "last_usage", None)
         return res
 
@@ -120,13 +127,29 @@ class LLMEnsemble:
         seed = getattr(self.models_cfg[0], "random_seed", None) if self.models_cfg else None
         if seed is not None:
             self.random_state.seed(f"{seed}:{iteration}")
+        self._iteration = iteration
+
+    def _request_kwargs(self, index: int, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """After reseed(iteration), send a seed derived from the model's seed and the
+        iteration. A fixed seed would make every identical prompt (common early on, when
+        iterations share a parent) return the identical response on providers that honour it"""
+        if self._iteration is None or "seed" in kwargs:
+            return kwargs
+        seed = getattr(self.models_cfg[index], "random_seed", None)
+        if seed is None:
+            return kwargs
+        digest = hashlib.sha256(f"{seed}:{self._iteration}:request".encode()).digest()
+        return {**kwargs, "seed": int.from_bytes(digest[:4], "big") & 0x7FFFFFFF}
+
+    def _sample_index(self) -> int:
+        """Index of a model sampled from the ensemble based on weights"""
+        index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
+        logger.info(f"Sampled model: {self.models_cfg[index].name}")
+        return index
 
     def _sample_model(self) -> LLMInterface:
         """Sample a model from the ensemble based on weights"""
-        index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
-        sampled_model = self.models[index]
-        logger.info(f"Sampled model: {self.models_cfg[index].name}")
-        return sampled_model
+        return self.models[self._sample_index()]
 
     async def generate_multiple(self, prompt: str, n: int, **kwargs) -> List[str]:
         """Generate multiple texts in parallel"""
