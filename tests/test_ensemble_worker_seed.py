@@ -119,6 +119,49 @@ class TestEnsembleWorkerSeed(unittest.TestCase):
         self.assertEqual(picked_forward, picked_backward)
         self.assertEqual(picked_late[5], picked_forward[5])
 
+    def _request_seeds(self, config_dict, iterations):
+        """The seed each iteration's LLM request carries, run in a fresh worker"""
+        process_parallel_module._worker_init(config_dict, "evaluator.py", None)
+        process_parallel_module._worker_prompt_sampler = MagicMock()
+        process_parallel_module._worker_prompt_sampler.build_prompt.return_value = {
+            "system": "sys",
+            "user": "usr",
+        }
+        process_parallel_module._worker_evaluator = MagicMock()
+        seeds = []
+
+        async def record_seed(llm, system_message, messages, **kwargs):
+            seeds.append(kwargs.get("seed"))
+            return None
+
+        with patch.object(OpenAILLM, "generate_with_context", record_seed):
+            for iteration in iterations:
+                process_parallel_module._run_iteration_worker(
+                    iteration, self.snapshot, "parent", []
+                )
+        return seeds
+
+    def test_identical_prompts_get_a_different_seed_each_iteration(self):
+        # Same prompt every iteration: with one fixed request seed, a provider that honours
+        # seeds returns the same response every time
+        seeds = self._request_seeds(self._config_dict(seed=123), range(ITERATIONS))
+
+        self.assertEqual(len(set(seeds)), ITERATIONS)
+        self.assertTrue(all(isinstance(s, int) and 0 <= s < 2**31 for s in seeds))
+
+    def test_request_seed_depends_on_iteration_only(self):
+        config_dict = self._config_dict(seed=123)
+        forward = self._request_seeds(config_dict, [3, 4, 5])
+        alone = self._request_seeds(config_dict, [5])
+
+        self.assertEqual(alone, forward[-1:])
+        self.assertNotEqual(
+            self._request_seeds(self._config_dict(seed=124), [5]), alone, "seed is used"
+        )
+
+    def test_unseeded_requests_carry_no_seed(self):
+        self.assertEqual(self._request_seeds(self._config_dict(seed=None), [1, 2]), [None, None])
+
     def test_unseeded_selection_stays_random(self):
         config_dict = self._config_dict(seed=None)
         picks = self._worker(config_dict, [7] * 64)
