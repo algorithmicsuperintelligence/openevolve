@@ -1,6 +1,7 @@
 """Tests for the Claude Code CLI LLM backend."""
 
 import asyncio
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -80,6 +81,38 @@ class TestClaudeCodeLLM(unittest.TestCase):
         llm = ClaudeCodeLLM(self._make_cfg(timeout=10, retries=0))
         with self.assertRaises(RuntimeError):
             asyncio.run(llm.generate("test prompt"))
+
+    def test_nonzero_exit_with_stdout_raises(self):
+        llm = ClaudeCodeLLM(self._make_cfg())
+        command = [
+            sys.executable,
+            "-c",
+            "import sys; print('partial output'); "
+            "print('provider failed', file=sys.stderr); sys.exit(7)",
+        ]
+        with self.assertRaisesRegex(RuntimeError, "exited with code 7.*provider failed"):
+            llm._run_cli(command, timeout=5)
+
+    @patch("openevolve.llm.claude_code.subprocess.run")
+    def test_retry_after_failure_with_stdout(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=7, stdout="partial output", stderr="transient error"),
+            MagicMock(returncode=0, stdout="complete response", stderr=""),
+        ]
+        llm = ClaudeCodeLLM(self._make_cfg(timeout=10, retries=1, retry_delay=0))
+        result = asyncio.run(llm.generate("test prompt"))
+        self.assertEqual(result, "complete response")
+        self.assertEqual(mock_run.call_count, 2)
+
+    @patch("openevolve.llm.claude_code.subprocess.run")
+    def test_nonzero_exit_with_stdout_exhausts_retries(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=7, stdout="partial output", stderr="persistent error"
+        )
+        llm = ClaudeCodeLLM(self._make_cfg(timeout=10, retries=2, retry_delay=0))
+        with self.assertRaisesRegex(RuntimeError, "exited with code 7"):
+            asyncio.run(llm.generate("test prompt"))
+        self.assertEqual(mock_run.call_count, 3)
 
     @patch("openevolve.llm.claude_code.subprocess.run")
     def test_retry_on_failure(self, mock_run):
