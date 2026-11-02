@@ -457,6 +457,7 @@ class Config:
     # General settings
     max_iterations: int = 10000
     checkpoint_interval: int = 100
+    checkpoint_on_improvement: bool = False
     log_level: str = "INFO"
     log_dir: Optional[str] = None
     # Optional prefix applied to all OpenEvolve logger names (e.g. "run1" logs
