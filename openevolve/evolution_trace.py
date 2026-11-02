@@ -127,8 +127,9 @@ class EvolutionTracer:
 
         # Failed iterations have no child program, so they go to their own JSONL file rather
         # than into the trace, whose records (and exports) all describe a parent/child pair
-        stem = self.output_path.name.split(".")[0]
-        self.failures_path = self.output_path.with_name(f"{stem}_failures.jsonl")
+        name = self.output_path.name.removesuffix(".gz")
+        suffix = ".jsonl.gz" if self.compress else ".jsonl"
+        self.failures_path = self.output_path.with_name(f"{Path(name).stem}_failures{suffix}")
 
         # Initialize buffer for batched writing
         self.buffer: List[EvolutionTrace] = []
@@ -232,7 +233,8 @@ class EvolutionTracer:
         island_id: Optional[int] = None,
     ) -> None:
         """
-        Record an iteration that failed before producing a child program
+        Record an iteration that did not yield a child program, including ones that timed
+        out or whose worker crashed (those have no prompt, response or mode to report)
 
         Written straight to failures_path (no buffering) when include_failures is set.
         The prompt and response are kept only when include_prompts is also set.

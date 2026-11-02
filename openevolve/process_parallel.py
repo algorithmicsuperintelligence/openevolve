@@ -295,25 +295,8 @@ def _run_iteration(
         )
 
         iteration_start = time.time()
-
-        # Generate code modification (sync wrapper for async)
-        try:
-            llm_response = _run_worker_async(
-                _worker_llm_ensemble.generate_with_context(
-                    system_message=prompt["system"],
-                    messages=[{"role": "user", "content": prompt["user"]}],
-                )
-            )
-            token_usage = getattr(_worker_llm_ensemble, "last_usage", None)
-        except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
-            return SerializableResult(error=f"LLM generation failed: {str(e)}", iteration=iteration)
-
-        # Check for None response
-        if llm_response is None:
-            return SerializableResult(
-                error="LLM returned None response", iteration=iteration, token_usage=token_usage
-            )
+        llm_response = None
+        token_usage = None
 
         def _reject(error: str) -> SerializableResult:
             """A failed iteration that still carries what the LLM was asked and answered"""
@@ -326,6 +309,23 @@ def _run_iteration(
                 parent_id=parent.id,
                 target_island=db_snapshot.get("sampling_island"),
             )
+
+        # Generate code modification (sync wrapper for async)
+        try:
+            llm_response = _run_worker_async(
+                _worker_llm_ensemble.generate_with_context(
+                    system_message=prompt["system"],
+                    messages=[{"role": "user", "content": prompt["user"]}],
+                )
+            )
+            token_usage = getattr(_worker_llm_ensemble, "last_usage", None)
+        except Exception as e:
+            logger.error(f"LLM generation failed: {e}")
+            return _reject(error=f"LLM generation failed: {str(e)}")
+
+        # Check for None response
+        if llm_response is None:
+            return _reject(error="LLM returned None response")
 
         # Parse response based on evolution mode
         if diff_based:
@@ -455,6 +455,7 @@ def _run_iteration(
                 "island": parent_island,
                 "token_usage": token_usage,
                 "evolution_mode": evolution_mode,
+                "llm_model": getattr(_worker_llm_ensemble, "last_model", None),
             },
         )
 
@@ -917,6 +918,7 @@ class ProcessParallelController:
                                     "changes": child_program.metadata.get("changes", ""),
                                     "token_usage": result.token_usage,
                                     "evolution_mode": result.evolution_mode,
+                                    "llm_model": child_program.metadata.get("llm_model"),
                                 },
                             )
 
@@ -1100,11 +1102,19 @@ class ProcessParallelController:
                 )
                 # Cancel the future to clean up the process
                 future.cancel()
+                if self.evolution_tracer:
+                    self.evolution_tracer.log_failure(
+                        iteration=completed_iteration, error=self.last_iteration_error
+                    )
             except Exception as e:
                 if getattr(e, "_openevolve_strategy_error", False):
                     raise
                 self.last_iteration_error = str(e)
                 logger.error(f"Error processing result from iteration {completed_iteration}: {e}")
+                if self.evolution_tracer:
+                    self.evolution_tracer.log_failure(
+                        iteration=completed_iteration, error=self.last_iteration_error
+                    )
 
             completed_iterations += 1
 

@@ -185,7 +185,7 @@ evolution_trace:
   include_prompts: true               # Include prompts and LLM responses
   include_failures: false             # Also log failed iterations (error, mode, and with
                                       # include_prompts the prompt and response) to
-                                      # <trace name>_failures.jsonl
+                                      # <trace name>_failures.jsonl (.jsonl.gz with compress)
   output_path: null                   # Path for trace output (defaults to output_dir/evolution_trace.{format})
   buffer_size: 10                     # Number of traces to buffer before writing
   compress: false                     # Compress output file (jsonl only)

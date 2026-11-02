@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +30,10 @@ def evaluate(program_path):
 def _future(result):
     future = MagicMock()
     future.done.return_value = True
-    future.result.return_value = result
+    if isinstance(result, BaseException):
+        future.result.side_effect = result
+    else:
+        future.result.return_value = result
     return future
 
 
@@ -138,6 +142,27 @@ class TestControllerTraceFailures(unittest.TestCase):
         self.assertEqual(failure["parent_id"], "seed")
         self.assertEqual(failure["island_id"], 0)
         self.assertEqual([t["iteration"] for t in self._read(self.trace_path)], [2])
+
+    def test_timed_out_iteration_goes_to_failures_file(self):
+        self._run({1: FutureTimeoutError(), 2: _child(2, "seed")})
+
+        [failure] = self._read(self.tracer.failures_path)
+        self.assertEqual(failure["iteration"], 1)
+        self.assertIn("timed out", failure["error"])
+        self.assertIsNone(failure["evolution_mode"])
+
+    def test_crashed_iteration_goes_to_failures_file(self):
+        self._run({1: RuntimeError("process pool broke"), 2: _child(2, "seed")})
+
+        [failure] = self._read(self.tracer.failures_path)
+        self.assertEqual(failure["iteration"], 1)
+        self.assertEqual(failure["error"], "process pool broke")
+
+    def test_nothing_recorded_without_include_failures(self):
+        self.tracer.include_failures = False
+        self._run({1: FutureTimeoutError(), 2: RuntimeError("boom"), 3: _failure(3)})
+
+        self.assertFalse(self.tracer.failures_path.exists())
 
 
 if __name__ == "__main__":

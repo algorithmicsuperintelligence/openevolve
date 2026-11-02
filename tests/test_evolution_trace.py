@@ -2,6 +2,7 @@
 Tests for evolution trace functionality
 """
 
+import gzip
 import json
 import os
 import tempfile
@@ -648,6 +649,39 @@ class TestCheckpointExtraction(unittest.TestCase):
         
         with self.assertRaises(FileNotFoundError):
             extract_evolution_trace_from_checkpoint(empty_checkpoint)
+
+
+class TestTracerFailuresPath(unittest.TestCase):
+    """The failures file is named after the whole trace name, and exists where it says"""
+
+    def _path(self, tmp, name, **kwargs):
+        tracer = EvolutionTracer(output_path=str(Path(tmp) / name), **kwargs)
+        tracer.close()
+        return tracer.failures_path
+
+    def test_dotted_trace_names_do_not_share_a_failures_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self._path(tmp, "run.v2.jsonl").name, "run.v2_failures.jsonl")
+            self.assertEqual(self._path(tmp, "run.v3.jsonl").name, "run.v3_failures.jsonl")
+
+    def test_hidden_trace_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self._path(tmp, ".trace.jsonl").name, ".trace_failures.jsonl")
+
+    def test_compressed_failures_are_written_to_failures_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracer = EvolutionTracer(
+                output_path=str(Path(tmp) / "trace.jsonl"), compress=True, include_failures=True
+            )
+            tracer.log_failure(iteration=1, error="boom")
+            tracer.close()
+
+            self.assertEqual(tracer.failures_path.name, "trace_failures.jsonl.gz")
+            self.assertEqual(
+                [p.name for p in Path(tmp).glob("*failures*")], ["trace_failures.jsonl.gz"]
+            )
+            with gzip.open(tracer.failures_path, "rt") as f:
+                self.assertEqual(json.loads(f.readline())["error"], "boom")
 
 
 class TestTracerFailures(unittest.TestCase):

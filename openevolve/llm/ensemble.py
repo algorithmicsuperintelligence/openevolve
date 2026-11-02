@@ -98,6 +98,8 @@ class LLMEnsemble:
             logger._ensemble_logged = True
 
         self.last_usage: Optional[Dict[str, Any]] = None
+        # Configured name of the model sampled for the latest request
+        self.last_model: Optional[str] = None
         # Set by reseed(); gives each iteration's requests their own seed
         self._iteration: Optional[int] = None
 
@@ -144,7 +146,8 @@ class LLMEnsemble:
     def _sample_index(self) -> int:
         """Index of a model sampled from the ensemble based on weights"""
         index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
-        logger.info(f"Sampled model: {self.models_cfg[index].name}")
+        self.last_model = self.models_cfg[index].name
+        logger.info(f"Sampled model: {self.last_model}")
         return index
 
     def _sample_model(self) -> LLMInterface:
