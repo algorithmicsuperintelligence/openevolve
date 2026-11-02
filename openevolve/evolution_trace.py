@@ -8,6 +8,7 @@ capturing state-action-reward transitions for RL training and analysis.
 import json
 import logging
 import time
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -164,12 +165,12 @@ class EvolutionTracer:
                 timestamp=time.time(),
                 parent_id=parent_program.id,
                 child_id=child_program.id,
-                parent_metrics=parent_program.metrics,
-                child_metrics=child_program.metrics,
+                parent_metrics=deepcopy(parent_program.metrics),
+                child_metrics=deepcopy(child_program.metrics),
                 island_id=island_id,
                 generation=child_program.generation,
-                artifacts=artifacts,
-                metadata=metadata,
+                artifacts=deepcopy(artifacts),
+                metadata=deepcopy(metadata),
             )
 
             # Optionally include code
@@ -179,12 +180,16 @@ class EvolutionTracer:
 
             # Changes descriptions (large-codebase mode)
             if self.include_changes_description:
-                trace.parent_changes_description = getattr(parent_program, "changes_description", None)
-                trace.child_changes_description = getattr(child_program, "changes_description", None)
+                trace.parent_changes_description = getattr(
+                    parent_program, "changes_description", None
+                )
+                trace.child_changes_description = getattr(
+                    child_program, "changes_description", None
+                )
 
             # Optionally include prompts
             if self.include_prompts:
-                trace.prompt = prompt
+                trace.prompt = deepcopy(prompt)
                 trace.llm_response = llm_response
 
             # Calculate improvement
@@ -294,7 +299,9 @@ class EvolutionTracer:
                     "created_at": time.time(),
                     "include_code": self.include_code,
                     "include_prompts": self.include_prompts,
-                    "include_changes_description": getattr(self, "include_changes_description", True),
+                    "include_changes_description": getattr(
+                        self, "include_changes_description", True
+                    ),
                 }
                 export_traces(all_traces, self.output_path, format="hdf5", metadata=metadata)
 
