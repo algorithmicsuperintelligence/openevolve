@@ -13,6 +13,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass, fields
 from numbers import Integral
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from openevolve.config import Config
@@ -833,6 +834,16 @@ class ProcessParallelController:
                         parent_program = (
                             self.database.get(result.parent_id) if result.parent_id else None
                         )
+                        if parent_program is None and result.parent_id:
+                            # The parent can leave the archive (replaced in its MAP-Elites
+                            # cell) while its child is being evaluated. Trace the child
+                            # anyway, from the parent metrics the worker saw; its code is gone
+                            parent_program = SimpleNamespace(
+                                id=result.parent_id,
+                                code=None,
+                                metrics=child_program.metadata.get("parent_metrics") or {},
+                                changes_description=None,
+                            )
                         if parent_program:
                             # Determine island ID
                             island_id = child_program.metadata.get(
