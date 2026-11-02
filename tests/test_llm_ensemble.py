@@ -64,6 +64,14 @@ class TestEnsembleInit(unittest.TestCase):
         self.assertEqual(ensemble.models[1].model, "b")
         self.assertEqual(ensemble.models[1].some_field, "value")
 
+    def test_last_model_tracks_the_sampled_model(self):
+        models = [LLMModelConfig(name="a", weight=1.0), LLMModelConfig(name="b", weight=1.0)]
+        ensemble = LLMEnsemble(models)
+        self.assertIsNone(ensemble.last_model)
+        for _ in range(20):
+            index = ensemble._sample_index()
+            self.assertEqual(ensemble.last_model, models[index].name)
+
 
 class TestTokenUsageLogging(unittest.IsolatedAsyncioTestCase):
     async def test_openai_llm_token_usage_logging_and_propagation(self):
@@ -116,6 +124,7 @@ class TestTokenUsageLogging(unittest.IsolatedAsyncioTestCase):
             messages=[{"role": "user", "content": "user"}],
         )
         self.assertEqual(ensemble.last_usage, llm.last_usage)
+        self.assertEqual(ensemble.last_model, cfg.name)
 
 
 class TestCustomClientSampling(unittest.IsolatedAsyncioTestCase):
