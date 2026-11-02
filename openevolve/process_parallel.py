@@ -680,12 +680,21 @@ class ProcessParallelController:
             )
         return int(island_id)
 
-    def _checkpoint_if_due(self, iteration: int, callback=None) -> None:
-        if iteration > 0 and iteration % self.config.checkpoint_interval == 0:
+    def _checkpoint_if_due(self, iteration: int, callback=None, is_new_best: bool = False) -> None:
+        # Don't checkpoint at iteration 0 (that's just the initial program)
+        if iteration <= 0:
+            return
+        interval_hit = iteration % self.config.checkpoint_interval == 0
+        improvement_hit = self.config.checkpoint_on_improvement and is_new_best
+        if not (interval_hit or improvement_hit):
+            return
+        if interval_hit:
             logger.info("Checkpoint interval reached at iteration %d", iteration)
-            self.database.log_island_status()
-            if callback:
-                callback(iteration)
+        else:
+            logger.info("Checkpointing new best solution at iteration %d", iteration)
+        self.database.log_island_status()
+        if callback:
+            callback(iteration)
 
     async def run_evolution(
         self,
@@ -915,13 +924,16 @@ class ProcessParallelController:
                             self._warned_about_combined_score = True
 
                     # Check for new best
-                    if self.database.best_program_id == child_program.id:
+                    is_new_best = self.database.best_program_id == child_program.id
+                    if is_new_best:
                         logger.info(
                             f"🌟 New best solution found at iteration {completed_iteration}: "
                             f"{child_program.id}"
                         )
 
-                    self._checkpoint_if_due(completed_iteration, checkpoint_callback)
+                    self._checkpoint_if_due(
+                        completed_iteration, checkpoint_callback, is_new_best=is_new_best
+                    )
 
                     # Check target score
                     if target_score is not None and child_program.metrics:

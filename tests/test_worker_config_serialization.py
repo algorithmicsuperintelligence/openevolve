@@ -40,6 +40,7 @@ class TestWorkerConfigSerialization(unittest.TestCase):
         self.config = Config()
         self.config.max_iterations = 7
         self.config.checkpoint_interval = 3
+        self.config.checkpoint_on_improvement = True
         self.config.log_level = "DEBUG"
         self.config.log_dir = "/tmp/openevolve-test-logs"
         self.config.logger_prefix = "run1"
