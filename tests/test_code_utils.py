@@ -9,6 +9,7 @@ from openevolve.utils.code_utils import (
     apply_diff,
     apply_diff_blocks,
     enforce_evolve_blocks,
+    extract_code_language,
     extract_diffs,
     format_diff_summary,
     parse_evolve_blocks,
@@ -18,6 +19,45 @@ from openevolve.utils.code_utils import (
 
 class TestCodeUtils(unittest.TestCase):
     """Tests for code utilities"""
+
+    def test_extract_code_language_java(self):
+        sources = [
+            "package demo;\nimport java.util.List;\npublic class Demo {}",
+            "import java.util.List;\npublic class Demo {}",
+            "import static java.util.Collections.emptyList;\npublic class Demo {}",
+            "public class Demo {}",
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual(extract_code_language(source), "java")
+
+    def test_extract_code_language_python(self):
+        sources = [
+            "import os\nprint(os.getcwd())",
+            "from math import sqrt\nprint(sqrt(4))",
+            "def solve():\n    return 1",
+            "class Demo:\n    pass",
+            "import java",
+            "import java.util",
+            "import java_api",
+            "from java import util",
+            'import os\npackage = "demo"',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual(extract_code_language(source), "python")
+
+    def test_extract_code_language_other_signatures(self):
+        sources = [
+            ("#include <iostream>\nint main() { return 0; }", "cpp"),
+            ("function solve() { return 1; }", "javascript"),
+            ("fn main() {}", "rust"),
+            ("SELECT * FROM users;", "sql"),
+            ("42 + 7", "unknown"),
+        ]
+        for source, language in sources:
+            with self.subTest(language=language):
+                self.assertEqual(extract_code_language(source), language)
 
     def test_parse_full_rewrite_line_endings(self):
         for newline in ("\n", "\r\n"):

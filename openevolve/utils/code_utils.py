@@ -366,7 +366,10 @@ def extract_code_language(code: str) -> str:
         Detected language or "unknown"
     """
     # Look for common language signatures
-    if re.search(r"^(import|from|def|class)\s", code, re.MULTILINE):
+    # Java imports also match Python's generic import signature.
+    if re.search(r"^(import|from|def|class)\s", code, re.MULTILINE) and not re.search(
+        r"^(package\s+[\w.]+\s*;|public class\s)", code, re.MULTILINE
+    ):
         return "python"
     elif re.search(r"^(package|import java|public class)", code, re.MULTILINE):
         return "java"
