@@ -201,7 +201,7 @@ for i in range(16):
 
 This approach yielded a sum of radii of approximately 0.959.
 
-![Initial Circle Packing](circle_packing_1.png)
+![Initial Circle Packing](../circle_packing/circle_packing_1.png)
 
 ### Generation 10 Breakthrough
 
@@ -235,7 +235,7 @@ The key innovations at this stage included:
 
 This approach achieved a sum of radii of approximately 1.795.
 
-![Generation 10 Packing](circle_packing_10.png)
+![Generation 10 Packing](../circle_packing/circle_packing_10.png)
 
 ### Generation 100: Grid-Based Approach
 
@@ -263,7 +263,7 @@ Key innovations:
 
 This approach achieved a sum of radii of approximately 2.201.
 
-![Generation 100 Packing](circle_packing_190.png)
+![Generation 100 Packing](../circle_packing/circle_packing_190.png)
 
 ### Final Solution: Mathematical Optimization
 
@@ -305,7 +305,7 @@ The key innovation in the final solution:
 
 This approach achieved a sum of radii of 2.634, matching the AlphaEvolve paper's result of 2.635 to within 0.04%!
 
-![Final Packing Solution](circle_packing_460.png)
+![Final Packing Solution](../circle_packing/circle_packing_460.png)
 
 ## Results
 
