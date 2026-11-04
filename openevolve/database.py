@@ -847,7 +847,12 @@ class ProgramDatabase:
         self._checkpoint_files = files
         # Retention may delete working artifacts, so only run it after their
         # checkpoint copies and the new manifest have been published.
-        self._cleanup_old_artifacts(save_path)
+        try:
+            self._cleanup_old_artifacts(save_path)
+        except Exception as error:
+            # Retention is best effort after commit. Reporting a failed save
+            # here would also make strategy admission roll memory back.
+            logger.warning("Failed to clean up artifacts after checkpoint commit: %s", error)
         logger.info(f"Saved database with {len(programs)} programs to {save_path}")
 
     def load(self, path: str) -> None:

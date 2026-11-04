@@ -347,6 +347,70 @@ database.save(str(root/'checkpoint'), iteration=9)
             self.database.save(str(self.path))
         self.assertIsNone(self.restored().get("seed").artifact_dir)
 
+    def test_retention_listing_failure_does_not_fail_committed_save(self):
+        self.config.cleanup_old_artifacts = True
+        program = self.add()
+        self.database.save(str(self.path), iteration=1)
+        artifacts = self.path / "artifacts"
+        artifacts.mkdir()
+        program.code = "new committed program"
+        original = os.listdir
+
+        def fail(directory):
+            if Path(directory) == artifacts:
+                raise PermissionError("retention directory cannot be listed")
+            return original(directory)
+
+        with (
+            patch("os.listdir", fail),
+            self.assertLogs("openevolve.database", level="WARNING") as logs,
+        ):
+            self.database.save(str(self.path), iteration=2)
+        loaded = self.restored()
+        self.assertEqual(loaded.get("seed").code, "new committed program")
+        self.assertEqual(loaded.last_iteration, 2)
+        self.assertTrue(
+            any("retention directory cannot be listed" in message for message in logs.output)
+        )
+
+    def test_retention_listing_failure_keeps_strategy_add_committed(self):
+        from openevolve.population import PopulationStrategy
+
+        config = dataclasses.replace(
+            self.config, db_path=str(self.path), cleanup_old_artifacts=True
+        )
+        database = ProgramDatabase(config, PopulationStrategy(replace_cell=lambda *args: True))
+        database.add(
+            Program(id="seed", code="seed", metrics={"combined_score": 1}), target_island=0
+        )
+        artifacts = self.path / "artifacts"
+        artifacts.mkdir()
+        original = os.listdir
+
+        def fail(directory):
+            if Path(directory) == artifacts:
+                raise PermissionError("retention directory cannot be listed")
+            return original(directory)
+
+        with (
+            patch("os.listdir", fail),
+            self.assertLogs("openevolve.database", level="WARNING") as logs,
+        ):
+            result = database.add(
+                Program(id="candidate", code="candidate", metrics={"combined_score": 2}),
+                target_island=1,
+            )
+        loaded = ProgramDatabase(config)
+        self.assertEqual(result, "candidate")
+        self.assertEqual(set(database.programs), {"candidate", "seed"})
+        self.assertEqual(set(database.programs), set(loaded.programs))
+        self.assertEqual(database.islands, loaded.islands)
+        self.assertEqual(database.archive, loaded.archive)
+        self.assertEqual(database.best_program_id, loaded.best_program_id)
+        self.assertTrue(
+            any("retention directory cannot be listed" in message for message in logs.output)
+        )
+
     def test_retention_cannot_remove_artifacts_needed_by_checkpoint(self):
         import time
 
