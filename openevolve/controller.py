@@ -589,7 +589,13 @@ class OpenEvolve:
         # Note: start_iteration here is the evolution start (1 for fresh start, not 0)
         # max_iterations is the number of evolution iterations to run
         final_iteration = start_iteration + max_iterations - 1
-        if final_iteration > 0 and final_iteration % self.config.checkpoint_interval == 0:
+        if self.database.last_iteration < final_iteration:
+            # The run ended before its planned last iteration (target score or
+            # early stopping). Save under the iteration actually reached, otherwise
+            # the checkpoint claims iterations that never ran and a resume skips them.
+            if self.database.last_iteration > 0:
+                self._save_checkpoint(self.database.last_iteration)
+        elif final_iteration > 0 and final_iteration % self.config.checkpoint_interval == 0:
             self._save_checkpoint(final_iteration)
 
     def _save_best_program(self, program: Optional[Program] = None) -> None:
