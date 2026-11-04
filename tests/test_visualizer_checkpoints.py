@@ -15,6 +15,9 @@ try:
 except ImportError:  # pragma: no cover - visualizer extras not installed
     flask = None
 
+from openevolve.config import DatabaseConfig
+from openevolve.database import ProgramDatabase
+
 VISUALIZER = Path(__file__).resolve().parent.parent / "scripts" / "visualizer.py"
 
 
@@ -104,6 +107,41 @@ class TestVisualizerCheckpoints(unittest.TestCase):
         self.assertEqual(data["archive"], ["seed"])
         self.assertEqual([node["id"] for node in data["nodes"]], ["seed"])
         self.assertTrue((output / "static").is_dir())
+
+    def test_endpoint_and_export_share_versioned_population(self):
+        database = ProgramDatabase(DatabaseConfig(num_islands=1))
+        database.load(str(self.checkpoint))
+        database.get("seed").code = "def run_search(): return 'committed replacement'"
+        database.save(str(self.checkpoint), iteration=7)
+        # A legacy program file remains on disk, but is no longer authoritative.
+        legacy_file = self.checkpoint / "programs" / "seed.json"
+        self.assertIn("return 1", legacy_file.read_text())
+        app = self.visualizer["app"]
+        with (
+            app.test_client() as client,
+            patch.dict(os.environ, {"EVOLVE_OUTPUT": str(self.checkpoint)}),
+        ):
+            response = client.get("/api/data")
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual([node["id"] for node in data["nodes"]], ["seed"])
+            self.assertIn("committed replacement", data["nodes"][0]["code"])
+        output = self.root / "versioned-export"
+        self.visualizer["run_static_export"](
+            SimpleNamespace(path=str(self.checkpoint), static_output=str(output))
+        )
+        html = (output / "index.html").read_text(encoding="utf-8")
+        payload = html.split("<script>window.STATIC_DATA = ", 1)[1].split(";</script>", 1)[0]
+        data = json.loads(payload)
+        self.assertIn("committed replacement", data["nodes"][0]["code"])
+
+    def test_empty_versioned_population_hides_stale_legacy_nodes(self):
+        empty = ProgramDatabase(DatabaseConfig(num_islands=1))
+        empty.save(str(self.checkpoint))
+        data = self.visualizer["load_evolution_data"](str(self.checkpoint))
+        self.assertEqual(data["nodes"], [])
+        self.assertEqual(data["edges"], [])
+        self.assertEqual(data["archive"], [])
 
 
 if __name__ == "__main__":
