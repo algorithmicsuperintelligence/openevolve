@@ -9,6 +9,7 @@ import logging
 import os
 import random
 import shutil
+import tempfile
 import time
 import uuid
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
+from openevolve.checkpoint import load_checkpoint, save_checkpoint
 from openevolve.config import DatabaseConfig
 from openevolve.population import (
     ArchiveDecision,
@@ -227,12 +229,15 @@ class ProgramDatabase:
         # Initialize before loading so restored MAP-Elites scales are retained.
         self.feature_stats: Dict[str, Dict[str, Union[float, float, List[float]]]] = {}
 
+        self._checkpoint_path: Optional[str] = None
+        self._checkpoint_files: Dict[str, str] = {}
+
+        # Prompt logs participate in checkpoint restoration.
+        self.prompts_by_program: Optional[Dict[str, Dict[str, Dict[str, str]]]] = None
+
         # Load database from disk if path is provided
         if config.db_path and os.path.exists(config.db_path):
             self.load(config.db_path)
-
-        # Prompt log
-        self.prompts_by_program: Dict[str, Dict[str, Dict[str, str]]] = None
 
         # Set random seed for reproducible sampling if specified
         if config.random_seed is not None:
@@ -783,114 +788,135 @@ class ProgramDatabase:
             logger.warning("No database path specified, skipping save")
             return
 
-        # Perform artifact cleanup before saving
-        self._cleanup_old_artifacts(save_path)
+        self._publish_checkpoint(save_path, list(self.programs.values()), iteration)
 
-        # create directory if it doesn't exist
-        os.makedirs(save_path, exist_ok=True)
+    def _save_program(self, program: Program) -> None:
+        """Commit an added program without reserializing the unchanged population."""
+        path = self.config.db_path
+        if not path:
+            return
+        known_ids = set(self._checkpoint_files)
+        if (
+            self._checkpoint_path != os.path.abspath(path)
+            or not (set(self.programs) - {program.id}) <= known_ids
+        ):
+            self.save(path)
+            return
+        self._publish_checkpoint(path, [program], self.last_iteration, self._checkpoint_files)
 
-        # Create the programs directory once rather than once per program
-        programs_dir = os.path.join(save_path, "programs")
-        if self.programs:
-            os.makedirs(programs_dir, exist_ok=True)
-
-        # Neither of these can change while the loop runs
-        prompts_by_program = self.prompts_by_program
-        log_prompts = self.config.log_prompts and bool(prompts_by_program)
-
-        # Save each program
-        for program in self.programs.values():
-            prompts = prompts_by_program.get(program.id) if log_prompts else None
-            self._save_program(program, save_path, prompts=prompts, programs_dir=programs_dir)
+    def _publish_checkpoint(
+        self,
+        save_path: str,
+        captured_programs: List[Program],
+        iteration: int,
+        previous_files: Optional[Dict[str, str]] = None,
+    ) -> None:
+        # Capture records before filesystem publication. The immutable objects
+        # and the manifest must describe the same population, including prompts.
+        programs = []
+        for program in captured_programs:
+            record = program.to_dict()
+            if self.config.log_prompts and self.prompts_by_program:
+                prompts = self.prompts_by_program.get(program.id)
+                if prompts:
+                    record["prompts"] = copy.deepcopy(prompts)
+            programs.append(record)
 
         # Save metadata
         metadata = {
-            "island_feature_maps": self.island_feature_maps,
+            "island_feature_maps": copy.deepcopy(self.island_feature_maps),
             "islands": [list(island) for island in self.islands],
             "archive": list(self.archive),
             "best_program_id": self.best_program_id,
-            "island_best_programs": self.island_best_programs,
+            "island_best_programs": list(self.island_best_programs),
             "last_iteration": iteration or self.last_iteration,
             "current_island": self.current_island,
-            "island_generations": self.island_generations,
+            "island_generations": list(self.island_generations),
             "last_migration_generation": self.last_migration_generation,
             "feature_stats": self._serialize_feature_stats(),
         }
 
-        with open(os.path.join(save_path, "metadata.json"), "w") as f:
-            f.write(json.dumps(metadata))
-
-        logger.info(f"Saved database with {len(self.programs)} programs to {save_path}")
+        files = save_checkpoint(
+            save_path,
+            metadata,
+            programs,
+            previous_files=previous_files,
+            program_ids=set(self.programs),
+        )
+        self._checkpoint_path = os.path.abspath(save_path)
+        self._checkpoint_files = files
+        # Retention may delete working artifacts, so only run it after their
+        # checkpoint copies and the new manifest have been published.
+        try:
+            self._cleanup_old_artifacts(save_path)
+        except Exception as error:
+            # Retention is best effort after commit. Reporting a failed save
+            # here would also make strategy admission roll memory back.
+            logger.warning("Failed to clean up artifacts after checkpoint commit: %s", error)
+        logger.info(f"Saved database with {len(programs)} programs to {save_path}")
 
     def load(self, path: str) -> None:
-        """
-        Load the database from disk
+        """Replace the population with one complete checkpoint.
 
-        Args:
-            path: Path to load from
+        Legacy directories are accepted. A malformed versioned checkpoint raises
+        without changing the live database or its sampling caches.
         """
         if not os.path.exists(path):
             logger.warning(f"Database path {path} does not exist, skipping load")
             return
+        checkpoint = load_checkpoint(path)
+        metadata = checkpoint.metadata
+        programs = {}
+        for record in checkpoint.programs:
+            try:
+                program = Program.from_dict(record)
+            except Exception as error:
+                if "checkpoint_version" in metadata:
+                    raise
+                logger.warning("Error loading legacy program: %s", error)
+                continue
+            programs[program.id] = program
 
-        # Load metadata first
-        metadata_path = os.path.join(path, "metadata.json")
-        saved_islands = []
-        if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-
-            self.island_feature_maps = metadata.get(
-                "island_feature_maps", [{} for _ in range(self.config.num_islands)]
-            )
-            saved_islands = metadata.get("islands", [])
-            self.archive = set(metadata.get("archive", []))
-            self.best_program_id = metadata.get("best_program_id")
-            self.island_best_programs = metadata.get(
-                "island_best_programs", [None] * len(saved_islands)
-            )
-            self.last_iteration = metadata.get("last_iteration", 0)
-            self.current_island = metadata.get("current_island", 0)
-            self.island_generations = metadata.get("island_generations", [0] * len(saved_islands))
-            self.last_migration_generation = metadata.get("last_migration_generation", 0)
-
-            # Load feature_stats for MAP-Elites grid stability
-            self.feature_stats = self._deserialize_feature_stats(metadata.get("feature_stats", {}))
-
-            logger.info(f"Loaded database metadata with last_iteration={self.last_iteration}")
-            if self.feature_stats:
-                logger.info(f"Loaded feature_stats for {len(self.feature_stats)} dimensions")
-
-        # Load programs
-        programs_dir = os.path.join(path, "programs")
-        if os.path.exists(programs_dir):
-            for program_file in os.listdir(programs_dir):
-                if program_file.endswith(".json"):
-                    program_path = os.path.join(programs_dir, program_file)
-                    try:
-                        with open(program_path, "r") as f:
-                            program_data = json.load(f)
-
-                        program = Program.from_dict(program_data)
-                        self.programs[program.id] = program
-                    except Exception as e:
-                        logger.warning(f"Error loading program {program_file}: {str(e)}")
-
-        # Reconstruct island assignments from metadata
-        self._reconstruct_islands(saved_islands)
-
-        # Ensure island_generations list has correct length
-        if len(self.island_generations) != len(self.islands):
-            self.island_generations = [0] * len(self.islands)
-
-        # Ensure island_best_programs list has correct length
-        if len(self.island_best_programs) != len(self.islands):
-            self.island_best_programs = [None] * len(self.islands)
-
+        # Reconciliation can fail too. Build it against an independent state
+        # dictionary so failed loading never partly resets the active run.
+        restored = object.__new__(type(self))
+        restored.__dict__ = self.__dict__.copy()
+        restored.programs = programs
+        restored._checkpoint_path = os.path.abspath(path)
+        restored._checkpoint_files = dict(metadata.get("program_files", {}))
+        restored.island_feature_maps = copy.deepcopy(
+            metadata.get("island_feature_maps", [{} for _ in range(self.config.num_islands)])
+        )
+        saved_islands = metadata.get("islands", [])
+        restored.archive = set(metadata.get("archive", []))
+        restored.best_program_id = metadata.get("best_program_id")
+        restored.island_best_programs = list(
+            metadata.get("island_best_programs", [None] * len(saved_islands))
+        )
+        restored.last_iteration = metadata.get("last_iteration", 0)
+        restored.current_island = metadata.get("current_island", 0)
+        restored.island_generations = list(
+            metadata.get("island_generations", [0] * len(saved_islands))
+        )
+        restored.last_migration_generation = metadata.get("last_migration_generation", 0)
+        restored.feature_stats = self._deserialize_feature_stats(metadata.get("feature_stats", {}))
+        restored.prompts_by_program = {
+            program.id: copy.deepcopy(program.prompts)
+            for program in programs.values()
+            if program.prompts is not None
+        } or None
+        restored.diversity_cache = {}
+        restored.diversity_reference_set = []
+        restored._code_shape_cache = {}
+        restored._reconstruct_islands(saved_islands)
+        if len(restored.island_generations) != len(restored.islands):
+            restored.island_generations = [0] * len(restored.islands)
+        if len(restored.island_best_programs) != len(restored.islands):
+            restored.island_best_programs = [None] * len(restored.islands)
+        restored.current_island %= len(restored.islands)
+        restored.log_island_status()
+        self.__dict__.update(restored.__dict__)
         logger.info(f"Loaded database with {len(self.programs)} programs from {path}")
-
-        # Log the reconstructed island status
-        self.log_island_status()
 
     def _reconstruct_islands(self, saved_islands: List[List[str]]) -> None:
         """
@@ -990,43 +1016,6 @@ class ProgramDatabase:
             self.programs[program_id].metadata["island"] = island_idx
 
         logger.info(f"Distributed {len(program_ids)} programs across {len(self.islands)} islands")
-
-    def _save_program(
-        self,
-        program: Program,
-        base_path: Optional[str] = None,
-        prompts: Optional[Dict[str, Dict[str, str]]] = None,
-        programs_dir: Optional[str] = None,
-    ) -> None:
-        """
-        Save a program to disk
-
-        Args:
-            program: Program to save
-            base_path: Base path to save to (uses config.db_path if None)
-            prompts: Optional prompts to save with the program, in the format {template_key: { 'system': str, 'user': str }}
-            programs_dir: Directory to write into, already created by the caller.
-                save() passes this so the directory is not re-created once per
-                program. When omitted the directory is derived and created here,
-                which is what the single-program call site in add() relies on.
-        """
-        if programs_dir is None:
-            save_path = base_path or self.config.db_path
-            if not save_path:
-                return
-
-            # Create programs directory if it doesn't exist
-            programs_dir = os.path.join(save_path, "programs")
-            os.makedirs(programs_dir, exist_ok=True)
-
-        # Save program
-        program_dict = program.to_dict()
-        if prompts:
-            program_dict["prompts"] = prompts
-        program_path = os.path.join(programs_dir, f"{program.id}.json")
-
-        with open(program_path, "w") as f:
-            f.write(json.dumps(program_dict))
 
     def _calculate_feature_coords(self, program: Program) -> List[int]:
         """
@@ -2713,6 +2702,18 @@ class ProgramDatabase:
         # Store large artifacts to disk
         if large_artifacts:
             artifact_dir = self._create_artifact_dir(program_id)
+            if program.artifact_dir:
+                if os.path.dirname(os.path.realpath(program.artifact_dir)) == os.path.dirname(
+                    os.path.realpath(artifact_dir)
+                ):
+                    artifact_dir = program.artifact_dir
+                else:
+                    # Resume into a fresh working copy. An earlier run may have
+                    # left uncommitted keys in the default working directory.
+                    artifact_dir = tempfile.mkdtemp(
+                        prefix="resumed-", dir=os.path.dirname(artifact_dir)
+                    )
+                    shutil.copytree(program.artifact_dir, artifact_dir, dirs_exist_ok=True)
             program.artifact_dir = artifact_dir
             for key, value in large_artifacts.items():
                 self._write_artifact_file(artifact_dir, key, value)
@@ -2803,12 +2804,17 @@ class ProgramDatabase:
         now = time.time()
         retention_seconds = self.config.artifact_retention_days * 24 * 60 * 60
         deleted_count = 0
+        active_directories = {
+            os.path.realpath(program.artifact_dir)
+            for program in self.programs.values()
+            if program.artifact_dir
+        }
 
         logger.debug(f"Starting artifact cleanup in {artifacts_base_path}...")
 
         for dirname in os.listdir(artifacts_base_path):
             dirpath = os.path.join(artifacts_base_path, dirname)
-            if os.path.isdir(dirpath):
+            if os.path.isdir(dirpath) and os.path.realpath(dirpath) not in active_directories:
                 try:
                     dir_mod_time = os.path.getmtime(dirpath)
                     if (now - dir_mod_time) > retention_seconds:

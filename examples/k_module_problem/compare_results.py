@@ -21,6 +21,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from openevolve.checkpoint import load_checkpoint
+
 
 def load_openevolve_results(output_dir: str) -> dict:
     """Load results from OpenEvolve checkpoint."""
@@ -49,16 +51,14 @@ def load_openevolve_results(output_dir: str) -> dict:
 
     # Load all program results
     programs = []
-    for prog_file in programs_dir.glob("*.json"):
-        with open(prog_file) as f:
-            data = json.load(f)
-            if "iteration_found" in data and "metrics" in data:
-                programs.append({
-                    "iteration": data["iteration_found"],
-                    "score": data["metrics"].get("combined_score", 0),
-                    "correct_modules": data["metrics"].get("correct_modules", 0),
-                    "timestamp": data.get("timestamp", 0),
-                })
+    for data in load_checkpoint(str(latest_checkpoint)).programs:
+        if "iteration_found" in data and "metrics" in data:
+            programs.append({
+                "iteration": data["iteration_found"],
+                "score": data["metrics"].get("combined_score", 0),
+                "correct_modules": data["metrics"].get("correct_modules", 0),
+                "timestamp": data.get("timestamp", 0),
+            })
 
     # Sort by timestamp
     programs.sort(key=lambda x: x["timestamp"])

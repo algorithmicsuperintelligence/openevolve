@@ -11,6 +11,8 @@ from typing import Any, Optional
 from flask import Flask, jsonify, render_template
 from manual import create_manual_blueprint
 
+from openevolve.checkpoint import load_checkpoint
+
 logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="templates")
 
@@ -37,15 +39,16 @@ def load_evolution_data(checkpoint_folder):
     if not os.path.exists(meta_path) or not os.path.exists(programs_dir):
         logger.info(f"Missing metadata.json or programs dir in {checkpoint_folder}")
         return {"archive": [], "nodes": [], "edges": [], "checkpoint_dir": checkpoint_folder}
-    with open(meta_path) as f:
-        meta = json.load(f)
+    checkpoint = load_checkpoint(checkpoint_folder)
+    meta = checkpoint.metadata
+    programs = {program["id"]: program for program in checkpoint.programs}
 
     nodes = []
     id_to_program = {}
     pids = set()
     for island_idx, id_list in enumerate(meta.get("islands", [])):
         for pid in id_list:
-            prog_path = os.path.join(programs_dir, f"{pid}.json")
+            program = programs.get(pid)
 
             # Keep track of PIDs and if one is double, append "-copyN" to the PID
             if pid in pids:
@@ -62,16 +65,15 @@ def load_evolution_data(checkpoint_folder):
                 pid = f"{base_pid}-copy{copy_num}"
             pids.add(pid)
 
-            if os.path.exists(prog_path):
-                with open(prog_path) as pf:
-                    prog = json.load(pf)
-                    sanitize_program_for_visualization(prog)
+            if program is not None:
+                prog = dict(program)
+                sanitize_program_for_visualization(prog)
                 prog["id"] = pid
                 prog["island"] = island_idx
                 nodes.append(prog)
                 id_to_program[pid] = prog
             else:
-                logger.debug(f"Program file not found: {prog_path}")
+                logger.debug(f"Program not found in checkpoint: {pid}")
 
     edges = []
     for prog in nodes:
