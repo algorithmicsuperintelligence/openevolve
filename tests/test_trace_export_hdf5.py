@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from openevolve.evolution_trace import EvolutionTrace
 from openevolve.utils.trace_export_utils import export_traces, load_traces
 
 try:
@@ -63,6 +64,50 @@ class TestHdf5MetadataRoundTrip(unittest.TestCase):
         self.assertEqual(loaded["config"], {"a": 1})
         self.assertEqual(loaded["labels"], '["alpha"]')
         self.assertEqual(loaded["broken"], "{not json")
+
+
+@unittest.skipIf(h5py is None, "h5py is not installed")
+class TestHdf5TraceRoundTrip(unittest.TestCase):
+    def test_json_looking_code_and_response_stay_strings(self):
+        trace = EvolutionTrace(
+            iteration=1,
+            timestamp=123.0,
+            parent_id="parent",
+            child_id="child",
+            parent_metrics={"score": 1.0},
+            child_metrics={"score": 2.0},
+            parent_code="[1, 2]",
+            child_code='{"answer": 42}',
+            llm_response='{"code": "result = 42"}',
+            child_changes_description='["improved score"]',
+            artifacts={"nested": [{"value": 1}]},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.h5"
+            export_traces([trace], path, format="hdf5")
+            traces, _ = load_traces(path)
+        self.assertEqual(traces, [trace.to_dict()])
+
+    def test_numeric_and_json_encoded_lists_round_trip(self):
+        trace = {"scores": [1.0, 2.0], "labels": ["alpha"], "nested": [{"a": [1]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.h5"
+            export_traces([trace], path, format="hdf5")
+            traces, _ = load_traces(path)
+        self.assertEqual(traces, [trace])
+
+    def test_trace_without_a_key_list_loads_as_before(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.h5"
+            with h5py.File(path, "w") as f:
+                attrs = f.create_group("traces/trace_000000").attrs
+                attrs["metrics"] = '{"score": 1}'
+                attrs["labels"] = '["alpha"]'
+                attrs["broken"] = "{not json"
+            traces, _ = load_traces(path)
+        self.assertEqual(
+            traces, [{"metrics": {"score": 1}, "labels": ["alpha"], "broken": "{not json"}]
+        )
 
 
 if __name__ == "__main__":

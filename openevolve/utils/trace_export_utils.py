@@ -80,7 +80,7 @@ def export_traces_json(
     logger.info(f"Exported {len(traces)} traces to {output_path}")
 
 
-# Names the metadata attributes that were JSON-encoded, so a list or dict can be told apart
+# Names the attributes that were JSON-encoded, so a list or dict can be told apart
 # from a string that merely looks like JSON
 _HDF5_JSON_KEYS_ATTR = "__json_encoded_keys__"
 
@@ -129,6 +129,7 @@ def export_traces_hdf5(
         for i, trace in enumerate(traces):
             trace_dict = trace.to_dict() if hasattr(trace, "to_dict") else trace
             trace_group = traces_group.create_group(f"trace_{i:06d}")
+            json_encoded_keys = []
 
             for key, value in trace_dict.items():
                 if value is None:
@@ -137,6 +138,7 @@ def export_traces_hdf5(
                 if isinstance(value, dict):
                     # Store dictionaries as JSON strings in attributes
                     trace_group.attrs[key] = json.dumps(value)
+                    json_encoded_keys.append(key)
                 elif isinstance(value, list):
                     # Convert lists to numpy arrays if possible
                     try:
@@ -145,6 +147,7 @@ def export_traces_hdf5(
                     except (ValueError, TypeError):
                         # Fall back to JSON for complex lists
                         trace_group.attrs[key] = json.dumps(value)
+                        json_encoded_keys.append(key)
                 elif isinstance(value, str):
                     # Store strings as attributes
                     trace_group.attrs[key] = value
@@ -154,6 +157,9 @@ def export_traces_hdf5(
                 else:
                     # Store other types as JSON
                     trace_group.attrs[key] = json.dumps(value)
+                    json_encoded_keys.append(key)
+
+            trace_group.attrs[_HDF5_JSON_KEYS_ATTR] = json.dumps(json_encoded_keys)
 
     logger.info(f"Exported {len(traces)} traces to {output_path}")
 
@@ -284,12 +290,21 @@ def load_traces_hdf5(input_path: Union[str, Path]) -> tuple[List[Dict[str, Any]]
             for trace_name in sorted(traces_group.keys()):
                 trace_group = traces_group[trace_name]
                 trace_dict = {}
+                json_encoded_keys = trace_group.attrs.get(_HDF5_JSON_KEYS_ATTR)
+                if json_encoded_keys is not None:
+                    json_encoded_keys = set(json.loads(json_encoded_keys))
 
                 # Load attributes
                 for key in trace_group.attrs:
+                    if key == _HDF5_JSON_KEYS_ATTR:
+                        continue
                     value = trace_group.attrs[key]
-                    # Try to parse JSON strings
-                    if isinstance(value, str) and (value.startswith("{") or value.startswith("[")):
+                    if json_encoded_keys is not None:
+                        trace_dict[key] = json.loads(value) if key in json_encoded_keys else value
+                    # Preserve the heuristic for files written without an encoding key list.
+                    elif isinstance(value, str) and (
+                        value.startswith("{") or value.startswith("[")
+                    ):
                         try:
                             trace_dict[key] = json.loads(value)
                         except json.JSONDecodeError:
