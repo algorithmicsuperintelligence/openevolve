@@ -46,6 +46,8 @@ class ClaudeCodeLLM(LLMInterface):
         self.retries = getattr(model_cfg, "retries", 3)
         self.retry_delay = getattr(model_cfg, "retry_delay", 5)
         self.max_budget_usd = getattr(model_cfg, "max_budget_usd", 1.0)
+        if self.max_budget_usd is None:
+            self.max_budget_usd = 1.0
         self.cwd = getattr(model_cfg, "cwd", None)
         logger.info(f"Initialized ClaudeCodeLLM with model: {self.model}")
 
