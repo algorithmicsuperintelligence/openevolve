@@ -388,12 +388,7 @@ def extract_code_language(code: str) -> str:
 def _can_apply_linewise(haystack_lines: List[str], needle_lines: List[str]) -> bool:
     if not needle_lines:
         return False
-
-    for i in range(len(haystack_lines) - len(needle_lines) + 1):
-        if haystack_lines[i : i + len(needle_lines)] == needle_lines:
-            return True
-
-    return False
+    return _find_search_lines(haystack_lines, needle_lines) >= 0
 
 
 def apply_diff_blocks(original_text: str, diff_blocks: List[Tuple[str, str]]) -> Tuple[str, int]:
@@ -422,8 +417,8 @@ def split_diffs_by_target(
     changes_description_text: str,
 ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, str]]]:
     """
-    Route diff blocks to either code or changes_description based on exact line-wise match
-    of SEARCH text. Returns (code_blocks, changes_desc_blocks, unmatched_blocks)
+    Route diff blocks using the same exact-then-trailing-whitespace matching as
+    application. Returns (code_blocks, changes_desc_blocks, unmatched_blocks).
 
     If a SEARCH matches both targets, it's ambiguous and we raise error
     """
