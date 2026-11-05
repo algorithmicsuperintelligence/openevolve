@@ -90,6 +90,15 @@ class TestDatabaseArtifacts(unittest.TestCase):
         program = self.database.get(self.program.id)
         self.assertIsNotNone(program.artifacts_json)
 
+    def test_store_small_bytes_artifacts(self):
+        """Test that small bytes artifacts round-trip as bytes"""
+        artifacts = {"blob": b"\x00\x01binary"}
+
+        self.database.store_artifacts(self.program.id, artifacts)
+
+        retrieved = self.database.get_artifacts(self.program.id)
+        self.assertEqual(retrieved, artifacts)
+
     def test_store_large_artifacts(self):
         """Test storing large artifacts to disk"""
         large_content = "x" * (50 * 1024)  # 50KB
