@@ -260,6 +260,7 @@ class LLMConfig(LLMModelConfig):
             "retry_delay": self.retry_delay,
             "random_seed": self.random_seed,
             "reasoning_effort": self.reasoning_effort,
+            "manual_mode": self.manual_mode,
         }
         self.update_model_params(shared_config)
 
