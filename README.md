@@ -49,6 +49,7 @@ OpenEvolve is an open-source implementation of Google DeepMind's AlphaEvolve. It
 | [Hill Sampling for Test-Time Scaling](https://arxiv.org/abs/2609.25510) | Builds on OpenEvolve's problems and evaluators |
 | [CodeEvolve: Runtime-Enriched Target Selection](https://arxiv.org/abs/2605.04677) | Extends OpenEvolve for Java and Salesforce Apex |
 | [GraphIR](https://arxiv.org/abs/2608.01633) | Neural architecture search states integrated into OpenEvolve |
+| [SwarmEvolve: Latent Agent Swarms for Evolutionary Discovery and Optimization](https://arxiv.org/abs/2611.08483) · [Code](https://github.com/Qile-J/SwarmEvolve) | Uses OpenEvolve's problems and evaluators for 16 AlphaEvolve problems, and benchmarks against OpenEvolve |
 
 New evolutionary agents also routinely benchmark against OpenEvolve, including [HarnessTTT](https://arxiv.org/abs/2610.17370), [FrugalEvo](https://arxiv.org/abs/2610.03675), [SEDIMA](https://arxiv.org/abs/2610.02361), [EvoDuet](https://arxiv.org/abs/2609.40340), [LoongFlow](https://arxiv.org/abs/2512.24077) and [AscendOptimizer](https://arxiv.org/abs/2603.23566).
 
