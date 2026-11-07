@@ -3,6 +3,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from openai.types import CreateEmbeddingResponse
+
 from openevolve.embedding import EmbeddingClient
 
 
@@ -56,8 +58,8 @@ class TestEmbeddingClient(unittest.TestCase):
         client.client = MagicMock()
         client.client.embeddings.create.return_value = SimpleNamespace(
             data=[
-                SimpleNamespace(embedding=[0.1, 0.2]),
-                SimpleNamespace(embedding=[0.3, 0.4]),
+                SimpleNamespace(index=0, embedding=[0.1, 0.2]),
+                SimpleNamespace(index=1, embedding=[0.3, 0.4]),
             ]
         )
 
@@ -68,6 +70,26 @@ class TestEmbeddingClient(unittest.TestCase):
             model="gemini-embedding-001",
             input=["first", "second"],
             encoding_format="float",
+        )
+
+    def test_batch_embeddings_follow_input_indices(self):
+        client = EmbeddingClient.__new__(EmbeddingClient)
+        client.model = "text-embedding-3-small"
+        client.client = MagicMock()
+        client.client.embeddings.create.return_value = CreateEmbeddingResponse(
+            object="list",
+            data=[
+                {"object": "embedding", "index": 2, "embedding": [0.0, 0.0, 1.0]},
+                {"object": "embedding", "index": 0, "embedding": [1.0, 0.0, 0.0]},
+                {"object": "embedding", "index": 1, "embedding": [0.0, 1.0, 0.0]},
+            ],
+            model=client.model,
+            usage={"prompt_tokens": 3, "total_tokens": 3},
+        )
+
+        self.assertEqual(
+            client.get_embedding(["first", "second", "third"]),
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         )
 
     def test_single_request_failure_returns_empty_vector_and_can_recover(self):
