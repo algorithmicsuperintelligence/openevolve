@@ -130,6 +130,88 @@ evaluator through environment variables. (Note: custom top-level keys in
 `config.yaml` are dropped silently by the config parser — use
 `evaluator.evaluator_args` or the CLI flag instead.)
 
+## Evaluation and Prompt Feedback
+
+- `evaluator.cascade_evaluation` selects the evaluation path. With a cascade,
+  `evaluate_stage1(path)` can screen out candidates before more expensive stages.
+  Each threshold gates the next stage; the check uses a numeric
+  `combined_score` when available and otherwise averages the numeric metrics,
+  excluding the `error` metric and boolean flags. If the cascade is off
+  or there is no stage 1, OpenEvolve calls `evaluate(path)` directly.
+- `evaluator.use_llm_feedback` adds a separate LLM judging pass after evaluation
+  when judge models are configured. Numeric judge results add `llm_*` metrics.
+  If there is already a `combined_score` and the judge returns numeric scores,
+  the final score is 70% evaluator score and 30% mean judge score.
+  `llm_feedback_weight` scales the reported judge metrics, not that blend.
+- `prompt.use_template_stochasticity` samples wording from
+  `prompt.template_variations` for matching placeholders in the user template.
+  It changes the prompt text, not how a candidate is scored. Use fixed wording
+  in place of those custom placeholders when turning variations off.
+
+For diagnostics from your own evaluator, return an [artifact](#artifacts)
+instead of enabling the judge. For example, save the following as `evaluator.py`:
+
+```python
+import ast
+from pathlib import Path
+
+from openevolve.evaluation_result import EvaluationResult
+
+
+def evaluate_stage1(program_path):
+    try:
+        ast.parse(Path(program_path).read_text())
+    except SyntaxError:
+        return EvaluationResult(
+            metrics={"combined_score": 0.0},
+            artifacts={"stderr": "Fix the Python syntax before running stage 2."},
+        )
+    return EvaluationResult(metrics={"combined_score": 1.0})
+
+
+def evaluate_stage2(program_path):
+    # Replace this marker with the expensive evaluation in a real run.
+    return {"stage2_reached": 1.0}
+
+
+def evaluate(program_path):
+    result = evaluate_stage1(program_path)
+    if result.metrics["combined_score"] >= 0.5:
+        result.metrics.update(evaluate_stage2(program_path))
+    return result
+```
+
+With OpenEvolve installed, run this from the same directory to check the
+cascade and render the diagnostic locally. It makes no model calls:
+
+```python
+import asyncio
+
+from openevolve.config import EvaluatorConfig, PromptConfig
+from openevolve.evaluator import Evaluator
+from openevolve.prompt.sampler import PromptSampler
+
+evaluator = Evaluator(
+    EvaluatorConfig(
+        cascade_evaluation=True,
+        cascade_thresholds=[0.5],
+        use_llm_feedback=False,
+    ),
+    "evaluator.py",
+)
+metrics = asyncio.run(evaluator.evaluate_program("def broken(", program_id="example"))
+assert metrics == {"combined_score": 0.0}
+
+sampler = PromptSampler(PromptConfig(include_artifacts=True, use_template_stochasticity=False))
+prompt = sampler.build_prompt(
+    current_program="def broken(",
+    program_metrics=metrics,
+    program_artifacts=evaluator.get_pending_artifacts("example"),
+)
+assert "Fix the Python syntax before running stage 2." in prompt["user"]
+assert asyncio.run(evaluator.evaluate_program("pass"))["stage2_reached"] == 1.0
+```
+
 ## Custom Prompt Templates
 
 **Advanced prompt engineering** with custom templates:
@@ -220,7 +302,8 @@ return EvaluationResult(
 )
 ```
 
-**Next generation prompt automatically includes:**
+When this program is used as the parent, the default prompt templates include
+its saved artifacts if `prompt.include_artifacts` is enabled:
 
 ```markdown
 ## Previous Execution Feedback
