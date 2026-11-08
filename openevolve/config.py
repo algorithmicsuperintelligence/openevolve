@@ -328,7 +328,7 @@ class DatabaseConfig:
     db_path: Optional[str] = None  # Path to store database on disk
     in_memory: bool = True
 
-    # Prompt and response logging to programs/<id>.json
+    # Prompt and response logging in checkpoint program records
     log_prompts: bool = True
 
     # Evolutionary parameters
