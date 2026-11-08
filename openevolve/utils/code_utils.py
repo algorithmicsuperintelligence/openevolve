@@ -233,7 +233,8 @@ def _extract_standard_diffs(diff_text: str) -> List[Tuple[str, str]]:
                 raise ValueError("Malformed SEARCH/REPLACE delimiter sequence")
             raise ValueError("Unmatched SEARCH/REPLACE delimiter outside a diff block")
         if expected > 0:
-            texts.append(diff_text[section_start : marker.start()].rstrip())
+            section = diff_text[section_start : marker.start()]
+            texts.append(section.replace("\r\n", "\n").rstrip())
         # A section's text starts on the line after its marker
         section_start = marker.end() + 1
         expected = (expected + 1) % 3

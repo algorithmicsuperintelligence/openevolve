@@ -282,6 +282,22 @@ class TestDiffDelimiterValidation(unittest.TestCase):
         self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
         self.assertEqual(apply_diff("x = 1\ny = 1", text), "x = 2\ny = 1")
 
+    def test_multiline_response_uses_logical_lines(self):
+        search = "x = 1\ny = 2"
+        replacement = "x = 3\ny = 4"
+        near_match = "x = 1  \ny = 2"
+        original = f"{near_match}\n\n{search}\nz = x + y\n"
+        expected = f"{near_match}\n\n{replacement}\nz = x + y\n"
+        diff = f"<<<<<<< SEARCH\n{search}\n=======\n{replacement}\n>>>>>>> REPLACE\n"
+
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                response = diff.replace("\n", newline)
+                blocks = extract_diffs(response)
+                self.assertEqual(blocks, [(search, replacement)])
+                self.assertEqual(apply_diff(original, response), expected)
+                self.assertEqual(apply_diff_blocks(original, blocks), (expected, 1))
+
     def test_marker_lines_with_trailing_whitespace_are_parsed(self):
         text = "<<<<<<< SEARCH  \nx = 1\n=======\t\nx = 2\n>>>>>>> REPLACE \n"
         self.assertEqual(extract_diffs(text), [("x = 1", "x = 2")])
