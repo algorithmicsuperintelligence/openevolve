@@ -400,7 +400,7 @@ class Evaluator:
 
     def _process_evaluation_result(self, result: Any) -> EvaluationResult:
         """
-        Process evaluation result to handle both dict and EvaluationResult returns
+        Normalize an evaluator's return value into a result owned by this evaluation.
 
         Args:
             result: Raw result from evaluation function
@@ -409,11 +409,12 @@ class Evaluator:
             EvaluationResult instance
         """
         if isinstance(result, dict):
-            # Backward compatibility - wrap dict in EvaluationResult
-            return EvaluationResult.from_dict(result)
+            return EvaluationResult.from_dict(result.copy())
         elif isinstance(result, EvaluationResult):
-            # New format - use directly
-            return result
+            # Judge feedback and cascade failures add fields to these mappings.
+            return EvaluationResult(
+                metrics=result.metrics.copy(), artifacts=result.artifacts.copy()
+            )
         else:
             # Error case - return error metrics
             logger.warning(f"Unexpected evaluation result type: {type(result)}")
