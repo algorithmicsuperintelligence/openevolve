@@ -300,6 +300,8 @@ def _run_iteration(
 
         def _reject(error: str) -> SerializableResult:
             """A failed iteration that still carries what the LLM was asked and answered"""
+            if token_usage and token_usage.get("finish_reason") == "length":
+                error += " (response was cut off at llm.max_tokens)"
             return SerializableResult(
                 error=error,
                 iteration=iteration,
