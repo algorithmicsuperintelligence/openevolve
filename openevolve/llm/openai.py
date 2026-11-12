@@ -232,6 +232,15 @@ class OpenAILLM(LLMInterface):
         logger.debug(f"API parameters: {params}")
         logger.debug(f"API response: {response.choices[0].message.content}")
 
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if finish_reason == "length":
+            limit = params.get("max_completion_tokens") or params.get("max_tokens")
+            logger.warning(
+                f"Response from {self.model} was cut off at the token limit "
+                f"(finish_reason=length, max_tokens={limit}). Thinking models count "
+                "reasoning tokens toward this limit; raise llm.max_tokens."
+            )
+
         usage = getattr(response, "usage", None)
         if usage is not None:
             prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
@@ -242,6 +251,7 @@ class OpenAILLM(LLMInterface):
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
                 "model": str(self.model),
+                "finish_reason": finish_reason,
             }
             logger.info(
                 f"LLM Token Usage ({self.model}): "
