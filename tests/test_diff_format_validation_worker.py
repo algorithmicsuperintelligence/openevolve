@@ -53,11 +53,11 @@ class _WorkerTestBase(unittest.TestCase):
         self.sampler = MagicMock()
         self.sampler.build_prompt.return_value = {"system": "sys", "user": "usr"}
 
-    def _run(self, llm_response, llm_error=None):
+    def _run(self, llm_response, llm_error=None, usage=USAGE):
         self.llm_response = llm_response
         llm = MagicMock()
         llm.generate_with_context = AsyncMock(return_value=llm_response, side_effect=llm_error)
-        llm.last_usage = USAGE
+        llm.last_usage = usage
         llm.last_model = MODEL
         # Worker globals are only created in worker processes, hence create=True.
         with patch.multiple(
@@ -153,6 +153,31 @@ class TestWorkerLLMFailures(_WorkerTestBase):
         result = self._run(None)
         self._assert_keeps_context(result, "LLM returned None response")
         self.assertEqual(result.token_usage, USAGE)
+
+
+class TestWorkerTruncatedResponse(_WorkerTestBase):
+    """A response cut off at llm.max_tokens says so in the iteration error"""
+
+    CUT_OFF = dict(USAGE, finish_reason="length")
+
+    def test_cut_off_before_any_diff(self):
+        result = self._run("Plan: first I will", usage=self.CUT_OFF)
+        self.assertEqual(
+            result.error,
+            "No valid diffs found in response (response was cut off at llm.max_tokens)",
+        )
+        self.evaluator.evaluate_program.assert_not_called()
+
+    def test_cut_off_inside_a_diff(self):
+        result = self._run(VALID_BLOCK.replace(">>>>>>> REPLACE\n", ""), usage=self.CUT_OFF)
+        self.assertIn("(response was cut off at llm.max_tokens)", result.error)
+        self.evaluator.evaluate_program.assert_not_called()
+
+    def test_complete_response_error_is_unchanged(self):
+        result = self._run(
+            "I could not think of a change.", usage=dict(USAGE, finish_reason="stop")
+        )
+        self.assertEqual(result.error, "No valid diffs found in response")
 
 
 class TestWorkerRecordsModel(_WorkerTestBase):
