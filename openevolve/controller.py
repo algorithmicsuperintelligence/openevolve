@@ -61,6 +61,7 @@ class OpenEvolve:
         self.island_selector = island_selector
         # A Config built in code never passes through Config.from_dict, so validate here too
         self.config.validate_evolution_mode()
+        self.config.resolve_system_message()
 
         # Set up output directory
         self.output_dir = output_dir or os.path.join(
