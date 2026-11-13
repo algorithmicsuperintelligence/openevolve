@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 import openai
 
@@ -64,6 +65,7 @@ class OpenAILLM(LLMInterface):
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
         self.last_usage: Optional[Dict[str, Any]] = None
+        self._seed_skip_logged = False
 
         # Manual mode: enabled via llm.manual_mode in config.yaml
         self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
@@ -172,11 +174,13 @@ class OpenAILLM(LLMInterface):
         # Seed only makes sense for actual API calls
         seed = kwargs.get("seed", self.random_seed)
         if seed is not None and not self.manual_mode:
-            if self.api_base == "https://generativelanguage.googleapis.com/v1beta/openai/":
-                logger.warning(
-                    "Skipping seed parameter as Google AI Studio endpoint doesn't support it. "
-                    "Reproducibility may be limited."
-                )
+            if urlparse(self.api_base or "").hostname == "generativelanguage.googleapis.com":
+                if not self._seed_skip_logged:
+                    logger.warning(
+                        "Skipping seed parameter as Google AI Studio endpoint doesn't support it. "
+                        "Reproducibility may be limited."
+                    )
+                    self._seed_skip_logged = True
             else:
                 params["seed"] = seed
 
