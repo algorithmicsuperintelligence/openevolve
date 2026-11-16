@@ -16,6 +16,40 @@ import numpy as np
 from openevolve.evaluation_result import EvaluationResult
 
 
+def _r_string(path: str) -> str:
+    """Quote a path for an R double-quoted string.
+
+    Backslashes are turned into forward slashes, which R accepts on Windows,
+    so a path such as C:\\Users\\... is not treated as an escape sequence.
+    """
+    text = os.fspath(path).replace("\\", "/")
+    return '"' + text.replace('"', '\\"') + '"'
+
+
+def _r_runner_script(program_path: str, x_path: str, y_path: str) -> str:
+    """Build the R script that loads the candidate and the CSV test data."""
+    return f"""
+# Source the program
+source({_r_string(program_path)})
+
+# Load test data
+X <- as.matrix(read.csv({_r_string(x_path)}, header=FALSE))
+y <- as.vector(as.matrix(read.csv({_r_string(y_path)}, header=FALSE)))
+
+# Time the execution
+start_time <- Sys.time()
+metrics <- main()
+end_time <- Sys.time()
+exec_time <- as.numeric(end_time - start_time, units="secs")
+
+# Add execution time
+metrics$execution_time <- exec_time
+
+# Save results
+write(jsonlite::toJSON(metrics, auto_unbox=TRUE), "results.json")
+"""
+
+
 async def evaluate(program_path: str) -> EvaluationResult:
     """
     Evaluate an R program implementing robust regression.
@@ -45,39 +79,18 @@ async def evaluate(program_path: str) -> EvaluationResult:
         artifacts = {"test_results": []}
 
         for i, (X, y, true_coeffs) in enumerate(test_cases):
-            # Create a temporary R script that sources the program and runs it
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".r", delete=False) as f:
-                f.write(
-                    f"""
-# Source the program
-source("{program_path}")
-
-# Load test data
-X <- as.matrix(read.csv("{X}", header=FALSE))
-y <- as.vector(as.matrix(read.csv("{y}", header=FALSE)))
-
-# Time the execution
-start_time <- Sys.time()
-metrics <- main()
-end_time <- Sys.time()
-exec_time <- as.numeric(end_time - start_time, units="secs")
-
-# Add execution time
-metrics$execution_time <- exec_time
-
-# Save results
-write(jsonlite::toJSON(metrics, auto_unbox=TRUE), "results.json")
-"""
-                )
-                test_script = f.name
-
-            # Save test data to temporary CSV files
+            # Save test data first so the R script can read the CSV paths.
             X_file = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False)
             y_file = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False)
             np.savetxt(X_file.name, X, delimiter=",", fmt="%.6f")
             np.savetxt(y_file.name, y, delimiter=",", fmt="%.6f")
             X_file.close()
             y_file.close()
+
+            # Create a temporary R script that sources the program and runs it
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".r", delete=False) as f:
+                f.write(_r_runner_script(program_path, X_file.name, y_file.name))
+                test_script = f.name
 
             # Run the R script
             try:
