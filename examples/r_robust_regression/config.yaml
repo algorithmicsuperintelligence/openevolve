@@ -17,15 +17,14 @@ llm:
   temperature: 0.8  # Higher temperature for more creative statistical approaches
   max_tokens: 4096
   
+# Prompt configuration
+prompt:
   # Custom system message for R statistical programming
   system_message: |
     You are an expert statistician and R programmer specializing in robust regression methods.
     Focus on improving the algorithm's ability to handle outliers while maintaining accuracy.
     Consider techniques like Huber regression, RANSAC, M-estimators, and other robust methods.
     Ensure the R code is efficient and follows best practices.
-
-# Prompt configuration
-prompt:
   num_top_programs: 3
   num_diverse_programs: 2
   

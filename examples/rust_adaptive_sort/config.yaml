@@ -17,15 +17,14 @@ llm:
   temperature: 0.7
   max_tokens: 16384
   
+# Prompt configuration
+prompt:
   # Custom system message for Rust performance programming
   system_message: |
     You are an expert Rust systems programmer specializing in high-performance algorithms.
     Focus on creating adaptive sorting algorithms that can handle different data patterns efficiently.
     Consider hybrid approaches like introsort, adaptive pivot selection, and data-aware optimizations.
     Ensure memory safety and idiomatic Rust code. Use appropriate data structures and leverage Rust's zero-cost abstractions.
-
-# Prompt configuration
-prompt:
   num_top_programs: 4
   num_diverse_programs: 3
   

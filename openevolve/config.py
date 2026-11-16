@@ -2,6 +2,7 @@
 Configuration handling for OpenEvolve
 """
 
+import logging
 import os
 import re
 from dataclasses import asdict, dataclass, field
@@ -14,6 +15,7 @@ import yaml
 if TYPE_CHECKING:
     from openevolve.llm.base import LLMInterface
 
+logger = logging.getLogger(__name__)
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([^}]+)\}$")  # ${VAR}
 
@@ -568,7 +570,31 @@ class Config:
 
         config.validate_evolution_mode()
 
+        config.resolve_system_message()
+
         return config
+
+    def resolve_system_message(self) -> None:
+        """Make a system message set under llm reach the prompt.
+
+        The prompt sampler only reads prompt.system_message, so a message set as
+        llm.system_message used to be replaced by the default template without a warning.
+        Afterwards both fields hold the message in use, so a second call does nothing.
+        """
+        llm_message = self.llm.system_message
+        if llm_message is None or llm_message == LLMConfig.system_message:
+            return
+        if self.prompt.system_message == PromptConfig.system_message:
+            logger.warning(
+                "llm.system_message is not read by the prompt sampler; using it as "
+                "prompt.system_message. Set prompt.system_message instead."
+            )
+            self.prompt.system_message = llm_message
+        elif self.prompt.system_message != llm_message:
+            logger.warning(
+                "Both llm.system_message and prompt.system_message are set; ignoring llm.system_message."
+            )
+            self.llm.system_message = self.prompt.system_message
 
     def validate_evolution_mode(self) -> None:
         """Check that diff_based_evolution, full_rewrite_probability and
