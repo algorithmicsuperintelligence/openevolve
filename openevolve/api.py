@@ -5,6 +5,7 @@ High-level API for using OpenEvolve as a library
 import asyncio
 import pickle
 import tempfile
+import textwrap
 import os
 import uuid
 import inspect
@@ -406,7 +407,7 @@ def evolve_function(
     """
 
     # Get function source code
-    func_source = inspect.getsource(func)
+    func_source = textwrap.dedent(inspect.getsource(func))
     func_name = func.__name__
 
     # Ensure the function source has evolution markers
@@ -534,7 +535,7 @@ def evolve_algorithm(
     """
 
     # Get class source code
-    class_source = inspect.getsource(algorithm_class)
+    class_source = textwrap.dedent(inspect.getsource(algorithm_class))
 
     # Ensure the class has evolution markers
     if "EVOLVE-BLOCK-START" not in class_source:
@@ -551,8 +552,6 @@ def evolve_algorithm(
         class_source = "\n".join(lines)
 
     # Create a self-contained evaluator as a code string so it works in subprocesses.
-    import textwrap
-
     class_name = algorithm_class.__name__
     benchmark_source = textwrap.dedent(inspect.getsource(benchmark))
 
