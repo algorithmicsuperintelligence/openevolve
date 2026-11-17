@@ -181,6 +181,8 @@ class OpenAILLM(LLMInterface):
                         "Reproducibility may be limited."
                     )
                     self._seed_skip_logged = True
+            elif urlparse(self.api_base or "").hostname == "api.mistral.ai":
+                params["extra_body"] = {"random_seed": seed}
             else:
                 params["seed"] = seed
 
