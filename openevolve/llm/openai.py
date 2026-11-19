@@ -181,6 +181,8 @@ class OpenAILLM(LLMInterface):
                         "Reproducibility may be limited."
                     )
                     self._seed_skip_logged = True
+            elif urlparse(self.api_base or "").hostname == "api.mistral.ai":
+                params["extra_body"] = {"random_seed": seed}
             else:
                 params["seed"] = seed
 
@@ -267,7 +269,16 @@ class OpenAILLM(LLMInterface):
             self.last_usage = None
             logger.info(f"LLM Token Usage ({self.model}): usage info not returned by API")
 
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        # Mistral's API reasoning models return content as a list of typed
+        # chunks (thinking + text); keep only the text chunks
+        if isinstance(content, list):
+            content = "".join(
+                chunk["text"] for chunk in content if chunk.get("type") == "text"
+            )
+            if not content:
+                raise ValueError("API returned no text content in response chunks")
+        return content
 
     async def _manual_wait_for_answer(
         self, params: Dict[str, Any], timeout: Optional[Union[int, float]]
