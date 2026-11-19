@@ -15,6 +15,31 @@ from openevolve.config import LLMModelConfig
 
 logger = logging.getLogger(__name__)
 
+_USAGE_COUNTS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def add_usage(usage: Optional[Dict[str, Any]], extra: Any) -> Optional[Dict[str, Any]]:
+    """`usage` with the token counts and the number of calls in `extra` added.
+
+    `usage` counts as one call unless it has a `calls` count. An `extra` that is not a usage
+    dict from at least one call leaves `usage` unchanged.
+    """
+    if not isinstance(extra, dict) or not extra.get("calls"):
+        return usage
+    merged = dict(usage or {})
+    for key in _USAGE_COUNTS:
+        merged[key] = (merged.get(key) or 0) + (extra.get(key) or 0)
+    merged["calls"] = (merged.get("calls", 1) if usage else 0) + extra["calls"]
+    return merged
+
+
+def take_usage(llm: Any) -> Optional[Dict[str, Any]]:
+    """`llm.take_usage()`, or None for an LLM that does not sum its usage"""
+    take = getattr(llm, "take_usage", None)
+    usage = take() if callable(take) else None
+    return usage if isinstance(usage, dict) else None
+
+
 _PROVIDER_REGISTRY = {
     "openai": lambda cfg: OpenAILLM(cfg),
 }
@@ -98,6 +123,8 @@ class LLMEnsemble:
             logger._ensemble_logged = True
 
         self.last_usage: Optional[Dict[str, Any]] = None
+        # Usage summed over every call since the last take_usage()
+        self._usage: Optional[Dict[str, Any]] = None
         # Configured name of the model sampled for the latest request
         self.last_model: Optional[str] = None
         # Set by reseed(); gives each iteration's requests their own seed
@@ -108,7 +135,7 @@ class LLMEnsemble:
         index = self._sample_index()
         model = self.models[index]
         res = await model.generate(prompt, **self._request_kwargs(index, kwargs))
-        self.last_usage = getattr(model, "last_usage", None)
+        self._record_usage(model)
         return res
 
     async def generate_with_context(
@@ -120,8 +147,19 @@ class LLMEnsemble:
         res = await model.generate_with_context(
             system_message, messages, **self._request_kwargs(index, kwargs)
         )
-        self.last_usage = getattr(model, "last_usage", None)
+        self._record_usage(model)
         return res
+
+    def _record_usage(self, model: LLMInterface) -> None:
+        """Keep the usage `model` reported for the call it just answered"""
+        self.last_usage = getattr(model, "last_usage", None)
+        if isinstance(self.last_usage, dict):
+            self._usage = add_usage(self._usage, dict(self.last_usage, calls=1))
+
+    def take_usage(self) -> Optional[Dict[str, Any]]:
+        """Token counts and number of calls summed since the last take, or None; restarts the sum"""
+        usage, self._usage = self._usage, None
+        return usage
 
     def reseed(self, iteration: int) -> None:
         """Seed model sampling from the configured seed and `iteration`, so the pick depends
@@ -178,4 +216,5 @@ class LLMEnsemble:
                 responses.append(None)
                 continue
             responses.append(await model.generate_with_context(system_message, messages, **kwargs))
+            self._record_usage(model)
         return responses

@@ -299,5 +299,23 @@ class TestWorkerEnforceEvolveBlocks(_WorkerTestBase):
         self.assertTrue(config.to_dict()["enforce_evolve_blocks"])
 
 
+class TestWorkerCountsEvaluatorUsage(_WorkerTestBase):
+    """The evaluator's LLM feedback calls are added to the iteration's token usage"""
+
+    def test_evaluator_usage_is_added(self):
+        self.evaluator.llm_ensemble.take_usage.return_value = {
+            "prompt_tokens": 5,
+            "completion_tokens": 3,
+            "total_tokens": 8,
+            "calls": 2,
+        }
+        result = self._run(VALID_BLOCK)
+        self.assertIsNone(result.error)
+        self.assertEqual(
+            result.token_usage,
+            {"prompt_tokens": 16, "completion_tokens": 10, "total_tokens": 26, "calls": 3},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
