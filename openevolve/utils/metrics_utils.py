@@ -98,7 +98,10 @@ def get_fitness_score(
     # Always prefer combined_score if available
     if "combined_score" in metrics:
         try:
-            return float(metrics["combined_score"])
+            combined_score = float(metrics["combined_score"])
+            # NaN loses every comparison, so a program scored NaN could never be beaten
+            if not math.isnan(combined_score):
+                return combined_score
         except (ValueError, TypeError):
             pass
 
