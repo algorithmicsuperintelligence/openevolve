@@ -40,6 +40,18 @@ When developing features that interact with LLMs:
 2. **Integration Testing**: Use your actual API key and configure `api_base` if using alternative providers
 3. **Cost Management**: Consider using cheaper models or [optillm](https://github.com/codelion/optillm) for rate limiting during development
 
+### Pre-commit Checks
+
+Before opening a PR, install and run the configured pre-commit hooks:
+
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+```
+
+These hooks catch common issues early, including malformed YAML, accidental private key commits, trailing whitespace, and overly large files.
+
 ## Pull Request Process
 
 1. Create a new branch for your feature or bugfix: `git checkout -b feat-your-feature-name`
