@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
+from openevolve.llm.ensemble import add_usage, take_usage
 from openevolve.selection import IslandSelectionContext, IslandSelector, IslandState
 from openevolve.utils.metrics_utils import safe_numeric_average
 
@@ -437,6 +438,9 @@ def _run_iteration(
 
         child_id = str(uuid.uuid4())
         child_metrics = _run_worker_async(_worker_evaluator.evaluate_program(child_code, child_id))
+        # The evaluator's own LLM calls (use_llm_feedback) are part of this iteration's usage
+        evaluator_llm = getattr(_worker_evaluator, "llm_ensemble", None)
+        token_usage = add_usage(token_usage, take_usage(evaluator_llm))
 
         # Get artifacts
         artifacts = _worker_evaluator.get_pending_artifacts(child_id)
@@ -836,14 +840,14 @@ class ProcessParallelController:
                 result = future.result(timeout=timeout_seconds)
 
                 token_str = ""
-                if result.token_usage:
+                if isinstance(result.token_usage, dict):
                     pt = result.token_usage.get("prompt_tokens", 0)
                     ct = result.token_usage.get("completion_tokens", 0)
                     tt = result.token_usage.get("total_tokens", 0)
                     total_prompt_tokens += pt
                     total_completion_tokens += ct
                     total_tokens += tt
-                    total_llm_calls += 1
+                    total_llm_calls += result.token_usage.get("calls", 1)
                     token_str = f" | tokens: {tt} (prompt: {pt}, completion: {ct})"
 
                 if result.error:
@@ -878,6 +882,13 @@ class ProcessParallelController:
                         iteration=completed_iteration,
                         target_island=result.target_island,
                     )
+                    # The novelty judge calls its LLM inside add(), in this process
+                    novelty_usage = take_usage(getattr(self.database, "novelty_llm", None))
+                    if novelty_usage:
+                        total_prompt_tokens += novelty_usage["prompt_tokens"]
+                        total_completion_tokens += novelty_usage["completion_tokens"]
+                        total_tokens += novelty_usage["total_tokens"]
+                        total_llm_calls += novelty_usage["calls"]
                     if admitted_id is None:
                         raise _CandidateRejected(child_program.id)
 

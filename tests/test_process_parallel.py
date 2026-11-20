@@ -213,6 +213,67 @@ def evaluate(program_path):
         # Run the async test
         asyncio.run(run_test())
 
+    def test_token_total_counts_every_llm_call(self):
+        """The run's total adds the worker's calls and the novelty judge's calls in add()"""
+
+        class NoveltyLLM:
+            def take_usage(self):
+                return {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 10,
+                    "total_tokens": 110,
+                    "calls": 1,
+                }
+
+        self.database.novelty_llm = NoveltyLLM()
+
+        async def run_test():
+            controller = ProcessParallelController(self.config, self.eval_file, self.database)
+            with patch.object(controller, "_submit_iteration") as mock_submit:
+                future = MagicMock()
+                future.done.return_value = True
+                future.result.return_value = SerializableResult(
+                    child_program_dict={
+                        "id": "child_1",
+                        "code": "def evolved(): return 1",
+                        "language": "python",
+                        "parent_id": "test_0",
+                        "generation": 1,
+                        "metrics": {"score": 0.7, "performance": 0.8},
+                        "iteration_found": 1,
+                        "metadata": {"changes": "test", "island": 0},
+                    },
+                    parent_id="test_0",
+                    iteration_time=0.1,
+                    iteration=1,
+                    # Generation plus 2 evaluator feedback calls, as the worker sums them
+                    token_usage={
+                        "prompt_tokens": 16,
+                        "completion_tokens": 10,
+                        "total_tokens": 26,
+                        "calls": 3,
+                    },
+                )
+                mock_submit.return_value = future
+                controller.start()
+                try:
+                    with self.assertLogs("openevolve.process_parallel", level="INFO") as logs:
+                        await controller.run_evolution(
+                            start_iteration=1, max_iterations=1, target_score=None
+                        )
+                finally:
+                    controller.stop()
+            self.assertTrue(
+                any(
+                    "Total LLM Token Usage (4 calls): total_tokens=136 "
+                    "(prompt_tokens=116, completion_tokens=20)" in line
+                    for line in logs.output
+                ),
+                logs.output,
+            )
+
+        asyncio.run(run_test())
+
     def test_checkpoint_on_improvement_only_fires_for_new_best(self):
         """Test checkpoint callback fires on improvement when interval is not reached"""
 

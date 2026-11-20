@@ -169,5 +169,77 @@ class TestCustomClientSampling(unittest.IsolatedAsyncioTestCase):
         await self.check_custom_client(self.PropertyModelLLM())
 
 
+class TestUsageSum(unittest.IsolatedAsyncioTestCase):
+    """take_usage() sums every call, including each model generate_all_with_context asks"""
+
+    class UsageLLM(LLMInterface):
+        def __init__(self, prompt_tokens):
+            self.prompt_tokens = prompt_tokens
+            self.last_usage = None
+
+        async def generate(self, prompt, **kwargs):
+            return await self.generate_with_context("", [], **kwargs)
+
+        async def generate_with_context(self, system_message, messages, **kwargs):
+            self.last_usage = {
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": 1,
+                "total_tokens": self.prompt_tokens + 1,
+                "model": "m",
+                "finish_reason": "stop",
+            }
+            return "answer"
+
+    def ensemble(self, *clients):
+        return LLMEnsemble(
+            [
+                LLMModelConfig(name=f"m{i}", init_client=lambda _cfg, c=client: c)
+                for i, client in enumerate(clients)
+            ]
+        )
+
+    async def test_feedback_from_every_model_is_summed(self):
+        ensemble = self.ensemble(self.UsageLLM(10), self.UsageLLM(20))
+        await ensemble.generate_all_with_context("system", [{"role": "user", "content": "q"}])
+        self.assertEqual(
+            ensemble.take_usage(),
+            {"prompt_tokens": 30, "completion_tokens": 2, "total_tokens": 32, "calls": 2},
+        )
+        self.assertIsNone(ensemble.take_usage())
+
+    async def test_single_calls_are_summed_until_taken(self):
+        ensemble = self.ensemble(self.UsageLLM(10))
+        await ensemble.generate("q")
+        await ensemble.generate_with_context("system", [])
+        self.assertEqual(ensemble.last_usage["prompt_tokens"], 10)
+        self.assertEqual(
+            ensemble.take_usage(),
+            {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22, "calls": 2},
+        )
+
+    def test_add_usage(self):
+        from unittest.mock import MagicMock
+        from openevolve.llm.ensemble import add_usage, take_usage
+
+        generation = {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+        extra = {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8, "calls": 2}
+        self.assertEqual(
+            add_usage(dict(generation, finish_reason="stop"), extra),
+            {
+                "prompt_tokens": 16,
+                "completion_tokens": 10,
+                "total_tokens": 26,
+                "finish_reason": "stop",
+                "calls": 3,
+            },
+        )
+        # No generation usage (a backend that reports none): only the extra calls count
+        self.assertEqual(add_usage(None, extra), extra)
+        # Nothing to add, or an LLM that does not sum its usage
+        self.assertIs(add_usage(generation, None), generation)
+        self.assertIs(add_usage(generation, take_usage(MagicMock())), generation)
+        self.assertIsNone(take_usage(object()))
+
+
 if __name__ == "__main__":
     unittest.main()
