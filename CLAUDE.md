@@ -57,7 +57,7 @@ python scripts/visualizer.py --path examples/function_minimization/openevolve_ou
 
 ### Core Components
 
-1. **Controller (`openevolve/controller.py`)**: Main orchestrator that manages the evolution process using ProcessPoolExecutor for parallel iteration execution.
+1. **Controller (`openevolve/controller.py`)**: Main orchestrator that manages the evolution process and delegates parallel iteration execution to `ProcessParallelController`.
 
 2. **Database (`openevolve/database.py`)**: Implements MAP-Elites algorithm with island-based evolution:
    - Programs mapped to multi-dimensional feature grid
@@ -73,14 +73,14 @@ python scripts/visualizer.py --path examples/function_minimization/openevolve_ou
 
 4. **LLM Integration (`openevolve/llm/`)**: Ensemble approach with multiple models, configurable weights, and async generation with retry logic.
 
-5. **Iteration (`openevolve/iteration.py`)**: Worker process that samples from islands, generates mutations via LLM, evaluates programs, and stores artifacts.
+5. **Parallel Iterations (`openevolve/process_parallel.py`)**: `ProcessParallelController` runs iterations on a `ProcessPoolExecutor`; each worker takes a database snapshot, builds the prompt, generates mutations via LLM, evaluates the child program, and returns it (with artifacts) to the controller.
 
 ### Key Architectural Patterns
 
 - **Island-Based Evolution**: Multiple populations evolve separately with periodic migration
 - **MAP-Elites**: Maintains diversity by mapping programs to feature grid cells
 - **Artifact System**: Side-channel for programs to return debugging data, stored as JSON or files
-- **Process Worker Pattern**: Each iteration runs in fresh process with database snapshot
+- **Process Worker Pattern**: Iterations run in a pool of worker processes, each given a database snapshot (workers are recycled per `max_tasks_per_child` on Python 3.11+)
 - **Double-Selection**: Programs for inspiration differ from those shown to LLM
 - **Lazy Migration**: Islands migrate based on generation counts, not iterations
 
