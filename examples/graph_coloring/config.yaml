@@ -1,0 +1,56 @@
+# Configuration for Graph Coloring example
+max_iterations: 100
+checkpoint_interval: 5
+
+# LLM configuration - Gemini (free tier available)
+llm:
+  models:
+    # Uncomment Claude if you have an Anthropic API key:
+    # - name: "claude-sonnet-4-5-20250929"
+    #   weight: 0.5
+    #   api_base: "https://api.anthropic.com/v1"
+    #   api_key: "<your-anthropic-api-key>"
+    - name: "gemini-2.0-flash"
+      weight: 1.0
+      api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key: "<your-gemini-api-key>"
+  temperature: 0.9
+  max_tokens: 8192
+  timeout: 300
+
+# Prompt configuration
+prompt:
+  system_message: |
+    You are an expert programmer specializing in graph algorithms.
+
+    Your task is to improve a graph coloring algorithm. Graph coloring assigns colors
+    to vertices such that no two adjacent vertices share the same color.
+
+    The goal is to minimize the number of colors used while ensuring validity.
+
+    Focus on improving the graph_coloring function to:
+    1. Always produce valid colorings (no adjacent vertices with same color)
+    2. Use as few colors as possible
+    3. Work efficiently on graphs of various sizes
+
+# Database configuration
+database:
+  population_size: 80
+  archive_size: 20
+  num_islands: 3
+  elite_selection_ratio: 0.2
+  exploitation_ratio: 0.2  # Favor exploration (80% explore, 20% exploit)
+  similarity_threshold: 0.99
+
+# Evaluator configuration
+evaluator:
+  timeout: 60
+  # 3-stage cascade: [stage1→stage2 threshold, stage2→stage3 threshold]
+  # Stage 1 (validity): must be 1.0 to pass (any invalid = 0)
+  # Stage 2 (quick score): must be >= 0.7 to proceed to full eval
+  cascade_thresholds: [0.5, 0.7]
+  parallel_evaluations: 1
+
+# Evolution settings
+diff_based_evolution: true
+max_code_length: 20000
