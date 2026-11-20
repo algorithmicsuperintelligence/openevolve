@@ -1,10 +1,14 @@
 """
 Test CLI model override functionality (GitHub issue #245)
 """
+import asyncio
+import sys
 import unittest
 import tempfile
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from openevolve.cli import main_async
 from openevolve.config import Config, load_config
 
 
@@ -128,6 +132,39 @@ llm:
         # Evaluator models should be populated from main models
         self.assertEqual(len(config.llm.evaluator_models), 1)
         self.assertEqual(config.llm.evaluator_models[0].name, "test-model")
+
+    def test_cli_api_base_alone_overrides_config_file_models(self):
+        """--api-base without a model flag must reach the models from the config file"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.yaml")
+            with open(config_path, "w") as f:
+                f.write('llm:\n  models:\n    - name: "gpt-4o-mini"\n      weight: 1.0\n')
+            program_path = os.path.join(tmp, "program.py")
+            with open(program_path, "w") as f:
+                f.write("x = 1\n")
+            eval_path = os.path.join(tmp, "evaluator.py")
+            with open(eval_path, "w") as f:
+                f.write("def evaluate(program_path):\n    return {'combined_score': 1.0}\n")
+
+            argv = [
+                "openevolve-run",
+                program_path,
+                eval_path,
+                "--config",
+                config_path,
+                "--output",
+                tmp,
+                "--api-base",
+                "http://localhost:8000/v1",
+            ]
+            with patch.object(sys, "argv", argv), patch("openevolve.cli.OpenEvolve") as mock_cls:
+                mock_cls.return_value.run = AsyncMock(return_value=MagicMock(metrics={}))
+                mock_cls.return_value.output_dir = tmp
+                self.assertEqual(asyncio.run(main_async()), 0)
+
+        config = mock_cls.call_args.kwargs["config"]
+        for model in config.llm.models + config.llm.evaluator_models:
+            self.assertEqual(model.api_base, "http://localhost:8000/v1")
 
 
 if __name__ == '__main__':

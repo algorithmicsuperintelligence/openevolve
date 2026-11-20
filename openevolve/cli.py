@@ -147,6 +147,9 @@ async def main_async() -> int:
         # Apply command-line overrides
         if args.api_base:
             config.llm.api_base = args.api_base
+            # Models already got their api_base from the config file when it was
+            # loaded, and requests use the per-model value
+            config.llm.update_model_params({"api_base": args.api_base}, overwrite=True)
             print(f"Using API base: {config.llm.api_base}")
 
         if args.primary_model:
