@@ -90,7 +90,8 @@ def get_fitness_score(
         feature_dimensions: List of MAP-Elites dimensions to exclude from fitness
 
     Returns:
-        Fitness score (combined_score if available, otherwise average of non-feature metrics)
+        Fitness score (combined_score if available, otherwise average of non-feature metrics).
+        A NaN combined_score gives -inf, so that program ranks below every other.
     """
     if not metrics:
         return 0.0
@@ -98,7 +99,9 @@ def get_fitness_score(
     # Always prefer combined_score if available
     if "combined_score" in metrics:
         try:
-            return float(metrics["combined_score"])
+            combined_score = float(metrics["combined_score"])
+            # Every comparison with NaN is False, so a NaN score would never be beaten. Rank it last
+            return float("-inf") if math.isnan(combined_score) else combined_score
         except (ValueError, TypeError):
             pass
 
