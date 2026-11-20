@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 from openevolve.config import EvaluatorConfig
+from openevolve.evaluation_result import EvaluationResult
 from openevolve.evaluator import Evaluator
 
 
@@ -64,6 +65,30 @@ class TestLLMEvaluationEnsemble(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(
             metrics["llm_average"], 0.8 * self.evaluator.config.llm_feedback_weight
         )
+
+    async def test_reused_evaluator_metrics_keep_each_judge_result_separate(self):
+        for wrapped in (False, True):
+            with self.subTest(wrapped=wrapped):
+                measured = {"combined_score": 0.5}
+                shared = EvaluationResult(metrics=measured) if wrapped else measured
+                self.evaluator.evaluate_function = Mock(return_value=shared)
+                self.ensemble.generate_all_with_context = AsyncMock(
+                    side_effect=[
+                        ['{"quality": 1.0}', "{}"],
+                        ['{"quality": 1.0}', "{}"],
+                        ["invalid", "null"],
+                    ]
+                )
+
+                first = await self.evaluator.evaluate_program("x = 1")
+                second = await self.evaluator.evaluate_program("x = 2")
+                no_feedback = await self.evaluator.evaluate_program("x = 3")
+
+                self.assertAlmostEqual(second["combined_score"], 0.65)
+                self.assertEqual(first, second)
+                self.assertIsNot(first, second)
+                self.assertEqual(no_feedback, {"combined_score": 0.5})
+                self.assertEqual(measured, {"combined_score": 0.5})
 
     async def test_nonfinite_metrics_do_not_poison_other_judges(self):
         for invalid in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):

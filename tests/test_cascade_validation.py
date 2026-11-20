@@ -2,13 +2,16 @@
 Tests for cascade evaluation validation functionality in openevolve.evaluator
 """
 
-import unittest
-import tempfile
 import os
-from unittest.mock import patch, MagicMock
+import sys
+import tempfile
+import unittest
+from types import ModuleType
+from unittest.mock import patch
+
 from openevolve.config import Config
-from openevolve.evaluator import Evaluator
 from openevolve.evaluation_result import EvaluationResult
+from openevolve.evaluator import Evaluator
 
 
 class TestCascadeValidation(unittest.IsolatedAsyncioTestCase):
@@ -315,6 +318,58 @@ def evaluate(program_path):
 
         self.assertEqual(result.metrics, {"score": 0.7, "accuracy": 0.8})
         self.assertEqual(result.artifacts, {})
+
+    async def test_reused_stage_result_does_not_carry_failure_into_next_candidate(self):
+        evaluator_path = self._create_evaluator_file(
+            "cached_cascade.py",
+            """
+from asyncio import TimeoutError
+from pathlib import Path
+
+import _openevolve_test_cascade_cache as cache
+
+def evaluate(program_path):
+    return {}
+
+def evaluate_stage1(program_path):
+    return cache.result
+
+def evaluate_stage2(program_path):
+    code = Path(program_path).read_text(encoding="utf-8")
+    if code == "# timeout":
+        raise TimeoutError("stage 2 timed out")
+    if code == "# exception":
+        raise RuntimeError("stage 2 failed")
+    return {"combined_score": 0.9}
+""",
+        )
+        shared_module = ModuleType("_openevolve_test_cascade_cache")
+        self.config.evaluator.cascade_evaluation = True
+        self.config.evaluator.cascade_thresholds = [0.5]
+        with (
+            patch.dict(sys.modules, {shared_module.__name__: shared_module}),
+            patch.dict(os.environ, {"ENABLE_ARTIFACTS": "true"}),
+        ):
+            evaluator = Evaluator(self.config.evaluator, evaluator_path)
+            self.addCleanup(evaluator._executor.shutdown)
+            for failure, artifact in (
+                ("timeout", "stage2_timeout"),
+                ("exception", "stage2_stderr"),
+            ):
+                with self.subTest(failure=failure):
+                    measured = {"combined_score": 0.8}
+                    artifacts = {"stdout": "stage 1 completed"}
+                    shared_module.result = EvaluationResult(measured, artifacts)
+
+                    failed = await evaluator.evaluate_program(f"# {failure}", "failed")
+                    self.assertEqual(failed["stage2_passed"], 0.0)
+                    self.assertIn(artifact, evaluator.get_pending_artifacts("failed"))
+
+                    succeeded = await evaluator.evaluate_program("# success", "succeeded")
+                    self.assertEqual(succeeded, {"combined_score": 0.9})
+                    self.assertEqual(evaluator.get_pending_artifacts("succeeded"), artifacts)
+                    self.assertEqual(measured, {"combined_score": 0.8})
+                    self.assertEqual(artifacts, {"stdout": "stage 1 completed"})
 
 
 if __name__ == "__main__":
