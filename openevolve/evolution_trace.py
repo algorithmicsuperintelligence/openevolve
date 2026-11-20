@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from openevolve.checkpoint import load_checkpoint
 from openevolve.utils.trace_export_utils import (
     append_trace_jsonl,
     export_traces,
@@ -402,18 +403,8 @@ def extract_evolution_trace_from_checkpoint(
 
     logger.info(f"Extracting evolution traces from {checkpoint_dir}")
 
-    # Load all programs
-    programs = {}
-    program_files = list(programs_dir.glob("*.json"))
-
-    for prog_file in program_files:
-        try:
-            with open(prog_file, "r") as f:
-                prog_data = json.load(f)
-                programs[prog_data["id"]] = prog_data
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"Error loading program from {prog_file}: {e}")
-            continue
+    checkpoint = load_checkpoint(str(checkpoint_path))
+    programs = {program["id"]: program for program in checkpoint.programs}
 
     logger.info(f"Loaded {len(programs)} programs from checkpoint")
 
@@ -462,8 +453,7 @@ def extract_evolution_trace_from_checkpoint(
         # Add prompts if available and requested
         if include_prompts:
             # Check for prompt data in the program
-            if "prompts" in prog:
-                # Prompts might be stored in the program data
+            if prog.get("prompts"):
                 trace.prompt = prog["prompts"].get("prompt")
                 trace.llm_response = prog["prompts"].get("response")
 
@@ -517,18 +507,8 @@ def extract_full_lineage_traces(
 
     logger.info(f"Extracting full lineage traces from {checkpoint_dir}")
 
-    # Load all programs
-    programs = {}
-    program_files = list(programs_dir.glob("*.json"))
-
-    for prog_file in program_files:
-        try:
-            with open(prog_file, "r") as f:
-                prog_data = json.load(f)
-                programs[prog_data["id"]] = prog_data
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"Error loading program from {prog_file}: {e}")
-            continue
+    checkpoint = load_checkpoint(str(checkpoint_path))
+    programs = {program["id"]: program for program in checkpoint.programs}
 
     logger.info(f"Loaded {len(programs)} programs from checkpoint")
 
@@ -555,7 +535,7 @@ def extract_full_lineage_traces(
             child = lineage[i + 1]
 
             # Extract the action (prompt and response) from child's data
-            prompts = child.get("prompts", {})
+            prompts = child.get("prompts") or {}
             action = None
 
             # Get the prompt used (could be diff_user, full_rewrite_user, or other templates)

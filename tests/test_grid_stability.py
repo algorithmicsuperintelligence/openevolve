@@ -3,12 +3,12 @@ Integration tests for MAP-Elites grid stability across checkpoints
 """
 
 import os
-import tempfile
 import shutil
+import tempfile
 import unittest
 
-from openevolve.database import ProgramDatabase, Program
 from openevolve.config import DatabaseConfig
+from openevolve.database import Program, ProgramDatabase
 
 
 class TestGridStability(unittest.TestCase):
@@ -62,8 +62,9 @@ class TestGridStability(unittest.TestCase):
         db2 = ProgramDatabase(config)
         db2.load(self.test_dir)
 
-        # Verify all programs were loaded
-        self.assertEqual(len(db2.programs), len(test_cases))
+        # Restore the active population; displaced cell owners stay evicted.
+        self.assertEqual(set(db2.programs), set(db1.programs))
+        self.assertEqual(db2.islands, db1.islands)
 
         # Verify feature ranges are preserved
         for dim, original_range in original_ranges.items():

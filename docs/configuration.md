@@ -68,6 +68,28 @@ openevolve-run initial_program.py evaluator.py \
 
 `--target-score` stops the run once `combined_score` reaches the value. `--checkpoint` resumes from a saved run. `--logger-prefix` keeps log output distinguishable across parallel runs (it logs as `run1.openevolve.*`).
 
+## Checkpoint storage
+
+A checkpoint publishes `metadata.json` atomically after writing the program and
+artifact objects it references. Loading restores that exact population; removed
+programs are not recovered from leftover files. If a referenced object is missing
+or corrupt, loading fails without replacing an already running database.
+
+New checkpoints use `checkpoint_version: 1` and a `program_files` mapping into
+`programs/.objects/`. Large artifacts are copied into `.checkpoint_artifacts/`,
+so moving the whole checkpoint directory preserves them. Prompt logs and island
+feature ranges are restored as well. The visualizer and static export read the
+same manifest. Active working artifacts are protected from retention cleanup.
+
+Legacy `programs/<id>.json` checkpoints remain readable. Older OpenEvolve releases
+cannot read the new format; use this version to resume new checkpoints. External
+checkpoint readers should use `openevolve.checkpoint.load_checkpoint()` rather
+than globbing program files. Immutable objects are retained so a reader can finish
+using an older manifest while another save publishes a replacement. Remove an
+entire checkpoint directory when it is no longer needed; do not prune its objects
+while readers may still be using it. These guarantees cover process interruption,
+not new hardware power-loss durability guarantees.
+
 ## Evolution Modes
 
 ```yaml
