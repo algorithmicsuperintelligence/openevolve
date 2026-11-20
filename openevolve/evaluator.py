@@ -113,6 +113,37 @@ class Evaluator:
             logger.error(f"Error loading evaluation function: {str(e)}")
             raise
 
+    def _validate_cascade_configuration(self, module) -> None:
+        """
+        Validate cascade evaluation configuration and warn about potential issues
+
+        Args:
+            module: The loaded evaluation module
+        """
+        if self.config.cascade_evaluation:
+            # Check if cascade functions exist
+            has_stage1 = hasattr(module, "evaluate_stage1")
+            has_stage2 = hasattr(module, "evaluate_stage2")
+            has_stage3 = hasattr(module, "evaluate_stage3")
+
+            if not has_stage1:
+                logger.warning(
+                    f"Configuration has 'cascade_evaluation: true' but evaluator "
+                    f"'{self.evaluation_file}' does not define 'evaluate_stage1' function. "
+                    f"This will fall back to direct evaluation, making the cascade setting useless. "
+                    f"Consider setting 'cascade_evaluation: false' or implementing cascade functions."
+                )
+            elif not (has_stage2 or has_stage3):
+                logger.warning(
+                    f"Evaluator '{self.evaluation_file}' defines 'evaluate_stage1' but no additional "
+                    f"cascade stages (evaluate_stage2, evaluate_stage3). Consider implementing "
+                    f"multi-stage evaluation for better cascade benefits."
+                )
+            else:
+                logger.debug(
+                    f"Cascade evaluation properly configured with available stage functions"
+                )
+
     def _resolve_evaluator_kwargs(self, evaluate_function: Callable) -> Dict[str, Any]:
         """
         Resolve the keyword arguments to forward to the user's evaluate() function.
