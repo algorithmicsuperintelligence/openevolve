@@ -113,6 +113,10 @@ class FakeAppServer:
         elif method == "initialized":
             pass  # notification, no reply
         elif method == "account/read":
+            if self.scenario == "notify_first":
+                # A real app-server pushes unsolicited notifications (config
+                # warnings, account updates) ahead of its responses.
+                self._notify("configWarning", {"message": "config warning"})
             if self.scenario == "unauthenticated":
                 self._reply(request_id, {"account": None, "requiresOpenaiAuth": True})
             elif self.scenario == "apikey_account":
@@ -120,12 +124,22 @@ class FakeAppServer:
                     request_id,
                     {"account": {"type": "apiKey"}, "requiresOpenaiAuth": False},
                 )
+            elif self.scenario == "chatgpt_requires_auth_flag":
+                # Current app-server versions report requiresOpenaiAuth=True
+                # alongside a valid ChatGPT account: the flag describes the
+                # auth mode, not a missing login.
+                self._reply(
+                    request_id,
+                    {"account": AUTHENTICATED_ACCOUNT, "requiresOpenaiAuth": True},
+                )
             else:
                 self._reply(
                     request_id,
                     {"account": AUTHENTICATED_ACCOUNT, "requiresOpenaiAuth": False},
                 )
         elif method == "thread/start":
+            if self.scenario == "notify_first":
+                self._notify("account/updated", {"account": AUTHENTICATED_ACCOUNT})
             self._reply(
                 request_id,
                 {"thread": {"id": "thread-123", "model": params.get("model")}},
@@ -267,6 +281,17 @@ class TestAuthBoundary(unittest.TestCase):
         self.assertIn("OpenAI provider", str(outcome["error"]))
         self.assertNotIn("turn/start", [m for m, _ in fake.requests])
 
+    def test_requires_openai_auth_flag_with_chatgpt_account_generates(self):
+        """requiresOpenaiAuth=True next to a valid ChatGPT account is logged in.
+
+        The flag describes the auth mode of the app-server, so only a
+        missing (or non-ChatGPT) account may fail the auth boundary.
+        """
+        outcome, fake, _ = run_generate(scenario="chatgpt_requires_auth_flag")
+        self.assertIsNone(outcome["error"])
+        self.assertEqual(outcome["result"], "hello world")
+        self.assertIn("turn/start", [m for m, _ in fake.requests])
+
     def test_auth_error_is_not_retried(self):
         outcome, fake, _ = run_generate(
             scenario="unauthenticated", cfg_overrides={"retries": 3, "retry_delay": 0}
@@ -287,8 +312,10 @@ class TestGenerationProtocol(unittest.TestCase):
         params = next(p for m, p in fake.requests if m == "thread/start")
         self.assertEqual(params["model"], "gpt-5.3-codex")
         self.assertEqual(params["approvalPolicy"], "never")
-        self.assertEqual(params["sandbox"]["mode"], "read-only")
-        self.assertFalse(params["sandbox"]["networkAccess"])
+        # ThreadStartParams.sandbox is a SandboxMode string enum, not a
+        # {"mode": ..., "networkAccess": ...} map; current app-server
+        # versions reject the map form with error -32600.
+        self.assertEqual(params["sandbox"], "read-only")
 
     def test_turn_input_and_effort(self):
         _, fake, _ = run_generate(
@@ -323,6 +350,41 @@ class TestGenerationProtocol(unittest.TestCase):
         outcome, _, _ = run_generate(scenario="crash_after_thread")
         self.assertIsInstance(outcome["error"], RuntimeError)
         self.assertIn("exited unexpectedly", str(outcome["error"]))
+
+    def test_interleaved_notification_does_not_wedge_generate(self):
+        """A notification ahead of a response must not wedge request().
+
+        Regression test: request() parked non-matching messages in
+        _pending, which next_message() drains before reading the queue —
+        so the first interleaved notification was returned forever in a
+        busy loop and the actual response was never read. generate() runs
+        in a thread so the wedged version fails this test on the join
+        timeout instead of hanging the whole suite.
+        """
+        fake = FakeAppServer("notify_first")
+        self.addCleanup(fake.terminate)
+        llm = CodexAppServerLLM(_make_cfg())
+        outcome = {}
+
+        def _execute():
+            try:
+                outcome["result"] = asyncio.run(llm.generate("test prompt"))
+                outcome["error"] = None
+            except Exception as e:  # noqa: BLE001 - tests assert on the type
+                outcome["error"] = e
+
+        with patch(
+            "openevolve.llm.codex_app_server.subprocess.Popen",
+            return_value=fake,
+        ):
+            worker = threading.Thread(target=_execute, daemon=True)
+            worker.start()
+            worker.join(timeout=15)
+        self.assertFalse(
+            worker.is_alive(), "generate() wedged on an interleaved notification"
+        )
+        self.assertIsNone(outcome.get("error"))
+        self.assertEqual(outcome.get("result"), "hello world")
 
     def test_hung_server_hits_deadline(self):
         outcome, _, _ = run_generate(scenario="hang", cfg_overrides={"timeout": 1})
