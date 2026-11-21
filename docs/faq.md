@@ -53,3 +53,22 @@ Just set the `api_base` in your config to point to your endpoint.
 5. **Robustness**: Performance across different test cases
 
 **Use the visualizer** to track all metrics in real-time and identify when evolution has converged.
+
+### What range can `combined_score` use?
+
+The default database ranks programs by fitness, highest first. Your evaluator
+can return a finite score on its own scale. For example, return throughput in
+requests per second to favor 120 over 80, or return negative latency in
+milliseconds to favor -10 over -25. On the latency scale, `--target-score -10`
+stops when a candidate's `combined_score` reaches -10 or higher.
+If your evaluator uses [cascade stages](configuration.md#evaluation-and-prompt-feedback),
+set their thresholds to match the scores each stage returns.
+
+The scale also affects fitness-weighted parent sampling. Its minimum weight is
+0.001, so two programs with negative scores have equal weight in that sampling
+step.
+
+If you omit `combined_score`, the database ranks programs by the mean of their
+numeric, non-feature metrics. When only feature metrics are available, it uses
+their mean. Return an explicit `combined_score` when your metrics use different
+units or when you want to stop at a target score.
