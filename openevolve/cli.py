@@ -186,7 +186,9 @@ async def main_async() -> int:
 
         # Override log level if specified
         if args.log_level:
-            logging.getLogger().setLevel(getattr(logging, args.log_level))
+            log_level = getattr(logging, args.log_level)
+            logging.getLogger().setLevel(log_level)
+            logging.getLogger("openevolve").setLevel(log_level)
 
         # Run evolution
         best_program = await openevolve.run(
