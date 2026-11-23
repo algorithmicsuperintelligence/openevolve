@@ -4,6 +4,7 @@ Process-based parallel controller for true parallelism
 
 import asyncio
 import logging
+import math
 import multiprocessing as mp
 import pickle
 import random
@@ -21,7 +22,7 @@ from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
 from openevolve.llm.ensemble import add_usage, take_usage
 from openevolve.selection import IslandSelectionContext, IslandSelector, IslandState
-from openevolve.utils.metrics_utils import safe_numeric_average
+from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +256,16 @@ def _run_iteration(
             programs[pid] for pid in db_snapshot["islands"][parent_island] if pid in programs
         ]
 
-        # Sort by metrics for top programs
+        # Sort island programs by fitness score to determine top performers for prompt context.
+        # Use get_fitness_score() rather than raw combined_score or safe_numeric_average():
+        # 1. NaN combined_scores map to -inf so invalid programs rank at the bottom (preventing
+        #    Timsort comparison failures and incorrect promotion to LLM prompt context).
+        # 2. When combined_score is absent, feature_dimensions (e.g., complexity or diversity)
+        #    are excluded so high-complexity solutions do not crowd out genuinely high-performing solutions.
+        # 3. Boolean flags (which subclass int in Python) are excluded from scoring.
+        feature_dims = db_snapshot.get("feature_dimensions", [])
         island_programs.sort(
-            key=lambda p: p.metrics.get("combined_score", safe_numeric_average(p.metrics)),
+            key=lambda p: get_fitness_score(p.metrics, feature_dims),
             reverse=True,
         )
 
@@ -1003,11 +1011,16 @@ class ProcessParallelController:
                         completed_iteration, checkpoint_callback, is_new_best=is_new_best
                     )
 
-                    # Check target score
+                    # Check target score: verify combined_score is genuine numeric data
+                    # (avoid treating boolean flags like True as 1.0 or NaN as meeting targets).
                     if target_score is not None and child_program.metrics:
+                        target_metric_val = child_program.metrics.get("combined_score")
                         if (
-                            "combined_score" in child_program.metrics
-                            and child_program.metrics["combined_score"] >= target_score
+                            target_metric_val is not None
+                            and isinstance(target_metric_val, (int, float))
+                            and not isinstance(target_metric_val, bool)
+                            and not math.isnan(float(target_metric_val))
+                            and float(target_metric_val) >= target_score
                         ):
                             logger.info(
                                 f"Target score {target_score} reached at iteration {completed_iteration}"
@@ -1040,8 +1053,13 @@ class ProcessParallelController:
                                     self.config.early_stopping_metric
                                 ]
                             elif self.config.early_stopping_metric == "combined_score":
-                                # Default metric not found, use safe average (standard pattern)
-                                current_score = safe_numeric_average(child_program.metrics)
+                                # Default metric not found: calculate fitness score excluding
+                                # MAP-Elites feature dimensions (complexity, diversity) so they
+                                # do not skew convergence detection.
+                                current_score = get_fitness_score(
+                                    child_program.metrics,
+                                    self.config.database.feature_dimensions,
+                                )
                             else:
                                 # User specified a custom metric that doesn't exist
                                 logger.warning(
@@ -1049,8 +1067,13 @@ class ProcessParallelController:
                                 )
                                 current_score = safe_numeric_average(child_program.metrics)
 
-                            if current_score is not None and isinstance(
-                                current_score, (int, float)
+                            # Verify score is numeric: exclude boolean flags and NaNs from
+                            # improvement calculations to prevent corrupted convergence tracking.
+                            if (
+                                current_score is not None
+                                and isinstance(current_score, (int, float))
+                                and not isinstance(current_score, bool)
+                                and not math.isnan(current_score)
                             ):
                                 # Check for improvement
                                 if self.config.early_stopping_patience > 0:

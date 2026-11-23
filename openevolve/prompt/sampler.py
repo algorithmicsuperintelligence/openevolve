@@ -3,6 +3,7 @@ Prompt sampling for OpenEvolve
 """
 
 import logging
+import math
 import random
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -10,9 +11,9 @@ from openevolve.config import PromptConfig
 from openevolve.prompt.templates import TemplateManager
 from openevolve.utils.format_utils import format_metrics_safe
 from openevolve.utils.metrics_utils import (
-    safe_numeric_average,
-    get_fitness_score,
     format_feature_coordinates,
+    get_fitness_score,
+    safe_numeric_average,
 )
 
 logger = logging.getLogger(__name__)
@@ -283,10 +284,14 @@ class PromptSampler:
                 "changes", self.template_manager.get_fragment("attempt_unknown_changes")
             )
 
-            # Format performance metrics using safe formatting
+            # Format performance metrics using safe formatting:
+            # Booleans are flags, not numeric scores; format as literal 'True' / 'False'
+            # rather than floating point numbers (e.g., avoid 'valid: 1.0000').
             performance_parts = []
             for name, value in program.get("metrics", {}).items():
-                if isinstance(value, (int, float)):
+                if isinstance(value, bool):
+                    performance_parts.append(f"{name}: {value}")
+                elif isinstance(value, (int, float)):
                     try:
                         performance_parts.append(f"{name}: {value:.4f}")
                     except (ValueError, TypeError):
@@ -310,17 +315,30 @@ class PromptSampler:
                 prog_value = program_metrics.get(m, 0)
                 parent_value = parent_metrics.get(m, 0)
 
-                # Only compare if both values are numeric
-                if isinstance(prog_value, (int, float)) and isinstance(parent_value, (int, float)):
-                    if prog_value > parent_value:
-                        numeric_comparisons_improved.append(True)
-                    else:
-                        numeric_comparisons_improved.append(False)
+                # Only compare genuine numeric metrics. Boolean flags (which subclass int
+                # in Python) such as valid=False -> valid=True must not be treated as
+                # numeric improvements (+1.0), and NaN values must not distort comparisons.
+                if (
+                    isinstance(prog_value, (int, float))
+                    and not isinstance(prog_value, bool)
+                    and isinstance(parent_value, (int, float))
+                    and not isinstance(parent_value, bool)
+                ):
+                    try:
+                        prog_float = float(prog_value)
+                        parent_float = float(parent_value)
+                        if not math.isnan(prog_float) and not math.isnan(parent_float):
+                            if prog_float > parent_float:
+                                numeric_comparisons_improved.append(True)
+                            else:
+                                numeric_comparisons_improved.append(False)
 
-                    if prog_value < parent_value:
-                        numeric_comparisons_regressed.append(True)
-                    else:
-                        numeric_comparisons_regressed.append(False)
+                            if prog_float < parent_float:
+                                numeric_comparisons_regressed.append(True)
+                            else:
+                                numeric_comparisons_regressed.append(False)
+                    except (ValueError, TypeError, OverflowError):
+                        continue
 
             # Determine outcome based on numeric comparisons
             if numeric_comparisons_improved and all(numeric_comparisons_improved):

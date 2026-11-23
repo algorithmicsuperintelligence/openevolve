@@ -811,11 +811,20 @@ class Evaluator:
         if not metrics:
             return False
 
-        # Use combined_score if available - this is what evolution uses
+        # Use combined_score if available - this is what evolution uses.
+        # Ensure combined_score is genuine numeric data rather than a boolean failure flag
+        # (e.g. {"combined_score": False}), and verify it is not NaN.
         if "combined_score" in metrics:
             score = metrics.get("combined_score")
-            if isinstance(score, (int, float)):
-                return float(score) >= threshold
+            # In Python, bool is a subclass of int. A boolean flag (e.g., False)
+            # must not be cast to 0.0, which could incorrectly pass a threshold <= 0.0.
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                try:
+                    float_score = float(score)
+                    if not math.isnan(float_score):
+                        return float_score >= threshold
+                except (TypeError, ValueError, OverflowError):
+                    pass
 
         # Fallback: average all numeric metrics except 'error'
         # This maintains backward compatibility
