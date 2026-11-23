@@ -407,6 +407,38 @@ def evaluate_stage3(program_path):
         self.assertLess(outer_elapsed, 5)
 
 
+    def test_evaluation_after_timeout_gets_a_free_worker(self):
+        """A timed-out evaluation's orphaned thread must not make the next,
+        valid evaluation queue behind it and time out as well."""
+
+        async def run_test():
+            evaluator = self._create_evaluator(timeout=1)
+
+            result = await evaluator.evaluate_program("# SLEEP_LONG", "test_stuck")
+            self.assertTrue(result.get("timeout"))
+
+            start_time = time.time()
+            result = await evaluator.evaluate_program("def test(): return 'fast'", "test_next")
+            self.assertLess(time.time() - start_time, 0.9)
+            self.assertNotIn("timeout", result)
+            self.assertEqual(result["score"], 0.5)
+
+        asyncio.run(run_test())
+
+    def test_cascade_evaluation_after_timeout_gets_a_free_worker(self):
+        async def run_test():
+            evaluator = self._create_evaluator(timeout=1, cascade_evaluation=True)
+
+            result = await evaluator.evaluate_program("# STAGE1_TIMEOUT", "test_stuck")
+            self.assertTrue(result.get("timeout"))
+
+            result = await evaluator.evaluate_program("def test(): return 'fast'", "test_next")
+            self.assertNotIn("timeout", result)
+            self.assertEqual(result["stage1_score"], 0.7)
+
+        asyncio.run(run_test())
+
+
 class TestTimeoutIntegration(unittest.TestCase):
     """Integration tests for timeout functionality"""
 
