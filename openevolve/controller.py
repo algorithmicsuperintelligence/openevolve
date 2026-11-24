@@ -384,6 +384,7 @@ class OpenEvolve:
             Best program found
 
         Raises:
+            FileNotFoundError: If checkpoint_path is given but does not exist
             EvolutionFailedError: If iterations ran but none produced a candidate program
         """
         # Ensure run_id exists even if instance was created without __init__ (e.g. in tests)
@@ -414,7 +415,7 @@ class OpenEvolve:
         max_iterations = self.config.max_iterations if iterations is None else iterations
         # Determine starting iteration
         start_iteration = 0
-        if checkpoint_path and os.path.exists(checkpoint_path):
+        if checkpoint_path:
             self._load_checkpoint(checkpoint_path)
             start_iteration = self.database.last_iteration + 1
             logger.info(f"Resuming from checkpoint at iteration {start_iteration}")

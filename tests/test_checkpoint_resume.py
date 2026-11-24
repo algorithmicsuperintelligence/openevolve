@@ -351,6 +351,38 @@ def evaluate(program_path):
         # Run the async test
         asyncio.run(run_test())
 
+    def test_missing_checkpoint_path_raises(self):
+        """A checkpoint_path that does not exist must not silently start a fresh run"""
+
+        async def run_test():
+            with patch("openevolve.controller.Evaluator") as mock_evaluator_class:
+                mock_evaluator = MockEvaluator()
+                mock_evaluator_class.return_value = mock_evaluator
+
+                controller = OpenEvolve(
+                    initial_program_path=self.test_program_path,
+                    evaluation_file=self.evaluator_path,
+                    config=self.config,
+                    output_dir=self.test_dir,
+                )
+
+                missing = os.path.join(self.test_dir, "checkpoints", "checkpoint_50")
+                with patch(
+                    "openevolve.controller.ProcessParallelController"
+                ) as mock_parallel_class:
+                    mock_parallel = mock_parallel_class.return_value
+                    mock_parallel.run_evolution = AsyncMock(return_value=None)
+                    mock_parallel.shutdown_event.is_set.return_value = False
+                    mock_parallel.produced_no_candidates = False
+                    with self.assertRaisesRegex(FileNotFoundError, "checkpoint_50"):
+                        await controller.run(iterations=0, checkpoint_path=missing)
+
+                mock_parallel_class.assert_not_called()
+                self.assertEqual(len(controller.database.programs), 0)
+                self.assertEqual(mock_evaluator.call_count, 0)
+
+        asyncio.run(run_test())
+
 
 if __name__ == "__main__":
     unittest.main()
