@@ -65,10 +65,7 @@ class Evaluator:
 
         # Dedicated executor (not the loop's default) so a timed-out evaluation's
         # orphaned thread can't block asyncio.run()'s shutdown_default_executor().
-        self._executor = ThreadPoolExecutor(
-            max_workers=max(1, config.parallel_evaluations),
-            thread_name_prefix="openevolve-eval",
-        )
+        self._executor = self._new_executor()
 
         # Set up evaluation function if file exists
         self._load_evaluation_function()
@@ -77,6 +74,35 @@ class Evaluator:
         self._pending_artifacts: Dict[str, Dict[str, Union[str, bytes]]] = {}
 
         logger.info(f"Initialized evaluator with {evaluation_file}")
+
+    def _new_executor(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(
+            max_workers=max(1, self.config.parallel_evaluations),
+            thread_name_prefix="openevolve-eval",
+        )
+
+    async def _run_with_timeout(self, func: Callable, *args: Any) -> Any:
+        """
+        Run a blocking evaluation function in the executor, bounded by config.timeout
+
+        A timed-out call keeps running in its thread because Python cannot stop it.
+        That thread would hold an executor slot indefinitely (forever for an infinite
+        loop), so later evaluations would queue behind it and time out without ever
+        starting. The executor is replaced on timeout so they get a free slot.
+
+        Raises:
+            asyncio.TimeoutError: If the function exceeds the timeout
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._executor, func, *args), timeout=self.config.timeout
+            )
+        except asyncio.TimeoutError:
+            stuck_executor = self._executor
+            self._executor = self._new_executor()
+            stuck_executor.shutdown(wait=False)
+            raise
 
     def _load_evaluation_function(self) -> None:
         """Load the evaluation function from the evaluation file"""
@@ -448,17 +474,10 @@ class Evaluator:
             Exception: If evaluation function raises an exception
         """
 
-        # Create a coroutine that runs the evaluation function in an executor
-        async def run_evaluation():
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                self._executor,
-                functools.partial(self.evaluate_function, **self._evaluator_kwargs),
-                program_path,
-            )
-
-        # Run the evaluation with timeout - let exceptions bubble up for retry handling
-        result = await asyncio.wait_for(run_evaluation(), timeout=self.config.timeout)
+        # Let exceptions bubble up for retry handling
+        result = await self._run_with_timeout(
+            functools.partial(self.evaluate_function, **self._evaluator_kwargs), program_path
+        )
 
         # Return result as-is to be processed by _process_evaluation_result
         # This supports both dict and EvaluationResult returns, just like _cascade_evaluate
@@ -497,14 +516,7 @@ class Evaluator:
 
             # Run first stage with timeout
             try:
-
-                async def run_stage1():
-                    loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(
-                        self._executor, module.evaluate_stage1, program_path
-                    )
-
-                stage1_result = await asyncio.wait_for(run_stage1(), timeout=self.config.timeout)
+                stage1_result = await self._run_with_timeout(module.evaluate_stage1, program_path)
                 stage1_eval_result = self._process_evaluation_result(stage1_result)
             except asyncio.TimeoutError:
                 logger.warning(f"Stage 1 evaluation timed out after {self.config.timeout}s")
@@ -540,14 +552,7 @@ class Evaluator:
 
             # Run second stage with timeout
             try:
-
-                async def run_stage2():
-                    loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(
-                        self._executor, module.evaluate_stage2, program_path
-                    )
-
-                stage2_result = await asyncio.wait_for(run_stage2(), timeout=self.config.timeout)
+                stage2_result = await self._run_with_timeout(module.evaluate_stage2, program_path)
                 stage2_eval_result = self._process_evaluation_result(stage2_result)
             except asyncio.TimeoutError:
                 logger.warning(f"Stage 2 evaluation timed out after {self.config.timeout}s")
@@ -604,14 +609,7 @@ class Evaluator:
 
             # Run third stage with timeout
             try:
-
-                async def run_stage3():
-                    loop = asyncio.get_event_loop()
-                    return await loop.run_in_executor(
-                        self._executor, module.evaluate_stage3, program_path
-                    )
-
-                stage3_result = await asyncio.wait_for(run_stage3(), timeout=self.config.timeout)
+                stage3_result = await self._run_with_timeout(module.evaluate_stage3, program_path)
                 stage3_eval_result = self._process_evaluation_result(stage3_result)
             except asyncio.TimeoutError:
                 logger.warning(f"Stage 3 evaluation timed out after {self.config.timeout}s")
