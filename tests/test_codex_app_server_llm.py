@@ -115,6 +115,17 @@ class FakeAppServer:
         elif method == "account/read":
             if self.scenario == "unauthenticated":
                 self._reply(request_id, {"account": None, "requiresOpenaiAuth": True})
+            elif self.scenario == "chatgpt_requires_openai_auth":
+                self._reply(
+                    request_id,
+                    {"account": AUTHENTICATED_ACCOUNT, "requiresOpenaiAuth": True},
+                )
+            elif self.scenario == "early_notification":
+                self._notify("configWarning", {"summary": "warn"})
+                self._reply(
+                    request_id,
+                    {"account": AUTHENTICATED_ACCOUNT, "requiresOpenaiAuth": False},
+                )
             elif self.scenario == "apikey_account":
                 self._reply(
                     request_id,
@@ -252,6 +263,16 @@ class TestAuthBoundary(unittest.TestCase):
         )
         self.assertEqual(captured["cmd"], ["codex", "app-server"])
 
+    def test_chatgpt_account_with_requires_openai_auth_flag_generates(self):
+        outcome, _, _ = run_generate(scenario="chatgpt_requires_openai_auth")
+        self.assertIsNone(outcome["error"])
+        self.assertEqual(outcome["result"], "hello world")
+
+    def test_notification_before_response_does_not_spin(self):
+        outcome, _, _ = run_generate(scenario="early_notification", cfg_overrides={"timeout": 5})
+        self.assertIsNone(outcome["error"])
+        self.assertEqual(outcome["result"], "hello world")
+
     def test_unauthenticated_account_is_rejected_before_any_turn(self):
         outcome, fake, _ = run_generate(scenario="unauthenticated")
         self.assertIsInstance(outcome["error"], CodexAuthError)
@@ -287,8 +308,9 @@ class TestGenerationProtocol(unittest.TestCase):
         params = next(p for m, p in fake.requests if m == "thread/start")
         self.assertEqual(params["model"], "gpt-5.3-codex")
         self.assertEqual(params["approvalPolicy"], "never")
-        self.assertEqual(params["sandbox"]["mode"], "read-only")
-        self.assertFalse(params["sandbox"]["networkAccess"])
+        self.assertEqual(params["sandbox"], "read-only")
+        turn = next(p for m, p in fake.requests if m == "turn/start")
+        self.assertEqual(turn["sandboxPolicy"], {"type": "readOnly", "networkAccess": False})
 
     def test_turn_input_and_effort(self):
         _, fake, _ = run_generate(
