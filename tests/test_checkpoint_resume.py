@@ -351,6 +351,65 @@ def evaluate(program_path):
         # Run the async test
         asyncio.run(run_test())
 
+    def _run_until(self, reached_iteration, iterations):
+        """Run with an evolution loop that stops after reached_iteration, return checkpoint names"""
+
+        async def run_test():
+            with patch("openevolve.controller.Evaluator") as mock_evaluator_class:
+                mock_evaluator_class.return_value = MockEvaluator()
+
+                controller = OpenEvolve(
+                    initial_program_path=self.test_program_path,
+                    evaluation_file=self.evaluator_path,
+                    config=self.config,
+                    output_dir=self.test_dir,
+                )
+
+                async def run_evolution(*args, **kwargs):
+                    child = Program(
+                        id="child",
+                        code='def test_function():\n    return "child"\n',
+                        language="python",
+                        metrics={"score": 0.9, "combined_score": 0.95},
+                    )
+                    controller.database.add(child, iteration=reached_iteration)
+
+                with patch(
+                    "openevolve.controller.ProcessParallelController"
+                ) as mock_controller_class:
+                    mock_controller = Mock()
+                    mock_controller.run_evolution = AsyncMock(side_effect=run_evolution)
+                    mock_controller.start = Mock(return_value=None)
+                    mock_controller.stop = Mock(return_value=None)
+                    mock_controller.shutdown_event = Mock()
+                    mock_controller.shutdown_event.is_set.return_value = False
+                    mock_controller.produced_no_candidates = False
+                    mock_controller_class.return_value = mock_controller
+
+                    await controller.run(iterations=iterations)
+
+        asyncio.run(run_test())
+        return sorted(os.listdir(os.path.join(self.test_dir, "checkpoints")))
+
+    def test_final_checkpoint_after_early_stop_uses_reached_iteration(self):
+        """A run that stops early must not save a checkpoint for iterations that never ran"""
+        self.config.checkpoint_interval = 10
+
+        checkpoints = self._run_until(reached_iteration=37, iterations=100)
+
+        self.assertEqual(checkpoints, ["checkpoint_37"])
+        metadata_path = os.path.join(self.test_dir, "checkpoints", "checkpoint_37", "metadata.json")
+        with open(metadata_path) as f:
+            self.assertEqual(json.load(f)["last_iteration"], 37)
+
+    def test_final_checkpoint_after_full_run(self):
+        """A run that reaches its last iteration still saves the final checkpoint"""
+        self.config.checkpoint_interval = 10
+
+        checkpoints = self._run_until(reached_iteration=100, iterations=100)
+
+        self.assertEqual(checkpoints, ["checkpoint_100"])
+
 
 if __name__ == "__main__":
     unittest.main()
