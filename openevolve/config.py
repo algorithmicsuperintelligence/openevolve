@@ -624,8 +624,15 @@ class Config:
 
 
 def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
-    """Load configuration from a YAML file or use defaults"""
-    if config_path and os.path.exists(config_path):
+    """Load configuration from a YAML file or use defaults
+
+    Raises:
+        FileNotFoundError: If config_path is given but does not exist
+    """
+    if config_path:
+        # A mistyped path must not silently run with the default configuration
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file '{config_path}' not found")
         config = Config.from_yaml(config_path)
     else:
         config = Config()

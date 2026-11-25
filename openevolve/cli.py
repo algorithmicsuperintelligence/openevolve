@@ -124,6 +124,10 @@ async def main_async() -> int:
         print(f"Error: Evaluation file '{args.evaluation_file}' not found")
         return 1
 
+    if args.config and not os.path.exists(args.config):
+        print(f"Error: Configuration file '{args.config}' not found")
+        return 1
+
     # Load base config from file or defaults
     config = load_config(args.config)
 
