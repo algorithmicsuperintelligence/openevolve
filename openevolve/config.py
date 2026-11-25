@@ -59,8 +59,11 @@ class LLMModelConfig:
     name: str = None
 
     # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
-    # Also supports "copilot_cli" (GitHub Copilot CLI)
+    # Also supports "copilot_cli" (GitHub Copilot CLI) and "bedrock" (Amazon Bedrock)
     provider: Optional[str] = None
+
+    # Amazon Bedrock region (provider "bedrock"); falls back to AWS_REGION / AWS_DEFAULT_REGION
+    aws_region: Optional[str] = None
 
     # Custom LLM client
     init_client: Optional[Callable] = None
@@ -194,6 +197,7 @@ class LLMConfig(LLMModelConfig):
             "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
+            "aws_region": self.aws_region,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,

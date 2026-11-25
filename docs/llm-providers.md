@@ -52,6 +52,36 @@ llm:
   primary_model: "moa&readurls-o3"  # Test-time compute + web access
 ```
 
+### Amazon Bedrock (No API Key)
+
+Use models on [Amazon Bedrock](https://aws.amazon.com/bedrock/) through the Converse API — Anthropic Claude, Amazon Nova, Meta Llama, Mistral, DeepSeek, Qwen and others. Authentication uses the standard AWS credential chain (environment variables, a profile, SSO, or an IAM role on EC2/ECS/Lambda), so no API key and no OpenAI-compatible proxy are needed.
+
+```bash
+pip install boto3
+```
+
+```bash
+export AWS_REGION=<your-region>
+export BEDROCK_MODEL_ID=<model-id-or-inference-profile>   # e.g. a cross-region inference profile
+# optional: export AWS_PROFILE=<named-profile>
+```
+
+```yaml
+llm:
+  provider: "bedrock"
+  aws_region: "${AWS_REGION}"      # optional; defaults to AWS_REGION / AWS_DEFAULT_REGION
+  models:
+    - name: "${BEDROCK_MODEL_ID}"
+      weight: 1.0
+  max_tokens: 16000
+```
+
+- `name` is any Bedrock model ID or inference profile ID/ARN that supports the Converse API (list them with `aws bedrock list-inference-profiles` / `aws bedrock list-foundation-models`). `name`, `aws_region` and `api_base` accept `${VAR}` references, so the same config works across accounts and regions.
+- Credentials follow the standard AWS chain; set `AWS_PROFILE` to use a named profile. Your IAM identity needs `bedrock:InvokeModel` on it, and the model must be enabled in the region.
+- If a model rejects a sampling parameter (newer Claude models reject `temperature`), the request is retried once without it and that parameter is not sent to that model again.
+- Set `api_base` to a `bedrock-runtime` endpoint (for example a VPC endpoint) to override the default endpoint; non-Bedrock URLs in `api_base` are ignored by this provider.
+- Token usage from Bedrock is recorded like the OpenAI provider's.
+
 ### Claude Code CLI (No API Key)
 
 Use the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the LLM backend — no API keys needed, authentication uses the CLI's OAuth session.

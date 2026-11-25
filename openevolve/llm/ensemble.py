@@ -52,6 +52,13 @@ except ImportError:
     pass
 
 try:
+    from openevolve.llm.bedrock import BedrockLLM
+
+    _PROVIDER_REGISTRY["bedrock"] = lambda cfg: BedrockLLM(cfg)
+except ImportError:
+    pass
+
+try:
     from openevolve.llm.copilot_cli import CopilotCLILLM
 
     _PROVIDER_REGISTRY["copilot_cli"] = lambda cfg: CopilotCLILLM(cfg)
