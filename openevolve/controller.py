@@ -151,7 +151,7 @@ class OpenEvolve:
                     f"Initial program for island {island_idx} '{seed_path}' has a different "
                     f"extension than '{initial_program_path}'"
                 )
-            with open(seed_path, "r") as f:
+            with open(seed_path, "r", encoding="utf-8") as f:
                 self.island_initial_program_codes[island_idx] = f.read()
 
         # Set the file_suffix in config (can be overridden in YAML)
@@ -331,7 +331,7 @@ class OpenEvolve:
 
     def _load_initial_program(self) -> str:
         """Load the initial program from file"""
-        with open(self.initial_program_path, "r") as f:
+        with open(self.initial_program_path, "r", encoding="utf-8") as f:
             return f.read()
 
     async def _add_initial_program(
@@ -614,7 +614,7 @@ class OpenEvolve:
         if best_program:
             # Save the best program at this checkpoint
             best_program_path = os.path.join(checkpoint_path, f"best_program{self.file_extension}")
-            with open(best_program_path, "w") as f:
+            with open(best_program_path, "w", encoding="utf-8") as f:
                 f.write(best_program.code)
 
             # Save metrics
@@ -706,7 +706,7 @@ class OpenEvolve:
         filename = f"best_program{self.file_extension}"
         code_path = os.path.join(best_dir, filename)
 
-        with open(code_path, "w") as f:
+        with open(code_path, "w", encoding="utf-8") as f:
             f.write(program.code)
 
         # Save complete program info including metrics
