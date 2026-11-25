@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -201,15 +202,16 @@ async def main_async() -> int:
         checkpoint_dir = os.path.join(openevolve.output_dir, "checkpoints")
         latest_checkpoint = None
         if os.path.exists(checkpoint_dir):
+            # Only checkpoint_<iteration> folders are checkpoints. Anything else a
+            # user keeps here must not fail a finished run with a ValueError.
             checkpoints = [
-                os.path.join(checkpoint_dir, d)
+                (int(match.group(1)), os.path.join(checkpoint_dir, d))
                 for d in os.listdir(checkpoint_dir)
-                if os.path.isdir(os.path.join(checkpoint_dir, d))
+                if (match := re.fullmatch(r"checkpoint_(\d+)", d))
+                and os.path.isdir(os.path.join(checkpoint_dir, d))
             ]
             if checkpoints:
-                latest_checkpoint = sorted(
-                    checkpoints, key=lambda x: int(x.split("_")[-1]) if "_" in x else 0
-                )[-1]
+                latest_checkpoint = max(checkpoints)[1]
 
         print(f"\nEvolution complete!")
         print(f"Best program metrics:")
