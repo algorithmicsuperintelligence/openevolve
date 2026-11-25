@@ -126,10 +126,12 @@ class _AppServerSession:
         request_id = self._next_id
         self._send({"id": request_id, "method": method, "params": params or {}})
         while True:
-            message = self.next_message(deadline)
+            # Read only fresh messages: next_message() would pop back the
+            # notification parked below and spin until the deadline.
+            message = self._read_message(deadline)
             if message.get("id") != request_id:
                 # A notification (e.g. an early item/completed) or a late
-                # response: park it instead of dropping it.
+                # response: park it for _collect_response instead of dropping it.
                 self._pending.append(message)
                 continue
             if "error" in message:
@@ -147,6 +149,10 @@ class _AppServerSession:
         """Return the next raw JSON-RPC message, honoring the wall-clock deadline."""
         if self._pending:
             return self._pending.popleft()
+        return self._read_message(deadline)
+
+    def _read_message(self, deadline: float) -> Dict[str, Any]:
+        """Wait for the next new message from the app-server (ignores parked ones)."""
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise asyncio.TimeoutError("codex app-server did not respond in time")
@@ -292,7 +298,7 @@ class CodexAppServerLLM(LLMInterface):
             thread_params: Dict[str, Any] = {
                 "model": self.model,
                 "approvalPolicy": "never",
-                "sandbox": {"mode": "read-only", "networkAccess": False},
+                "sandbox": "read-only",
             }
             if self.cwd:
                 thread_params["cwd"] = self.cwd
@@ -304,6 +310,7 @@ class CodexAppServerLLM(LLMInterface):
             turn_params: Dict[str, Any] = {
                 "threadId": thread_id,
                 "input": [{"type": "text", "text": prompt}],
+                "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
             }
             if self.reasoning_effort is not None:
                 turn_params["effort"] = self.reasoning_effort
@@ -315,7 +322,9 @@ class CodexAppServerLLM(LLMInterface):
 
     def _ensure_authenticated(self, session: _AppServerSession, deadline: float) -> None:
         result = session.request("account/read", {}, deadline) or {}
-        if result.get("requiresOpenaiAuth") or result.get("account") is None:
+        # `requiresOpenaiAuth` is also true for a signed-in ChatGPT account, so
+        # rely on the account type alone.
+        if result.get("account") is None:
             raise CodexAuthError("Codex app-server reports the account is not authenticated.")
         account = result.get("account") or {}
         if account.get("type") != "chatgpt":
