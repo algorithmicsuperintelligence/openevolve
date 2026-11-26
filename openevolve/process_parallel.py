@@ -841,6 +841,7 @@ class ProcessParallelController:
 
             # Process completed result
             future = pending_futures.pop(completed_iteration)
+            checkpoint_checked = False
 
             try:
                 # Use evaluator timeout + buffer to gracefully handle stuck processes
@@ -1007,6 +1008,7 @@ class ProcessParallelController:
                             f"{child_program.id}"
                         )
 
+                    checkpoint_checked = True
                     self._checkpoint_if_due(
                         completed_iteration, checkpoint_callback, is_new_best=is_new_best
                     )
@@ -1119,14 +1121,6 @@ class ProcessParallelController:
 
             except _CandidateRejected as rejected:
                 logger.info("Database rejected program %s", rejected)
-                try:
-                    self._checkpoint_if_due(completed_iteration, checkpoint_callback)
-                except Exception as e:
-                    if getattr(e, "_openevolve_strategy_error", False):
-                        raise
-                    logger.error(
-                        f"Error processing result from iteration {completed_iteration}: {e}"
-                    )
             except FutureTimeoutError as e:
                 if getattr(e, "_openevolve_strategy_error", False):
                     raise
@@ -1151,6 +1145,16 @@ class ProcessParallelController:
                     self.evolution_tracer.log_failure(
                         iteration=completed_iteration, error=self.last_iteration_error
                     )
+
+            # An iteration that failed, timed out or was rejected still counts towards
+            # checkpoint_interval. Otherwise a failure on the interval skips that checkpoint.
+            if not checkpoint_checked:
+                try:
+                    self._checkpoint_if_due(completed_iteration, checkpoint_callback)
+                except Exception as e:
+                    if getattr(e, "_openevolve_strategy_error", False):
+                        raise
+                    logger.error(f"Error saving checkpoint at iteration {completed_iteration}: {e}")
 
             completed_iterations += 1
 
