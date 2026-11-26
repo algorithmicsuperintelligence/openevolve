@@ -56,6 +56,7 @@ class LLMModelConfig:
     # API configuration
     api_base: str = None
     api_key: Optional[str] = None
+    api_type: Optional[str] = None
     name: str = None
 
     # LLM provider: "openai" (default), "claude_code" (Claude Code CLI)
@@ -100,6 +101,8 @@ class LLMModelConfig:
 
     def __post_init__(self):
         """Post-initialization to resolve ${VAR} env var references in api_key"""
+        if self.api_type is not None and self.api_type not in {"chat_completions", "responses"}:
+            raise ValueError("llm.api_type must be 'chat_completions' or 'responses'")
         self.api_key = _resolve_env_var(self.api_key)
 
 
@@ -109,6 +112,7 @@ class LLMConfig(LLMModelConfig):
 
     # API configuration
     api_base: str = "https://api.openai.com/v1"
+    api_type: Optional[str] = "chat_completions"
 
     # Generation parameters
     system_message: Optional[str] = "system_message"
@@ -194,6 +198,7 @@ class LLMConfig(LLMModelConfig):
             "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
+            "api_type": self.api_type,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,
@@ -254,6 +259,7 @@ class LLMConfig(LLMModelConfig):
             "provider": self.provider,
             "api_base": self.api_base,
             "api_key": self.api_key,
+            "api_type": self.api_type,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_tokens,

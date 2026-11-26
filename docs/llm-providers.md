@@ -9,6 +9,16 @@ export OPENAI_API_KEY="sk-..."
 # Uses OpenAI endpoints by default
 ```
 
+Chat Completions remains the default. For models or providers that only support the OpenAI Responses API, select it explicitly:
+
+```yaml
+llm:
+  api_type: "responses"
+  primary_model: "your-responses-compatible-model"
+```
+
+The default is `api_type: "chat_completions"`. Responses support currently covers non-streaming text generation; tool calling and streaming are not included. The Responses API does not accept the `seed` parameter, so seeded runs are less deterministic with this API type.
+
 ### Google Gemini
 
 ```yaml
