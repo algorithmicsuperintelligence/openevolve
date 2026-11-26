@@ -669,8 +669,14 @@ class ProcessParallelController:
         logger.info("Graceful shutdown requested...")
         self.shutdown_event.set()
 
-    def _create_database_snapshot(self) -> Dict[str, Any]:
-        """Create a serializable snapshot of the database state"""
+    def _create_database_snapshot(self, parent_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create a serializable snapshot of the database state
+
+        Args:
+            parent_id: The parent the worker will mutate. Its artifacts are always
+                included (within max_snapshot_artifacts), because the worker puts them
+                in the prompt.
+        """
         # Only include necessary data for workers
         snapshot = {
             "programs": {pid: prog.to_dict() for pid, prog in self.database.programs.items()},
@@ -680,16 +686,19 @@ class ProcessParallelController:
             "artifacts": {},  # Will be populated selectively
         }
 
-        # Include artifacts for programs that might be selected
-        # This limits artifacts (execution outputs/errors) to avoid large snapshot sizes.
+        # Include artifacts (execution outputs/errors) for a limited number of programs.
         # This does NOT affect program code - all programs are fully serialized above.
         # With max_artifact_bytes=20KB and population_size=1000, artifacts could be 20MB total,
         # which would significantly slow worker process initialization. The default limit of 100
-        # keeps artifact data under 2MB while still providing execution context for recent programs.
-        # Workers can still evolve properly as they have access to ALL program code.
+        # keeps artifact data under 2MB.
         # Configure via database.max_snapshot_artifacts (None for unlimited).
         max_artifacts = self.database.config.max_snapshot_artifacts
         program_ids = list(self.database.programs.keys())
+        # The worker reads only the parent's artifacts. Put the parent first so the limit
+        # cannot cut it off once the database holds more programs than the limit.
+        if parent_id in self.database.programs:
+            program_ids.remove(parent_id)
+            program_ids.insert(0, parent_id)
         if max_artifacts is not None:
             program_ids = program_ids[:max_artifacts]
         for pid in program_ids:
@@ -1241,7 +1250,7 @@ class ProcessParallelController:
             )
 
             # Create database snapshot
-            db_snapshot = self._create_database_snapshot()
+            db_snapshot = self._create_database_snapshot(parent_id=parent.id)
             db_snapshot["sampling_island"] = target_island  # Mark which island this is for
 
             # Submit to process pool
