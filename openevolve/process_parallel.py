@@ -22,6 +22,7 @@ from openevolve.config import Config
 from openevolve.database import Program, ProgramDatabase
 from openevolve.llm.ensemble import add_usage, take_usage
 from openevolve.selection import IslandSelectionContext, IslandSelector, IslandState
+from openevolve.utils.format_utils import format_metrics_safe
 from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
 
 logger = logging.getLogger(__name__)
@@ -974,13 +975,7 @@ class ProcessParallelController:
                     )
 
                     if child_program.metrics:
-                        metrics_str = ", ".join(
-                            [
-                                f"{k}={v:.4f}" if isinstance(v, (int, float)) else f"{k}={v}"
-                                for k, v in child_program.metrics.items()
-                            ]
-                        )
-                        logger.info(f"Metrics: {metrics_str}")
+                        logger.info(f"Metrics: {format_metrics_safe(child_program.metrics)}")
 
                         # Check if this is the first program without combined_score
                         if not hasattr(self, "_warned_about_combined_score"):
@@ -1019,7 +1014,7 @@ class ProcessParallelController:
                             target_metric_val is not None
                             and isinstance(target_metric_val, (int, float))
                             and not isinstance(target_metric_val, bool)
-                            and not math.isnan(float(target_metric_val))
+                            and math.isfinite(float(target_metric_val))
                             and float(target_metric_val) >= target_score
                         ):
                             logger.info(
@@ -1067,13 +1062,14 @@ class ProcessParallelController:
                                 )
                                 current_score = safe_numeric_average(child_program.metrics)
 
-                            # Verify score is numeric: exclude boolean flags and NaNs from
-                            # improvement calculations to prevent corrupted convergence tracking.
+                            # Verify score is numeric: exclude boolean flags and non-finite
+                            # values from improvement calculations to prevent corrupted
+                            # convergence tracking.
                             if (
                                 current_score is not None
                                 and isinstance(current_score, (int, float))
                                 and not isinstance(current_score, bool)
-                                and not math.isnan(current_score)
+                                and math.isfinite(current_score)
                             ):
                                 # Check for improvement
                                 if self.config.early_stopping_patience > 0:
