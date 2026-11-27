@@ -26,30 +26,31 @@ OpenEvolve is an open-source implementation of Google DeepMind's AlphaEvolve. It
 
 **Producing new results**
 
-| Paper | How OpenEvolve is used |
-|-------|------------------------|
-| [New Bounds for Zarankiewicz Numbers via Reinforced LLM Evolutionary Search](https://arxiv.org/abs/2605.01120) | New bounds in extremal combinatorics, obtained with OpenEvolve |
-| [Let the Barbarians In: How AI Can Accelerate Systems Performance Research](https://arxiv.org/abs/2512.14806) | Ten systems performance case studies, using OpenEvolve among other tools |
-| [Algorithmic Algorithm Development with LLMs](https://arxiv.org/abs/2606.01975) | Contraction order optimization for tensor networks |
-| [Even with AI, Bijection Discovery is Still Hard](https://arxiv.org/abs/2511.20987) | Combinatorial bijection discovery |
+| Paper                                                                                                          | How OpenEvolve is used                                                   |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [New Bounds for Zarankiewicz Numbers via Reinforced LLM Evolutionary Search](https://arxiv.org/abs/2605.01120) | New bounds in extremal combinatorics, obtained with OpenEvolve           |
+| [Let the Barbarians In: How AI Can Accelerate Systems Performance Research](https://arxiv.org/abs/2512.14806)  | Ten systems performance case studies, using OpenEvolve among other tools |
+| [Algorithmic Algorithm Development with LLMs](https://arxiv.org/abs/2606.01975)                                | Contraction order optimization for tensor networks                       |
+| [Even with AI, Bijection Discovery is Still Hard](https://arxiv.org/abs/2511.20987)                            | Combinatorial bijection discovery                                        |
 
 **Security research**
 
-| Paper | How OpenEvolve is used |
-|-------|------------------------|
-| [Trojan Hippo Bench](https://arxiv.org/abs/2605.01970) | Adaptive red-teaming benchmark for persistent memory attacks on LLM agents |
-| [Divide and Inject](https://arxiv.org/abs/2609.36576) | Refining indirect prompt injection fragments |
-| [LLM-Guided Prompt Evolution for Password Guessing](https://arxiv.org/abs/2604.12601) | Evolving prompts that maximize cracking rate |
-| [Targeted Black-Box Attacks on Perceptual Hash Algorithms](https://arxiv.org/abs/2607.11472) | Evolutionary attack framework based on GigaEvo and OpenEvolve |
+| Paper                                                                                        | How OpenEvolve is used                                                     |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [Trojan Hippo Bench](https://arxiv.org/abs/2605.01970)                                       | Adaptive red-teaming benchmark for persistent memory attacks on LLM agents |
+| [Divide and Inject](https://arxiv.org/abs/2609.36576)                                        | Refining indirect prompt injection fragments                               |
+| [LLM-Guided Prompt Evolution for Password Guessing](https://arxiv.org/abs/2604.12601)        | Evolving prompts that maximize cracking rate                               |
+| [Targeted Black-Box Attacks on Perceptual Hash Algorithms](https://arxiv.org/abs/2607.11472) | Evolutionary attack framework based on GigaEvo and OpenEvolve              |
 
 **Building on OpenEvolve**
 
-| Paper | Relationship |
-|-------|--------------|
-| [Hill Sampling for Test-Time Scaling](https://arxiv.org/abs/2609.25510) | Builds on OpenEvolve's problems and evaluators |
-| [CodeEvolve: Runtime-Enriched Target Selection](https://arxiv.org/abs/2605.04677) | Extends OpenEvolve for Java and Salesforce Apex |
-| [GraphIR](https://arxiv.org/abs/2608.01633) | Neural architecture search states integrated into OpenEvolve |
-| [SwarmEvolve: Latent Agent Swarms for Evolutionary Discovery and Optimization](https://arxiv.org/abs/2611.08483) · [Code](https://github.com/Qile-J/SwarmEvolve) | Uses OpenEvolve's problems and evaluators for 16 AlphaEvolve problems, and benchmarks against OpenEvolve |
+| Paper                                                                                                                                                                                      | Relationship                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| [Hill Sampling for Test-Time Scaling](https://arxiv.org/abs/2609.25510)                                                                                                                    | Builds on OpenEvolve's problems and evaluators                                                                              |
+| [CodeEvolve: Runtime-Enriched Target Selection](https://arxiv.org/abs/2605.04677)                                                                                                          | Extends OpenEvolve for Java and Salesforce Apex                                                                             |
+| [GraphIR](https://arxiv.org/abs/2608.01633)                                                                                                                                                | Neural architecture search states integrated into OpenEvolve                                                                |
+| [SwarmEvolve: Latent Agent Swarms for Evolutionary Discovery and Optimization](https://arxiv.org/abs/2611.08483) · [Code](https://github.com/Qile-J/SwarmEvolve)                           | Uses OpenEvolve's problems and evaluators for 16 AlphaEvolve problems, and benchmarks against OpenEvolve                    |
+| [Towards Feedback-to-Plan Decisions for Self-Evolving LLM Agents in CUDA Kernel Generation](https://openreview.net/forum?id=s70zO5Lvvj) · [Code](https://github.com/yuxuan-z19/cudanalyst) | Forks OpenEvolve as the evolution engine to attribute feedback signals to planning decisions in CUDA kernel self-evolution. |
 
 New evolutionary agents also routinely benchmark against OpenEvolve, including [HarnessTTT](https://arxiv.org/abs/2610.17370), [FrugalEvo](https://arxiv.org/abs/2610.03675), [SEDIMA](https://arxiv.org/abs/2610.02361), [EvoDuet](https://arxiv.org/abs/2609.40340), [LoongFlow](https://arxiv.org/abs/2512.24077) and [AscendOptimizer](https://arxiv.org/abs/2603.23566).
 
@@ -57,28 +58,28 @@ Using OpenEvolve in your work? Open a pull request to add it here, and see [Cita
 
 ## Results
 
-| Domain | Achievement | Example |
-|--------|-------------|---------|
-| GPU optimization | Hardware-optimized kernel discovery, with 2-3x speedups on real hardware | [MLX Metal Kernels](examples/mlx_metal_kernel_opt/) |
-| Mathematics | State-of-the-art circle packing (n=26) | [Circle Packing](examples/circle_packing/) |
-| Algorithm design | Adaptive sorting algorithms | [Rust Adaptive Sort](examples/rust_adaptive_sort/) |
-| Scientific computing | Automated filter design | [Signal Processing](examples/signal_processing/) |
-| Multi-language | Python, Rust, R, Metal shaders | [All Examples](examples/) |
+| Domain               | Achievement                                                              | Example                                             |
+| -------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
+| GPU optimization     | Hardware-optimized kernel discovery, with 2-3x speedups on real hardware | [MLX Metal Kernels](examples/mlx_metal_kernel_opt/) |
+| Mathematics          | State-of-the-art circle packing (n=26)                                   | [Circle Packing](examples/circle_packing/)          |
+| Algorithm design     | Adaptive sorting algorithms                                              | [Rust Adaptive Sort](examples/rust_adaptive_sort/)  |
+| Scientific computing | Automated filter design                                                  | [Signal Processing](examples/signal_processing/)    |
+| Multi-language       | Python, Rust, R, Metal shaders                                           | [All Examples](examples/)                           |
 
-| Generation 1 | Generation 190 | Generation 460 (final) |
-|--------------|----------------|------------------------|
+| Generation 1                                             | Generation 190                                              | Generation 460 (final)                                   |
+| -------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
 | ![Initial](examples/circle_packing/circle_packing_1.png) | ![Progress](examples/circle_packing/circle_packing_190.png) | ![Final](examples/circle_packing/circle_packing_460.png) |
-| Random placement | Learning structure | State-of-the-art result |
+| Random placement                                         | Learning structure                                          | State-of-the-art result                                  |
 
 **Compared with manual optimization:**
 
-| Aspect | Manual Optimization | OpenEvolve |
-|--------|---------------------|------------|
-| Time to solution | Days to weeks | Hours |
-| Exploration breadth | Limited by human creativity | Unlimited LLM creativity |
-| Reproducibility | Hard to replicate | Fully deterministic |
-| Multi-objective | Complex tradeoffs | Automatic Pareto optimization |
-| Scaling | Doesn't scale | Parallel evolution across islands |
+| Aspect              | Manual Optimization         | OpenEvolve                        |
+| ------------------- | --------------------------- | --------------------------------- |
+| Time to solution    | Days to weeks               | Hours                             |
+| Exploration breadth | Limited by human creativity | Unlimited LLM creativity          |
+| Reproducibility     | Hard to replicate           | Fully deterministic               |
+| Multi-objective     | Complex tradeoffs           | Automatic Pareto optimization     |
+| Scaling             | Doesn't scale               | Parallel evolution across islands |
 
 ## Quick Start
 
@@ -150,17 +151,17 @@ Good fits are performance optimization, algorithm discovery, scientific computin
 
 ## Examples
 
-| Project | Domain | What it evolves |
-|---------|--------|-----------------|
-| [Function Minimization](examples/function_minimization/) | Optimization | Random search to simulated annealing |
-| [Circle Packing](examples/circle_packing/) | Mathematics | The n=26 AlphaEvolve task |
-| [AlphaEvolve Math Problems](examples/alphaevolve_math_problems/) | Mathematics | Problems from AlphaEvolve's appendices |
-| [MLX GPU Kernels](examples/mlx_metal_kernel_opt/) | Hardware | Apple Silicon Metal kernels |
-| [Rust Adaptive Sort](examples/rust_adaptive_sort/) | Algorithms | Data-aware sorting |
-| [Symbolic Regression](examples/symbolic_regression/) | Science | Equation discovery on LLM-SRBench |
-| [Prompt Optimization](examples/llm_prompt_optimization/) | LLMs | Prompts instead of code |
-| [Online Judge](examples/online_judge_programming/) | Programming | Competitive programming solutions |
-| [Web Scraper + OptiLLM](examples/web_scraper_optillm/) | AI integration | Test-time compute |
+| Project                                                          | Domain         | What it evolves                        |
+| ---------------------------------------------------------------- | -------------- | -------------------------------------- |
+| [Function Minimization](examples/function_minimization/)         | Optimization   | Random search to simulated annealing   |
+| [Circle Packing](examples/circle_packing/)                       | Mathematics    | The n=26 AlphaEvolve task              |
+| [AlphaEvolve Math Problems](examples/alphaevolve_math_problems/) | Mathematics    | Problems from AlphaEvolve's appendices |
+| [MLX GPU Kernels](examples/mlx_metal_kernel_opt/)                | Hardware       | Apple Silicon Metal kernels            |
+| [Rust Adaptive Sort](examples/rust_adaptive_sort/)               | Algorithms     | Data-aware sorting                     |
+| [Symbolic Regression](examples/symbolic_regression/)             | Science        | Equation discovery on LLM-SRBench      |
+| [Prompt Optimization](examples/llm_prompt_optimization/)         | LLMs           | Prompts instead of code                |
+| [Online Judge](examples/online_judge_programming/)               | Programming    | Competitive programming solutions      |
+| [Web Scraper + OptiLLM](examples/web_scraper_optillm/)           | AI integration | Test-time compute                      |
 
 Running Google's AlphaEvolve examples? See the [interoperability walkthrough](examples/alphaevolve_interop/).
 
