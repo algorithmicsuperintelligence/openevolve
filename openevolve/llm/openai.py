@@ -62,13 +62,22 @@ class OpenAILLM(LLMInterface):
         self.retry_delay = model_cfg.retry_delay
         self.api_base = model_cfg.api_base
         self.api_key = model_cfg.api_key
+        configured_api_type = getattr(model_cfg, "api_type", None)
+        self.api_type = (
+            configured_api_type
+            if isinstance(configured_api_type, str) and configured_api_type
+            else "chat_completions"
+        )
+        if self.api_type not in {"chat_completions", "responses"}:
+            raise ValueError("api_type must be 'chat_completions' or 'responses'")
         self.random_seed = getattr(model_cfg, "random_seed", None)
         self.reasoning_effort = getattr(model_cfg, "reasoning_effort", None)
         self.last_usage: Optional[Dict[str, Any]] = None
         self._seed_skip_logged = False
+        self._responses_seed_skip_logged = False
 
         # Manual mode: enabled via llm.manual_mode in config.yaml
-        self.manual_mode = (getattr(model_cfg, "manual_mode", False) is True)
+        self.manual_mode = getattr(model_cfg, "manual_mode", False) is True
         self.manual_queue_dir: Optional[Path] = None
 
         if self.manual_mode:
@@ -222,6 +231,8 @@ class OpenAILLM(LLMInterface):
         """Make the actual API call"""
         if self.client is None:
             raise RuntimeError("OpenAI client is not initialized (manual_mode enabled?)")
+        if self.api_type == "responses":
+            return await self._call_responses_api(params)
 
         # Await the async client directly instead of running a blocking
         # sync client in the default thread-pool executor, which can
@@ -273,11 +284,99 @@ class OpenAILLM(LLMInterface):
         # Mistral's API reasoning models return content as a list of typed
         # chunks (thinking + text); keep only the text chunks
         if isinstance(content, list):
-            content = "".join(
-                chunk["text"] for chunk in content if chunk.get("type") == "text"
-            )
+            content = "".join(chunk["text"] for chunk in content if chunk.get("type") == "text")
             if not content:
                 raise ValueError("API returned no text content in response chunks")
+        return content
+
+    def _build_responses_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        messages = params.get("messages", [])
+        instructions = [
+            message.get("content", "") for message in messages if message.get("role") == "system"
+        ]
+        response_params: Dict[str, Any] = {
+            "model": params["model"],
+            "input": [message for message in messages if message.get("role") != "system"],
+        }
+        if instructions:
+            response_params["instructions"] = "\n\n".join(instructions)
+
+        max_output_tokens = params.get("max_completion_tokens") or params.get("max_tokens")
+        if max_output_tokens is not None:
+            response_params["max_output_tokens"] = max_output_tokens
+        for key in ("temperature", "top_p"):
+            if params.get(key) is not None:
+                response_params[key] = params[key]
+        if params.get("reasoning_effort") is not None:
+            response_params["reasoning"] = {"effort": params["reasoning_effort"]}
+        if params.get("verbosity") is not None:
+            response_params["text"] = {"verbosity": params["verbosity"]}
+
+        has_seed = "seed" in params or "random_seed" in params.get("extra_body", {})
+        if has_seed and not self._responses_seed_skip_logged:
+            logger.warning(
+                "OpenAI Responses API does not support seed; skipping it. "
+                "Reproducibility may be limited."
+            )
+            self._responses_seed_skip_logged = True
+        return response_params
+
+    async def _call_responses_api(self, params: Dict[str, Any]) -> str:
+        responses_client = getattr(self.client, "responses", None)
+        if responses_client is None:
+            raise RuntimeError(
+                "Responses API requires an OpenAI SDK with client.responses support; "
+                "upgrade the 'openai' package."
+            )
+        response_params = self._build_responses_params(params)
+        response = await responses_client.create(**response_params, stream=False)
+        if isinstance(response, str):
+            raise ValueError(
+                "LLM endpoint returned a raw string instead of a Responses API object "
+                f"(streaming responses are not supported): {response[:200]!r}"
+            )
+
+        content = getattr(response, "output_text", "") or ""
+        status = getattr(response, "status", None)
+        incomplete_details = getattr(response, "incomplete_details", None)
+        incomplete_reason = getattr(incomplete_details, "reason", None)
+        finish_reason = "stop" if status in (None, "completed") else str(status)
+        if status == "incomplete" and incomplete_reason == "max_output_tokens":
+            finish_reason = "length"
+
+        logger.debug(f"API parameters: {response_params}")
+        logger.debug(f"API response: {content}")
+        if finish_reason == "length":
+            logger.warning(
+                f"Response from {self.model} was cut off at the token limit "
+                f"(finish_reason=length, max_output_tokens={response_params.get('max_output_tokens')}). "
+                "Thinking models count reasoning tokens toward this limit; raise llm.max_tokens."
+            )
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "input_tokens", 0) or 0
+            completion_tokens = getattr(usage, "output_tokens", 0) or 0
+            total_tokens = getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens)
+            self.last_usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "model": str(self.model),
+                "finish_reason": finish_reason,
+            }
+            logger.info(
+                f"LLM Token Usage ({self.model}): "
+                f"prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={completion_tokens}, "
+                f"total_tokens={total_tokens}"
+            )
+        else:
+            self.last_usage = None
+            logger.info(f"LLM Token Usage ({self.model}): usage info not returned by API")
+
+        if not content:
+            raise ValueError("Responses API returned no text content")
         return content
 
     async def _manual_wait_for_answer(
