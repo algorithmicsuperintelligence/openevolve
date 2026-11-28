@@ -23,7 +23,11 @@ from openevolve.database import Program, ProgramDatabase
 from openevolve.llm.ensemble import add_usage, take_usage
 from openevolve.selection import IslandSelectionContext, IslandSelector, IslandState
 from openevolve.utils.format_utils import format_metrics_safe
-from openevolve.utils.metrics_utils import get_fitness_score, safe_numeric_average
+from openevolve.utils.metrics_utils import (
+    get_fitness_score,
+    is_failed_evaluation,
+    safe_numeric_average,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +214,7 @@ def _lazy_init_worker_components():
             evaluator_prompt,
             database=None,  # No shared database in worker
             suffix=getattr(_worker_config, "file_suffix", ".py"),
+            feature_dimensions=_worker_config.database.feature_dimensions,
         )
 
 
@@ -265,8 +270,15 @@ def _run_iteration(
         #    are excluded so high-complexity solutions do not crowd out genuinely high-performing solutions.
         # 3. Boolean flags (which subclass int in Python) are excluded from scoring.
         feature_dims = db_snapshot.get("feature_dimensions", [])
+
+        def _worker_rank_key(prog: Program) -> Tuple[int, float]:
+            score = get_fitness_score(prog.metrics, feature_dims)
+            if not prog.metrics or is_failed_evaluation(prog.metrics) or not math.isfinite(score):
+                return (0, score)
+            return (1, score)
+
         island_programs.sort(
-            key=lambda p: get_fitness_score(p.metrics, feature_dims),
+            key=_worker_rank_key,
             reverse=True,
         )
 
@@ -551,6 +563,13 @@ def _terminate_process_pool(executor: ProcessPoolExecutor) -> None:
         )
 
 
+def _is_failed_program_metrics(metrics: Dict[str, Any]) -> bool:
+    """Return True when child program metrics represent a failed or timed-out evaluation."""
+    if metrics.get("error") is not None or bool(metrics.get("timeout")):
+        return True
+    return is_failed_evaluation(metrics)
+
+
 class ProcessParallelController:
     """Controller for process-based parallel evolution"""
 
@@ -593,36 +612,42 @@ class ProcessParallelController:
         """Serialize config object to a dictionary that can be pickled"""
         # Manual serialization to handle nested objects properly
 
-        # The asdict() call itself triggers the deepcopy which tries to serialize novelty_llm. Remove it first.
+        # The asdict() call itself triggers deepcopy, which cannot serialize a live novelty_llm
+        # client. Clear it temporarily during serialization without mutating caller state.
+        saved_novelty_llm = config.database.novelty_llm
         config.database.novelty_llm = None
+        try:
+            # Forward every remaining top-level field automatically. Listing them by hand
+            # let new fields fall back to their defaults in workers (issue #516)
+            nested_sections = {"llm", "prompt", "database", "evaluator", "evolution_trace"}
+            top_level = {
+                f.name: getattr(config, f.name)
+                for f in fields(Config)
+                if f.name not in nested_sections
+            }
 
-        # Forward every remaining top-level field automatically. Listing them by hand
-        # let new fields fall back to their defaults in workers (issue #516)
-        nested_sections = {"llm", "prompt", "database", "evaluator", "evolution_trace"}
-        top_level = {
-            f.name: getattr(config, f.name) for f in fields(Config) if f.name not in nested_sections
-        }
-
-        return {
-            "llm": {
-                "models": [asdict(m) for m in config.llm.models],
-                "evaluator_models": [asdict(m) for m in config.llm.evaluator_models],
-                "api_base": config.llm.api_base,
-                "api_key": config.llm.api_key,
-                "temperature": config.llm.temperature,
-                "top_p": config.llm.top_p,
-                "max_tokens": config.llm.max_tokens,
-                "timeout": config.llm.timeout,
-                "retries": config.llm.retries,
-                "retry_delay": config.llm.retry_delay,
-            },
-            "prompt": asdict(config.prompt),
-            "database": asdict(config.database),
-            "evaluator": asdict(config.evaluator),
-            "evolution_trace": asdict(config.evolution_trace),
-            **top_level,
-            "file_suffix": self.file_suffix,
-        }
+            return {
+                "llm": {
+                    "models": [asdict(m) for m in config.llm.models],
+                    "evaluator_models": [asdict(m) for m in config.llm.evaluator_models],
+                    "api_base": config.llm.api_base,
+                    "api_key": config.llm.api_key,
+                    "temperature": config.llm.temperature,
+                    "top_p": config.llm.top_p,
+                    "max_tokens": config.llm.max_tokens,
+                    "timeout": config.llm.timeout,
+                    "retries": config.llm.retries,
+                    "retry_delay": config.llm.retry_delay,
+                },
+                "prompt": asdict(config.prompt),
+                "database": asdict(config.database),
+                "evaluator": asdict(config.evaluator),
+                "evolution_trace": asdict(config.evolution_trace),
+                **top_level,
+                "file_suffix": self.file_suffix,
+            }
+        finally:
+            config.database.novelty_llm = saved_novelty_llm
 
     def start(self) -> None:
         """Start the process pool"""
@@ -812,9 +837,9 @@ class ProcessParallelController:
         if early_stopping_enabled:
             best_score = float("-inf")
             iterations_without_improvement = 0
-            if self.config.early_stopping_patience < 0:
+            if self.config.early_stopping_patience <= 0:
                 logger.info(
-                    f"Early stopping patience is set to a negative value, running event-based early-stopping, "
+                    f"Early stopping patience is set to a non-positive value, running event-based early-stopping, "
                     f"Early stop when metric '{self.config.early_stopping_metric}' reaches {self.config.convergence_threshold}"
                 )
             else:
@@ -1012,8 +1037,13 @@ class ProcessParallelController:
                     )
 
                     # Check target score: verify combined_score is genuine numeric data
-                    # (avoid treating boolean flags like True as 1.0 or NaN as meeting targets).
-                    if target_score is not None and child_program.metrics:
+                    # (avoid treating boolean flags like True as 1.0, NaN, or failed/timed-out
+                    # evaluations as meeting targets).
+                    if (
+                        target_score is not None
+                        and child_program.metrics
+                        and not _is_failed_program_metrics(child_program.metrics)
+                    ):
                         target_metric_val = child_program.metrics.get("combined_score")
                         if (
                             target_metric_val is not None
@@ -1029,9 +1059,7 @@ class ProcessParallelController:
 
                     # Check early stopping
                     if early_stopping_enabled and child_program.metrics:
-                        if child_program.metrics.get(
-                            "error"
-                        ) is not None or child_program.metrics.get("timeout"):
+                        if _is_failed_program_metrics(child_program.metrics):
                             # Failed or timed-out evaluations carry no score. Letting them
                             # into the counter below would poison the best-score baseline
                             # with 0.0 on the first failure and then count every subsequent
@@ -1061,11 +1089,15 @@ class ProcessParallelController:
                                     self.config.database.feature_dimensions,
                                 )
                             else:
-                                # User specified a custom metric that doesn't exist
+                                # User specified a custom metric that doesn't exist; exclude
+                                # MAP-Elites feature dimensions just like the default fallback.
                                 logger.warning(
-                                    f"Early stopping metric '{self.config.early_stopping_metric}' not found, using safe numeric average"
+                                    f"Early stopping metric '{self.config.early_stopping_metric}' not found, using fitness score"
                                 )
-                                current_score = safe_numeric_average(child_program.metrics)
+                                current_score = get_fitness_score(
+                                    child_program.metrics,
+                                    self.config.database.feature_dimensions,
+                                )
 
                             # Verify score is numeric: exclude boolean flags and non-finite
                             # values from improvement calculations to prevent corrupted
