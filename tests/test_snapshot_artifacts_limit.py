@@ -4,9 +4,11 @@ Controls how many artifacts are included in worker process snapshots.
 """
 
 import unittest
+from unittest.mock import patch
 
 from openevolve.config import Config, DatabaseConfig
 from openevolve.database import ProgramDatabase, Program
+from openevolve.process_parallel import ProcessParallelController
 
 
 class TestMaxSnapshotArtifactsConfig(unittest.TestCase):
@@ -139,6 +141,63 @@ class TestSnapshotCreation(unittest.TestCase):
         db = ProgramDatabase(db_config)
 
         self.assertIsNone(db.config.max_snapshot_artifacts)
+
+
+class _CapturingExecutor:
+    """Records the arguments of the last submitted iteration"""
+
+    def submit(self, fn, *args):
+        self.args = args
+        return None
+
+
+class TestSnapshotParentArtifacts(unittest.TestCase):
+    """The worker builds the prompt from the parent's artifacts, so the limit must keep them"""
+
+    def _controller(self, max_snapshot_artifacts, num_programs=8):
+        config = Config()
+        config.database.num_islands = 1
+        config.database.max_snapshot_artifacts = max_snapshot_artifacts
+        db = ProgramDatabase(config.database)
+        for i in range(num_programs):
+            # Decreasing scores: every program stays in the island
+            db.add(
+                Program(
+                    id=f"prog_{i}",
+                    code=f"x = {i}\n" * (i + 1),
+                    metrics={"combined_score": 1.0 / (i + 1)},
+                )
+            )
+            db.store_artifacts(f"prog_{i}", {"stderr": f"error from prog_{i}"})
+        self.assertEqual(len(db.programs), num_programs)
+        return ProcessParallelController(config, "evaluator.py", db), db
+
+    def test_parent_added_after_the_limit_keeps_its_artifacts(self):
+        controller, db = self._controller(max_snapshot_artifacts=5)
+
+        snapshot = controller._create_database_snapshot(parent_id="prog_7")
+
+        self.assertEqual(snapshot["artifacts"]["prog_7"], {"stderr": "error from prog_7"})
+        self.assertEqual(len(snapshot["artifacts"]), 5)
+
+    def test_submitted_snapshot_contains_parent_artifacts(self):
+        controller, db = self._controller(max_snapshot_artifacts=5)
+        controller.executor = _CapturingExecutor()
+        parent = db.get("prog_7")
+
+        with patch.object(db, "sample_from_island", return_value=(parent, [])):
+            controller._submit_iteration(1, 0)
+
+        _, snapshot, parent_id, _ = controller.executor.args
+        self.assertEqual(parent_id, "prog_7")
+        self.assertEqual(snapshot["artifacts"].get("prog_7"), {"stderr": "error from prog_7"})
+
+    def test_zero_limit_still_sends_no_artifacts(self):
+        controller, db = self._controller(max_snapshot_artifacts=0)
+
+        snapshot = controller._create_database_snapshot(parent_id="prog_7")
+
+        self.assertEqual(snapshot["artifacts"], {})
 
 
 if __name__ == "__main__":
