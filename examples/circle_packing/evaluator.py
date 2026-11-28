@@ -79,6 +79,62 @@ def validate_packing(centers, radii):
     return True
 
 
+def _subprocess_script(program_path, results_path):
+    """
+    Build the runner executed in the child process.
+
+    Paths are inserted with repr(). A quoted Windows path such as
+    'C:\\Users\\...' is not valid Python: \\U starts a unicode escape and the
+    child exits with SyntaxError before the program runs.
+    """
+    program_lit = repr(os.fspath(program_path))
+    results_lit = repr(os.fspath(results_path))
+    return f"""
+import sys
+import numpy as np
+import os
+import pickle
+import traceback
+
+# Add the directory to sys.path
+sys.path.insert(0, os.path.dirname({program_lit}))
+
+# Debugging info
+print(f"Running in subprocess, Python version: {{sys.version}}")
+print("Program path: " + {program_lit})
+
+try:
+    # Import the program
+    spec = __import__('importlib.util').util.spec_from_file_location("program", {program_lit})
+    program = __import__('importlib.util').util.module_from_spec(spec)
+    spec.loader.exec_module(program)
+
+    # Run the packing function
+    print("Calling run_packing()...")
+    centers, radii, sum_radii = program.run_packing()
+    print(f"run_packing() returned successfully: sum_radii = {{sum_radii}}")
+
+    # Save results to a file
+    results = {{
+        'centers': centers,
+        'radii': radii,
+        'sum_radii': sum_radii
+    }}
+
+    with open({results_lit}, 'wb') as f:
+        pickle.dump(results, f)
+    print("Results saved to " + {results_lit})
+
+except Exception as e:
+    # If an error occurs, save the error instead
+    print(f"Error in subprocess: {{str(e)}}")
+    traceback.print_exc()
+    with open({results_lit}, 'wb') as f:
+        pickle.dump({{'error': str(e)}}, f)
+    print("Error saved to " + {results_lit})
+"""
+
+
 def run_with_timeout(program_path, timeout_seconds=20):
     """
     Run the program in a separate process with timeout
@@ -93,55 +149,11 @@ def run_with_timeout(program_path, timeout_seconds=20):
     """
     # Create a temporary file to execute
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
-        # Write a script that executes the program and saves results
-        script = f"""
-import sys
-import numpy as np
-import os
-import pickle
-import traceback
-
-# Add the directory to sys.path
-sys.path.insert(0, os.path.dirname('{program_path}'))
-
-# Debugging info
-print(f"Running in subprocess, Python version: {{sys.version}}")
-print(f"Program path: {program_path}")
-
-try:
-    # Import the program
-    spec = __import__('importlib.util').util.spec_from_file_location("program", '{program_path}')
-    program = __import__('importlib.util').util.module_from_spec(spec)
-    spec.loader.exec_module(program)
-    
-    # Run the packing function
-    print("Calling run_packing()...")
-    centers, radii, sum_radii = program.run_packing()
-    print(f"run_packing() returned successfully: sum_radii = {{sum_radii}}")
-
-    # Save results to a file
-    results = {{
-        'centers': centers,
-        'radii': radii,
-        'sum_radii': sum_radii
-    }}
-
-    with open('{temp_file.name}.results', 'wb') as f:
-        pickle.dump(results, f)
-    print(f"Results saved to {temp_file.name}.results")
-    
-except Exception as e:
-    # If an error occurs, save the error instead
-    print(f"Error in subprocess: {{str(e)}}")
-    traceback.print_exc()
-    with open('{temp_file.name}.results', 'wb') as f:
-        pickle.dump({{'error': str(e)}}, f)
-    print(f"Error saved to {temp_file.name}.results")
-"""
-        temp_file.write(script.encode())
         temp_file_path = temp_file.name
-
-    results_path = f"{temp_file_path}.results"
+        results_path = f"{temp_file_path}.results"
+        # Write a script that executes the program and saves results
+        script = _subprocess_script(program_path, results_path)
+        temp_file.write(script.encode())
 
     try:
         # Run the script with timeout
