@@ -151,6 +151,58 @@ def get_fitness_score(
     return safe_numeric_average(fitness_metrics)
 
 
+def is_failed_evaluation(metrics: Optional[Dict[str, Any]]) -> bool:
+    """
+    Return True when an evaluation metrics dictionary represents a failed or timed-out run.
+
+    Handles OpenEvolve's error conventions consistently across cascade evaluation,
+    database ranking, target-score checks, early stopping, and LLM feedback:
+      - `timeout is True`
+      - `stage1_passed`, `stage2_passed`, or `stage3_passed` equal to `False` or `0.0`
+      - non-numeric or boolean-True `error` values (e.g. `{"error": "SyntaxError"}`)
+      - non-zero or non-finite numeric `error` flags (e.g. `{"error": 1.0, "combined_score": 0.0}`)
+      - OpenEvolve's `{"error": 0.0}` sentinel when no other valid numeric score is present
+        (while preserving numeric `error: 0.0` alongside real scores such as `{"score": 1, "error": 0.0}`).
+    """
+    if not metrics:
+        return True
+    if metrics.get("timeout") is True:
+        return True
+    for stage_flag in ("stage1_passed", "stage2_passed", "stage3_passed"):
+        if stage_flag in metrics:
+            flag_val = metrics[stage_flag]
+            if flag_val is False or (
+                isinstance(flag_val, (int, float))
+                and not isinstance(flag_val, bool)
+                and float(flag_val) == 0.0
+            ):
+                return True
+    if "error" in metrics and metrics["error"] is not None:
+        err_val = metrics["error"]
+        if isinstance(err_val, bool):
+            if err_val:
+                return True
+        elif not isinstance(err_val, (int, float)):
+            return True
+        else:
+            try:
+                float_err = float(err_val)
+            except (ValueError, TypeError, OverflowError):
+                return True
+            if not math.isfinite(float_err) or float_err != 0.0:
+                return True
+            has_other_numeric_score = any(
+                name != "error"
+                and isinstance(val, (int, float))
+                and not isinstance(val, bool)
+                and not math.isnan(float(val))
+                for name, val in metrics.items()
+            )
+            if not has_other_numeric_score:
+                return True
+    return False
+
+
 def format_feature_coordinates(metrics: Dict[str, Any], feature_dimensions: List[str]) -> str:
     """
     Format feature coordinates for display in prompts

@@ -694,10 +694,11 @@ class ProgramDatabase:
             if sorted_programs:
                 logger.debug(f"Found best program by metric '{metric}': {sorted_programs[0].id}")
         else:
-            # Sort by fitness (excluding feature dimensions)
+            # Sort by fitness (excluding feature dimensions) while keeping valid
+            # negative-score solutions ahead of failed/timed-out evaluations.
             sorted_programs = sorted(
                 self.programs.values(),
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=self._program_rank_key,
                 reverse=True,
             )
             if sorted_programs:
@@ -771,10 +772,11 @@ class ProgramDatabase:
                 reverse=True,
             )
         else:
-            # Sort by combined_score if available, otherwise by average of all numeric metrics
+            # Sort by combined_score if available, otherwise by average of non-feature
+            # numeric metrics, keeping valid negative-score solutions ahead of failures.
             sorted_programs = sorted(
                 candidates,
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=self._program_rank_key,
                 reverse=True,
             )
 
@@ -1305,6 +1307,25 @@ class ProgramDatabase:
 
         return self._llm_judge_novelty(program, self.programs[max_smlty_pid])
 
+    def _program_rank_key(self, program: Program) -> Tuple[int, float]:
+        """
+        Compute a transitive sort key `(is_valid_finite, fitness)` for ranking programs.
+
+        Valid finite evaluations (`1`) always rank above failed, timed-out, empty, or
+        non-finite evaluations (`0`) so a failure returning `{"combined_score": 0.0, "error": ...}`
+        cannot outscore or displace a valid negative-score solution (e.g. `loss = -5.0`).
+        """
+        from openevolve.utils.metrics_utils import is_failed_evaluation
+
+        fitness = get_fitness_score(program.metrics, self.config.feature_dimensions)
+        if (
+            not program.metrics
+            or is_failed_evaluation(program.metrics)
+            or not math.isfinite(fitness)
+        ):
+            return (0, fitness)
+        return (1, fitness)
+
     def _is_better(self, program1: Program, program2: Program) -> bool:
         """
         Determine if program1 has better FITNESS than program2
@@ -1329,11 +1350,7 @@ class ProgramDatabase:
         if not program1.metrics and program2.metrics:
             return False
 
-        # Compare fitness (excluding feature dimensions)
-        fitness1 = get_fitness_score(program1.metrics, self.config.feature_dimensions)
-        fitness2 = get_fitness_score(program2.metrics, self.config.feature_dimensions)
-
-        return fitness1 > fitness2
+        return self._program_rank_key(program1) > self._program_rank_key(program2)
 
     def _update_archive(self, program: Program) -> None:
         """
@@ -1401,7 +1418,7 @@ class ProgramDatabase:
         if valid_archive_programs:
             worst_program = min(
                 valid_archive_programs,
-                key=lambda p: get_fitness_score(p.metrics, self.config.feature_dimensions),
+                key=self._program_rank_key,
             )
 
             # Replace if new program is better
