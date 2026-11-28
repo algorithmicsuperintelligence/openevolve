@@ -576,6 +576,7 @@ class ProcessParallelController:
         # Per-run outcome counters, reset by run_evolution (issue #288)
         self.completed_iterations = 0
         self.successful_iterations = 0
+        self.length_rejected_iterations = 0
         self.last_iteration_error: Optional[str] = None
         # True when the last run completed iterations but every one of them failed
         # before producing a candidate program
@@ -797,6 +798,8 @@ class ProcessParallelController:
         # Iterations whose worker produced a candidate program. A run where this
         # stays at zero (e.g. the LLM endpoint is down) made no progress at all.
         successful_iterations = 0
+        length_rejected_iterations = 0
+        self.length_rejected_iterations = 0
         self.last_iteration_error = None
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -860,6 +863,8 @@ class ProcessParallelController:
 
                 if result.error:
                     self.last_iteration_error = result.error
+                    if result.error.startswith("Generated code exceeds maximum length"):
+                        length_rejected_iterations += 1
                     mode_str = f" [{result.evolution_mode}]" if result.evolution_mode else ""
                     logger.warning(
                         f"Iteration {completed_iteration} error{mode_str}: "
@@ -1200,6 +1205,7 @@ class ProcessParallelController:
 
         self.completed_iterations = completed_iterations
         self.successful_iterations = successful_iterations
+        self.length_rejected_iterations = length_rejected_iterations
         # An interrupted run is not a failed one. Evaluated here, before stop()
         # sets the shutdown event as part of normal cleanup.
         self.produced_no_candidates = (
@@ -1207,6 +1213,16 @@ class ProcessParallelController:
             and successful_iterations == 0
             and not self.shutdown_event.is_set()
         )
+        if length_rejected_iterations > 0 and (
+            self.produced_no_candidates
+            or length_rejected_iterations * 2 >= max(completed_iterations, 1)
+        ):
+            logger.warning(
+                f"{length_rejected_iterations}/{completed_iterations} iterations were rejected "
+                f"pre-evaluation because generated code exceeded max_code_length="
+                f"{self.config.max_code_length}. Increase `max_code_length` in config if evolving "
+                "larger programs."
+            )
         if self.produced_no_candidates:
             logger.error(
                 f"❌ None of the {completed_iterations} iterations produced a candidate program. "

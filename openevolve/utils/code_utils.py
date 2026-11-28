@@ -257,6 +257,15 @@ def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[
     Returns:
         Extracted code or None if not found
     """
+    # Prefer matching a closing fence on its own line so triple backticks embedded inside
+    # Python docstrings/string literals do not prematurely truncate the code block.
+    standalone_lang_pattern = (
+        r"```" + re.escape(language) + r"[ \t]*\r?\n(.*?)\r?\n[ \t]*```[ \t]*(?:\r?\n|$)"
+    )
+    matches = re.findall(standalone_lang_pattern, llm_response, re.DOTALL)
+    if matches:
+        return matches[0].strip()
+
     code_block_pattern = r"```" + re.escape(language) + r"[ \t]*\r?\n(.*?)```"
     matches = re.findall(code_block_pattern, llm_response, re.DOTALL)
 
@@ -264,6 +273,11 @@ def parse_full_rewrite(llm_response: str, language: str = "python") -> Optional[
         return matches[0].strip()
 
     # Fallback to any code block, without its language tag if it has one
+    standalone_any_pattern = r"```(?:[^\s`]*[ \t]*\r?\n)?(.*?)\r?\n[ \t]*```[ \t]*(?:\r?\n|$)"
+    matches = re.findall(standalone_any_pattern, llm_response, re.DOTALL)
+    if matches:
+        return matches[0].strip()
+
     code_block_pattern = r"```(?:[^\s`]*[ \t]*\r?\n)?(.*?)```"
     matches = re.findall(code_block_pattern, llm_response, re.DOTALL)
 
