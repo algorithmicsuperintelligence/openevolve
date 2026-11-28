@@ -122,6 +122,12 @@ class OpenEvolve:
         # Load initial program
         self.initial_program_path = initial_program_path
         self.initial_program_code = self._load_initial_program()
+        if len(self.initial_program_code) > self.config.max_code_length:
+            logger.warning(
+                f"Initial program length ({len(self.initial_program_code)} chars) exceeds "
+                f"config.max_code_length ({self.config.max_code_length}); "
+                "children longer than max_code_length will be rejected pre-evaluation."
+            )
         if not self.config.language:
             self.config.language = extract_code_language(self.initial_program_code)
 
@@ -152,7 +158,14 @@ class OpenEvolve:
                     f"extension than '{initial_program_path}'"
                 )
             with open(seed_path, "r", encoding="utf-8") as f:
-                self.island_initial_program_codes[island_idx] = f.read()
+                seed_code = f.read()
+            if len(seed_code) > self.config.max_code_length:
+                logger.warning(
+                    f"Island {island_idx} initial program length ({len(seed_code)} chars) "
+                    f"exceeds config.max_code_length ({self.config.max_code_length}); "
+                    "children longer than max_code_length will be rejected pre-evaluation."
+                )
+            self.island_initial_program_codes[island_idx] = seed_code
 
         # Set the file_suffix in config (can be overridden in YAML)
         if not hasattr(self.config, "file_suffix") or self.config.file_suffix == ".py":
