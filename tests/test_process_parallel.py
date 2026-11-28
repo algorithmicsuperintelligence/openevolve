@@ -341,6 +341,74 @@ def evaluate(program_path):
 
         asyncio.run(run_test())
 
+    @staticmethod
+    def _success(iteration):
+        return SerializableResult(
+            child_program_dict={
+                "id": f"child_{iteration}",
+                "code": f"def evolved(): return {iteration}",
+                "language": "python",
+                "parent_id": "test_0",
+                "metrics": {"score": 0.1, "performance": 0.1},
+            },
+            parent_id="test_0",
+            iteration=iteration,
+            target_island=0,
+        )
+
+    def _run_with_outcomes(self, outcomes, max_iterations):
+        """Run evolution where iteration i completes with outcomes(i); return checkpoint calls"""
+
+        def submit(iteration, island_id=None):
+            future = MagicMock()
+            future.done.return_value = True
+            outcome = outcomes(iteration)
+            if isinstance(outcome, Exception):
+                future.result.side_effect = outcome
+            else:
+                future.result.return_value = outcome
+            return future
+
+        async def run_test():
+            controller = ProcessParallelController(self.config, self.eval_file, self.database)
+            controller.executor = MagicMock()
+            checkpoint_calls = []
+            with patch.object(controller, "_submit_iteration", side_effect=submit):
+                await controller.run_evolution(
+                    start_iteration=1,
+                    max_iterations=max_iterations,
+                    target_score=None,
+                    checkpoint_callback=checkpoint_calls.append,
+                )
+            return checkpoint_calls
+
+        return asyncio.run(run_test())
+
+    def test_checkpoint_saved_when_interval_iteration_fails(self):
+        """A failed iteration on checkpoint_interval still triggers the checkpoint"""
+        calls = self._run_with_outcomes(
+            lambda i: (
+                SerializableResult(error="No valid diffs found in response", iteration=i)
+                if i == 5
+                else self._success(i)
+            ),
+            max_iterations=7,
+        )
+        self.assertEqual(calls, [5])
+
+    def test_checkpoint_saved_when_interval_iteration_raises(self):
+        """An iteration whose future raises on checkpoint_interval still triggers it"""
+        calls = self._run_with_outcomes(
+            lambda i: RuntimeError("worker died") if i == 5 else self._success(i),
+            max_iterations=7,
+        )
+        self.assertEqual(calls, [5])
+
+    def test_checkpoint_saved_once_for_successful_interval_iteration(self):
+        """A successful iteration on checkpoint_interval triggers exactly one checkpoint"""
+        calls = self._run_with_outcomes(self._success, max_iterations=7)
+        self.assertEqual(calls, [5])
+
     def test_request_shutdown(self):
         """Test graceful shutdown request"""
         controller = ProcessParallelController(self.config, self.eval_file, self.database)
