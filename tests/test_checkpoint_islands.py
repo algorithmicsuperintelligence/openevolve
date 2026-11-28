@@ -61,6 +61,7 @@ class TestCheckpointIslands(unittest.TestCase):
     def test_resume_preserves_saved_islands(self):
         for num_islands in (1, 2):
             with self.subTest(num_islands=num_islands):
+                self.database.save(self.checkpoint_path)
                 resumed = self.load_database(num_islands)
                 self.assertEqual(resumed.islands, self.database.islands)
                 self.assertEqual(resumed.island_feature_maps, self.database.island_feature_maps)
