@@ -191,7 +191,7 @@ class PromptSampler:
         # Use safe formatting to handle mixed numeric and string values
         formatted_parts = []
         for name, value in metrics.items():
-            if isinstance(value, (int, float)):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
                 try:
                     formatted_parts.append(f"- {name}: {value:.4f}")
                 except (ValueError, TypeError):
@@ -376,7 +376,7 @@ class PromptSampler:
             if not key_features:
                 key_features = []
                 for name, value in program.get("metrics", {}).items():
-                    if isinstance(value, (int, float)):
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
                         try:
                             key_features.append(
                                 self.template_manager.get_fragment("top_program_metrics_prefix")
@@ -610,7 +610,11 @@ class PromptSampler:
         # Analyze metrics for standout characteristics
         metrics = program.get("metrics", {})
         for metric_name, value in metrics.items():
-            if isinstance(value, (int, float)):
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and not math.isnan(float(value))
+            ):
                 if value >= 0.9:
                     features.append(
                         f"{self.template_manager.get_fragment('inspiration_metrics_excellent').format(metric_name=metric_name, value=value)}"

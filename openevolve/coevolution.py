@@ -48,6 +48,11 @@ class CoevolutionResult:
 CompetitiveEvaluator = Callable[[str, str, Tuple[Opponent, ...]], Dict[str, float]]
 
 
+def _has_finite_score(metrics: Mapping[str, object]) -> bool:
+    score = metrics.get("combined_score")
+    return not isinstance(score, bool) and isinstance(score, (int, float)) and math.isfinite(score)
+
+
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -245,8 +250,7 @@ async def _run_coevolution(
             ):
                 program = Program.from_dict(copy.deepcopy(saved))
                 program.metrics = await engine.evaluator.evaluate_program(program.code, program.id)
-                score = program.metrics.get("combined_score")
-                if not isinstance(score, (int, float)) or not math.isfinite(score):
+                if not _has_finite_score(program.metrics):
                     raise ValueError(
                         f"Re-evaluation failed for {name}/{program.id}: {program.metrics}"
                     )
@@ -263,9 +267,7 @@ async def _run_coevolution(
             for key, value in old.get("schedule", {}).items():
                 setattr(engine.database, key, copy.deepcopy(value))
             champion = await engine.run(iterations=iterations_per_phase)
-            if champion is None or not math.isfinite(
-                champion.metrics.get("combined_score", float("nan"))
-            ):
+            if champion is None or not _has_finite_score(champion.metrics):
                 raise ValueError(f"No valid champion for {name}")
             updated = copy.deepcopy(state)
             for program in engine.database.programs.values():

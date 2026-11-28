@@ -3,21 +3,22 @@ High-level API for using OpenEvolve as a library
 """
 
 import asyncio
+import inspect
+import os
 import pickle
 import tempfile
 import textwrap
-import os
 import uuid
-import inspect
-from typing import Union, Callable, Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from openevolve.config import Config, LLMModelConfig, load_config
 from openevolve.controller import OpenEvolve
-from openevolve.config import Config, load_config, LLMModelConfig
 from openevolve.database import Program
 from openevolve.population import PopulationStrategy
 from openevolve.selection import IslandSelector
+from openevolve.utils.metrics_utils import get_fitness_score
 
 
 @dataclass
@@ -185,7 +186,9 @@ async def _run_evolution_async(
             population_strategy=population_strategy,
         )
 
-        best_program = await controller.run(iterations=iterations,target_score=target_score,checkpoint_path=checkpoint_path)
+        best_program = await controller.run(
+            iterations=iterations, target_score=target_score, checkpoint_path=checkpoint_path
+        )
 
         # Prepare result
         best_score = 0.0
@@ -196,12 +199,8 @@ async def _run_evolution_async(
             best_code = best_program.code
             metrics = best_program.metrics or {}
 
-            if "combined_score" in metrics:
-                best_score = metrics["combined_score"]
-            elif metrics:
-                numeric_metrics = [v for v in metrics.values() if isinstance(v, (int, float))]
-                if numeric_metrics:
-                    best_score = sum(numeric_metrics) / len(numeric_metrics)
+            if metrics:
+                best_score = get_fitness_score(metrics, config_obj.database.feature_dimensions)
 
         return EvolutionResult(
             best_program=best_program,

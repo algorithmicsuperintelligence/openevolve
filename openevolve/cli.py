@@ -221,7 +221,7 @@ async def main_async() -> int:
         print(f"Best program metrics:")
         for name, value in best_program.metrics.items():
             # Handle mixed types: format numbers as floats, others as strings
-            if isinstance(value, (int, float)):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
                 print(f"  {name}: {value:.4f}")
             else:
                 print(f"  {name}: {value}")

@@ -337,10 +337,15 @@ class Evaluator:
                         if "combined_score" in eval_result.metrics:
                             # Original combined_score is just accuracy
                             accuracy = eval_result.metrics["combined_score"]
-                            # Combine with LLM average (70% accuracy, 30% LLM quality)
-                            eval_result.metrics["combined_score"] = (
-                                accuracy * 0.7 + llm_average * 0.3
-                            )
+                            if (
+                                isinstance(accuracy, (int, float))
+                                and not isinstance(accuracy, bool)
+                                and not math.isnan(float(accuracy))
+                            ):
+                                # Combine with LLM average (70% accuracy, 30% LLM quality)
+                                eval_result.metrics["combined_score"] = (
+                                    float(accuracy) * 0.7 + llm_average * 0.3
+                                )
 
                 # Store artifacts if enabled and present
                 if (
@@ -823,6 +828,7 @@ class Evaluator:
                         return float_score >= threshold
                 except (TypeError, ValueError, OverflowError):
                     pass
+                return False
 
         # Fallback: average all numeric metrics except 'error'
         # This maintains backward compatibility
@@ -831,10 +837,12 @@ class Evaluator:
             # Flags are metadata, not scores (bool is a subclass of int).
             if name != "error" and isinstance(value, (int, float)) and not isinstance(value, bool):
                 try:
-                    valid_metrics.append(float(value))
+                    fval = float(value)
                 except (TypeError, ValueError):
                     logger.warning(f"Skipping non-numeric metric: {name}={value}")
                     continue
+                if not math.isnan(fval):
+                    valid_metrics.append(fval)
 
         if not valid_metrics:
             return False

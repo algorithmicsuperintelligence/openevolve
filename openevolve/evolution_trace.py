@@ -7,6 +7,7 @@ capturing state-action-reward transitions for RL training and analysis.
 
 import json
 import logging
+import math
 import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass
@@ -51,13 +52,25 @@ class EvolutionTrace:
 
     def calculate_improvement(self) -> Dict[str, float]:
         """Calculate improvement deltas between parent and child metrics"""
+        import math
+
         improvement = {}
         for key in self.child_metrics:
             if key in self.parent_metrics:
                 parent_val = self.parent_metrics[key]
                 child_val = self.child_metrics[key]
-                if isinstance(parent_val, (int, float)) and isinstance(child_val, (int, float)):
-                    improvement[key] = child_val - parent_val
+                if (
+                    isinstance(parent_val, (int, float))
+                    and isinstance(child_val, (int, float))
+                    and not isinstance(parent_val, bool)
+                    and not isinstance(child_val, bool)
+                ):
+                    try:
+                        delta = float(child_val) - float(parent_val)
+                    except (ValueError, TypeError, OverflowError):
+                        continue
+                    if math.isfinite(delta):
+                        improvement[key] = delta
         return improvement
 
 
@@ -579,10 +592,18 @@ def extract_full_lineage_traces(
                     if metric in parent["metrics"]:
                         parent_val = parent["metrics"][metric]
                         child_val = child["metrics"][metric]
-                        if isinstance(parent_val, (int, float)) and isinstance(
-                            child_val, (int, float)
+                        if (
+                            isinstance(parent_val, (int, float))
+                            and isinstance(child_val, (int, float))
+                            and not isinstance(parent_val, bool)
+                            and not isinstance(child_val, bool)
                         ):
-                            improvement_deltas[metric] = child_val - parent_val
+                            try:
+                                delta = float(child_val) - float(parent_val)
+                            except (ValueError, TypeError, OverflowError):
+                                continue
+                            if math.isfinite(delta):
+                                improvement_deltas[metric] = delta
 
             improvement = {
                 "step": i,

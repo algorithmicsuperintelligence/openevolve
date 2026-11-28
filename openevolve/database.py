@@ -6,6 +6,7 @@ import base64
 import copy
 import json
 import logging
+import math
 import os
 import random
 import shutil
@@ -46,18 +47,24 @@ def _strategy_boundary():
 
 
 def _safe_sum_metrics(metrics: Dict[str, Any]) -> float:
-    """Safely sum only numeric metric values, ignoring strings and other types"""
-    numeric_values = [
-        v for v in metrics.values() if isinstance(v, (int, float)) and not isinstance(v, bool)
-    ]
+    """Safely sum only numeric metric values, ignoring strings, bools, and NaNs"""
+    numeric_values = []
+    for v in metrics.values():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            fval = float(v)
+            if not math.isnan(fval):
+                numeric_values.append(fval)
     return sum(numeric_values) if numeric_values else 0.0
 
 
 def _safe_avg_metrics(metrics: Dict[str, Any]) -> float:
     """Safely calculate average of only numeric metric values"""
-    numeric_values = [
-        v for v in metrics.values() if isinstance(v, (int, float)) and not isinstance(v, bool)
-    ]
+    numeric_values = []
+    for v in metrics.values():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            fval = float(v)
+            if not math.isnan(fval):
+                numeric_values.append(fval)
     return sum(numeric_values) / max(1, len(numeric_values)) if numeric_values else 0.0
 
 
@@ -194,10 +201,13 @@ class ProgramDatabase:
 
         # Handle both int and dict types for feature_bins
         if isinstance(config.feature_bins, int):
-            self.feature_bins = max(
-                config.feature_bins,
-                int(pow(config.archive_size, 1 / len(config.feature_dimensions)) + 0.99),
-            )
+            if config.feature_dimensions:
+                self.feature_bins = max(
+                    config.feature_bins,
+                    int(pow(config.archive_size, 1 / len(config.feature_dimensions)) + 0.99),
+                )
+            else:
+                self.feature_bins = max(1, config.feature_bins)
         else:
             # If dict, keep as is (we'll use feature_bins_per_dim instead)
             self.feature_bins = 10  # Default fallback for backward compatibility
