@@ -26,17 +26,17 @@ llm:
   # Models for evolution
   models:
     # List of available models with their weights
-    - name: "gemini-2.0-flash-lite"
+    - name: "gemini-3.1-flash-lite"
       weight: 0.8
-    - name: "gemini-2.0-flash"
+    - name: "gemini-3.6-flash"
       weight: 0.2
 
   # Models for LLM feedback
   evaluator_models:
     # List of available models with their weights
-    - name: "gemini-2.0-flash-lite"
+    - name: "gemini-3.1-flash-lite"
       weight: 0.8
-    - name: "gemini-2.0-flash"
+    - name: "gemini-3.6-flash"
       weight: 0.2
 
   # API configuration
